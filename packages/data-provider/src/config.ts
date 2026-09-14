@@ -3159,6 +3159,7 @@ export type TStartupConfig = {
    * is advertised. */
   codeWorkspaceInheritanceVersion?: typeof CODE_WORKSPACE_INHERITANCE_VERSION;
   interface?: TInterfaceConfig;
+  resumableStreams?: z.infer<typeof resumableStreamsSchema>;
   turnstile?: TTurnstileConfig;
   balance?: TBalanceConfig;
   transactions?: TTransactionsConfig;
@@ -3843,11 +3844,26 @@ export const toolCallPreviewsConfigSchema = z.object({
 
 export type TToolCallPreviewsConfig = z.infer<typeof toolCallPreviewsConfigSchema>;
 
+export const DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES = 5;
+
+export const resumableStreamsSchema = z
+  .object({
+    /** Automatic terminal history recovery retries, independent of transport reconnects. */
+    terminalRecoveryMaxRetries: z
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .default(DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES),
+  })
+  .default({});
+
 export const configSchema = z.object({
   version: z.string(),
   permissions: z.object({ maxWriteAttempts: permissionWriteAttemptsSchema }).optional(),
   cache: z.boolean().default(true),
   projects: chatProjectsConfigSchema,
+  resumableStreams: resumableStreamsSchema,
   ocr: ocrSchema.optional(),
   webSearch: webSearchSchema.optional(),
   githubCompare: z
