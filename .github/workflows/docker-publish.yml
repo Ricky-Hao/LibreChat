@@ -42,9 +42,9 @@ on:
         default: 90
     secrets:
       DOCKERHUB_USERNAME:
-        required: true
+        required: false
       DOCKERHUB_TOKEN:
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -81,7 +81,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Docker Hub
+      - name: Configure Docker registries
+        id: registries
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.image_name }}
+          IMAGE_NAME: ${{ matrix.image.image_name }}
+        run: |
+          set -euo pipefail
+
+          dockerhub_enabled=false
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            dockerhub_enabled=true
+          else
+            echo "::notice::Docker Hub credentials are incomplete or unset; publishing only to GHCR."
+          fi
+
+          {
+            printf 'dockerhub_enabled=%s\n' "$dockerhub_enabled"
+            echo 'build_outputs<<EOF'
+            if [ "$dockerhub_enabled" = "true" ]; then
+              printf 'type=image,"name=%s,docker.io/%s/%s",push-by-digest=true,name-canonical=true,push=true\n' "$GHCR_IMAGE" "$DOCKERHUB_USERNAME" "$IMAGE_NAME"
+            else
+              printf 'type=image,"name=%s",push-by-digest=true,name-canonical=true,push=true\n' "$GHCR_IMAGE"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        if: steps.registries.outputs.dockerhub_enabled == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -97,9 +126,11 @@ jobs:
           BUILD_BRANCH_INPUT: ${{ inputs.build_branch }}
         run: |
           set -euo pipefail
-          printf 'BUILD_COMMIT=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          printf 'BUILD_BRANCH=%s\n' "$BUILD_BRANCH_INPUT" >> "$GITHUB_ENV"
-          printf 'BUILD_DATE=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+          {
+            printf 'BUILD_COMMIT=%s\n' "$(git rev-parse HEAD)"
+            printf 'BUILD_BRANCH=%s\n' "$BUILD_BRANCH_INPUT"
+            printf 'BUILD_DATE=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          } >> "$GITHUB_ENV"
 
       # The layer cache lives in GHCR beside the image: no 10GB Actions-cache cap,
       # and readable from every branch and workflow, unlike type=gha which is
@@ -115,7 +146,7 @@ jobs:
           target: ${{ matrix.image.target }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.image.image_name }}:buildcache-${{ matrix.arch }}
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.image.image_name }}:buildcache-${{ matrix.arch }},mode=max
-          outputs: type=image,"name=ghcr.io/${{ github.repository_owner }}/${{ matrix.image.image_name }},docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image.image_name }}",push-by-digest=true,name-canonical=true,push=true
+          outputs: ${{ steps.registries.outputs.build_outputs }}
           build-args: |
             BUILD_COMMIT=${{ env.BUILD_COMMIT }}
             BUILD_BRANCH=${{ env.BUILD_BRANCH }}
@@ -180,7 +211,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Docker Hub
+      - name: Configure Docker registries
+        id: registries
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_NAME: ${{ matrix.image.image_name }}
+        run: |
+          set -euo pipefail
+
+          dockerhub_enabled=false
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            dockerhub_enabled=true
+          else
+            echo "::notice::Docker Hub credentials are incomplete or unset; publishing only to GHCR."
+          fi
+
+          {
+            printf 'dockerhub_enabled=%s\n' "$dockerhub_enabled"
+            if [ "$dockerhub_enabled" = "true" ]; then
+              printf 'dockerhub_image=docker.io/%s/%s\n' "$DOCKERHUB_USERNAME" "$IMAGE_NAME"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        if: steps.registries.outputs.dockerhub_enabled == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -191,8 +246,9 @@ jobs:
       - name: Create manifest lists and push
         working-directory: /tmp/digests
         env:
+          DOCKERHUB_ENABLED: ${{ steps.registries.outputs.dockerhub_enabled }}
+          DOCKERHUB_IMAGE: ${{ steps.registries.outputs.dockerhub_image }}
           GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.image_name }}
-          DOCKERHUB_IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image.image_name }}
           EXPECTED_ARCHES: ${{ join(fromJSON(inputs.arches), ' ') }}
           TAG_SUFFIXES: ${{ inputs.tag_suffixes }}
         run: |
@@ -220,8 +276,13 @@ jobs:
             exit 1
           fi
 
-          echo "Merging ${#digests[@]} digests into $(( ${#tag_args[@]} / 2 )) tag(s) per registry"
-          for image in "$GHCR_IMAGE" "$DOCKERHUB_IMAGE"; do
+          images=("$GHCR_IMAGE")
+          if [ "$DOCKERHUB_ENABLED" = "true" ]; then
+            images+=("$DOCKERHUB_IMAGE")
+          fi
+
+          echo "Merging ${#digests[@]} digests into $(( ${#tag_args[@]} / 2 )) tag(s) per registry for ${#images[@]} registry path(s)"
+          for image in "${images[@]}"; do
             docker buildx imagetools create \
               "${tag_args[@]/IMAGE:/${image}:}" \
               "${digests[@]/#/${image}@sha256:}"
