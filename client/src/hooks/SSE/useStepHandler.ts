@@ -703,7 +703,13 @@ export default function useStepHandler({
 
         const response = messageMap.current.get(responseMessageId);
         if (response) {
-          const result = applyMessageDelta(response, runStep, messageDelta, editPrefixOffset);
+          const result = applyMessageDelta(
+            response,
+            runStep,
+            messageDelta,
+            editPrefixOffset,
+            submission.editPrefixFirstPartFolded,
+          );
           if (result.foldedEditPrefix && submission != null) {
             submission.editPrefixFirstPartFolded = true;
           }
@@ -730,7 +736,13 @@ export default function useStepHandler({
 
         const response = messageMap.current.get(responseMessageId);
         if (response) {
-          const result = applyReasoningDelta(response, runStep, reasoningDelta, editPrefixOffset);
+          const result = applyReasoningDelta(
+            response,
+            runStep,
+            reasoningDelta,
+            editPrefixOffset,
+            submission.editPrefixFirstPartFolded,
+          );
           if (result.foldedEditPrefix && submission != null) {
             submission.editPrefixFirstPartFolded = true;
           }

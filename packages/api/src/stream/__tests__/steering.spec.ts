@@ -1,5 +1,5 @@
 import { logger } from '@librechat/data-schemas';
-import { SteerEvents } from 'librechat-data-provider';
+import { SteerEvents, ContentTypes } from 'librechat-data-provider';
 import type { TMessageContentParts, TPendingSteer, Agents } from 'librechat-data-provider';
 import type {
   SteerQueueItem,
@@ -1024,6 +1024,56 @@ describe('SteeringLifecycle via GenerationJobManager.steering (in-memory)', () =
         expect(claimed).toBe(true);
         return { job, content };
       }
+
+      test.each([false, true])(
+        'rebases retained prefixes without publishing unapplied approval provenance (applied=%s)',
+        async (applied) => {
+          const streamId = `retained-approval-${applied}`;
+          const { job } = await claimResume(streamId, {
+            content: [
+              { type: 'text', text: 'Generated' },
+              {
+                type: 'tool_call',
+                tool_call: {
+                  id: 'call-1',
+                  args: '{}',
+                  ...(applied && { output: 'User response' }),
+                },
+              },
+            ],
+          });
+          await manager.captureRetainedContent(
+            streamId,
+            [{ type: 'think', think: 'Edited reasoning' }],
+            ContentTypes.THINK,
+            job.createdAt,
+            { userSubmittedPaths: ['/content/0/think'] },
+          );
+          const persisted: unknown[] = [];
+          const result = await manager.abortJob(streamId, {
+            beforePublish: async (pending) => {
+              persisted.push(pending.jobData);
+            },
+          });
+          expect(result.success).toBe(true);
+          expect(result.content).toHaveLength(3);
+          const provenance = {
+            userSubmittedPaths: [
+              '/content/0/think',
+              '/content/1/steer',
+              ...(applied ? ['/content/2/tool_call/args'] : []),
+            ],
+            userSubmittedMessageFieldPaths: applied
+              ? [{ path: '/content/2/tool_call/output', field: 'decision_response' }]
+              : [],
+          };
+          expect(result.userSubmittedPaths).toEqual(provenance.userSubmittedPaths);
+          expect(result.userSubmittedMessageFieldPaths).toEqual(
+            provenance.userSubmittedMessageFieldPaths,
+          );
+          expect(persisted).toEqual([expect.objectContaining(provenance)]);
+        },
+      );
 
       test('does not label an unanswered ask placeholder as the claimed answer', async () => {
         const streamId = 'steer-abort-ask-placeholder-provenance';

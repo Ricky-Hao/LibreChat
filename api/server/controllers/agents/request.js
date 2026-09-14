@@ -19,7 +19,8 @@ const {
   GenerationJobManager,
   createConvoPersistenceSignal,
   recoverTurnMessageReference,
-  filterPersistableAbortContent,
+  projectRetainedMessageContent,
+  getRetainedContentMetadata,
   decrementPendingRequest,
   sanitizeMessageForTransmit,
   checkAndIncrementPendingRequest,
@@ -1737,6 +1738,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
         /** The job record is where the abort paths learn the turn was a
          *  compaction: they run after the request that created the job. */
         ...(isCompaction && { compact: true }),
+        ...getRetainedContentMetadata(editedContent),
         ...(scheduleId
           ? {
               scheduleId,
@@ -1923,52 +1925,60 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
      * overwrite this with the complete response using the same messageId pattern.
      */
     job.emitter.on('allSubscribersLeft', async (aggregatedContent) => {
-      if (partialResponseSaved || !aggregatedContent || aggregatedContent.length === 0) {
-        return;
-      }
-
-      /** The run is still live here: mark what streamed, but leave the outcome
-       *  to whichever path settles the turn (the terminal abort synthesizes
-       *  the typed failure a stopped compaction with no summary needs). */
-      const persistableContent = markAbortedCompactionContent(
-        filterPersistableAbortContent(aggregatedContent),
-        isCompaction,
-        { synthesizeFailure: false },
-      );
-      if (persistableContent.length === 0) {
-        logger.debug('[ResumableAgentController] No persistable content to save partial response');
-        return;
-      }
-
-      const [resumeState, jobRecord] = await Promise.all([
-        GenerationJobManager.getResumeState(streamId, jobCreatedAt),
-        GenerationJobManager.getJobStore().getJob(streamId),
-      ]);
-      if (!resumeState?.userMessage) {
-        logger.debug('[ResumableAgentController] No user message to save partial response for');
-        return;
-      }
-
-      partialResponseSaved = true;
-      const responseConversationId = resumeState.conversationId || conversationId;
-      /** The run publishes its calibration and fading tiers onto the job; a
-       * partial response saved on disconnect must carry them like the Stop and
-       * pause paths do, or a turn continued from it re-derives its provider
-       * projection of history and loses the cached prefix. The same-epoch job
-       * record is the source, since the client-facing resume snapshot never
-       * carries server-private state. */
-      const contextMeta = jobRecord?.createdAt === jobCreatedAt ? jobRecord.contextMeta : undefined;
-      if (resolveDisconnectSnapshotMode(jobRecord, jobCreatedAt) === 'skip') {
-        logger.debug('[ResumableAgentController] Skipping partial response save for a settled job');
+      if (partialResponseSaved || !aggregatedContent) {
         return;
       }
 
       try {
+        const [resumeState, jobRecord] = await Promise.all([
+          GenerationJobManager.getResumeState(streamId, jobCreatedAt),
+          GenerationJobManager.getJobStore().getJob(streamId),
+        ]);
+        if (!resumeState?.userMessage) {
+          logger.debug('[ResumableAgentController] No user message to save partial response for');
+          return;
+        }
+
+        const persistedContent = projectRetainedMessageContent(aggregatedContent, jobRecord, {
+          abort: true,
+          expectedCreatedAt: jobCreatedAt,
+        });
+        /** A live compaction snapshot retains its identity without inventing an outcome. */
+        const persistableContent = markAbortedCompactionContent(
+          persistedContent.content,
+          isCompaction,
+          { synthesizeFailure: false },
+        );
+        if (persistableContent.length === 0) {
+          logger.debug(
+            '[ResumableAgentController] No persistable content to save partial response',
+          );
+          return;
+        }
+
+        partialResponseSaved = true;
+        const responseConversationId = resumeState.conversationId || conversationId;
+        /** The run publishes its calibration and fading tiers onto the job; a
+         * partial response saved on disconnect must carry them like the Stop and
+         * pause paths do, or a turn continued from it re-derives its provider
+         * projection of history and loses the cached prefix. The same-epoch job
+         * record is the source, since the client-facing resume snapshot never
+         * carries server-private state. */
+        const contextMeta =
+          jobRecord?.createdAt === jobCreatedAt ? jobRecord.contextMeta : undefined;
+        if (resolveDisconnectSnapshotMode(jobRecord, jobCreatedAt) === 'skip') {
+          logger.debug(
+            '[ResumableAgentController] Skipping partial response save for a settled job',
+          );
+          return;
+        }
+
         const partialMessage = {
           messageId: resumeState.responseMessageId || `${resumeState.userMessage.messageId}_`,
           conversationId: responseConversationId,
           parentMessageId: resumeState.userMessage.messageId,
           sender: client?.sender ?? 'AI',
+          ...persistedContent,
           content: persistableContent,
           unfinished: true,
           error: false,
@@ -2451,6 +2461,14 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
           isRegenerate,
           isCompaction,
           editedContent,
+          onRetainedContent: (parts, type, provenance) =>
+            GenerationJobManager.captureRetainedContent(
+              streamId,
+              parts,
+              type,
+              jobCreatedAt,
+              provenance,
+            ),
           conversationId,
           parentMessageId,
           abortController: job.abortController,

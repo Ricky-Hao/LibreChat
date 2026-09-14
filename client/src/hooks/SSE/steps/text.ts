@@ -38,6 +38,7 @@ export function applyMessageDelta(
   runStep: Agents.RunStep,
   delta: Agents.MessageDeltaEvent,
   editPrefixOffset: number,
+  firstPartFolded = false,
 ): DeltaResult {
   const result: DeltaResult = { message, updated: false, foldedEditPrefix: false };
   if (!delta.delta.content) {
@@ -62,9 +63,12 @@ export function applyMessageDelta(
       phasedContentPart.type || '',
       result.message.content,
       phase,
+      firstPartFolded,
     );
-    if (foldsEditPrefix(runStep.index, editPrefixOffset, index)) {
+    if (!firstPartFolded && foldsEditPrefix(runStep.index, editPrefixOffset, index)) {
       result.foldedEditPrefix = true;
+      firstPartFolded = true;
+      editPrefixOffset -= 1;
     }
     if (phasedContentPart.type === ContentTypes.THINK) {
       result.message = prepareReasoningPartForStep(result.message, index, delta.id);
@@ -84,6 +88,7 @@ export function applyReasoningDelta(
   runStep: Agents.RunStep,
   delta: Agents.ReasoningDeltaEvent,
   editPrefixOffset: number,
+  firstPartFolded = false,
 ): DeltaResult {
   const result: DeltaResult = { message, updated: false, foldedEditPrefix: false };
   if (delta.delta.content == null) {
@@ -99,9 +104,13 @@ export function applyReasoningDelta(
       editPrefixOffset,
       contentPart.type || '',
       result.message.content,
+      undefined,
+      firstPartFolded,
     );
-    if (foldsEditPrefix(runStep.index, editPrefixOffset, index)) {
+    if (!firstPartFolded && foldsEditPrefix(runStep.index, editPrefixOffset, index)) {
       result.foldedEditPrefix = true;
+      firstPartFolded = true;
+      editPrefixOffset -= 1;
     }
     result.message = prepareReasoningPartForStep(result.message, index, delta.id);
     result.message = updateContent(result.message, index, contentPart, false, metadata);

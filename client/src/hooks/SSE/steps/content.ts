@@ -72,13 +72,18 @@ export function getEditPrefix(submission: EventSubmission): {
   initialContent: TMessageContentParts[];
   editPrefixOffset: number;
 } {
-  if (submission?.editedContent == null || submission?.editPrefixCleared === true) {
+  if (
+    (submission?.editedContent == null && submission?.editPrefixLength == null) ||
+    submission?.editPrefixCleared === true
+  ) {
     return { initialContent: [], editPrefixOffset: 0 };
   }
   const initialContent = submission?.initialResponse?.content ?? [];
+  const length = submission?.editPrefixLength ?? initialContent.length;
   return {
     initialContent,
-    editPrefixOffset: submission?.editPrefixLength ?? initialContent.length,
+    editPrefixOffset:
+      length > 0 && submission.editPrefixFirstPartFolded === true ? length - 1 : length,
   };
 }
 
@@ -93,9 +98,12 @@ export function calculateContentIndex(
   incomingContentType: string,
   existingContent?: TMessageContentParts[],
   incomingPhase?: TextPhase,
+  firstPartFolded = false,
 ): number {
   /** Only apply -1 adjustment for TEXT or THINK types when they match existing content */
   if (
+    !firstPartFolded &&
+    serverIndex === 0 &&
     editPrefixOffset > 0 &&
     (incomingContentType === ContentTypes.TEXT || incomingContentType === ContentTypes.THINK)
   ) {

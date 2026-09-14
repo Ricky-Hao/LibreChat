@@ -82,6 +82,8 @@ export type {
   ProjectedMessageFields,
   TransientMessageField,
 } from './terminalProjection';
+export { applyRetainedContentEdit, projectRetainedMessageContent } from './retained';
+export { getRetainedContentMetadata } from './metadata';
 
 // Implementations (for advanced use cases)
 export { InMemoryJobStore } from './implementations/InMemoryJobStore';
