@@ -110,6 +110,9 @@ function ChatView({
        * messages now, so a warm conversation renders instantly from cache and
        * reconciles in the background instead of unmounting into a spinner. */
       refetchOnMount: true,
+      /** Once the stream has retired, history owns foreground recovery. */
+      refetchOnWindowFocus: !isSubmitting,
+      refetchOnReconnect: !isSubmitting,
     },
     { isStreaming: isSubmitting },
   );
