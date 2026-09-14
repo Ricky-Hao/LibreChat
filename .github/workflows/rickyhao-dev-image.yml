@@ -1,6 +1,7 @@
 name: Rickyhao Dev Docker Image
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - rickyhao/dev
@@ -15,7 +16,7 @@ concurrency:
 
 jobs:
   publish:
-    if: github.repository == 'Ricky-Hao/LibreChat'
+    if: github.repository == 'Ricky-Hao/LibreChat' && github.ref == 'refs/heads/rickyhao/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
