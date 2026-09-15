@@ -1498,6 +1498,12 @@ export default function useResumableSSE(
           updateActiveGenerationCreatedAt(Constants.NEW_CONVO, null, generationCreatedAt);
         }
       };
+      const clearAttachedDrainAfterAbort = (conversationId: string) => {
+        clearDrainAfterAbort(conversationId, generationCreatedAt);
+        if (startedAsNewConversation) {
+          clearDrainAfterAbort(Constants.NEW_CONVO, generationCreatedAt);
+        }
+      };
       if (generationCreatedAt != null) {
         updateActiveGenerationCreatedAt(
           currentStreamId,
@@ -2937,8 +2943,10 @@ export default function useResumableSSE(
             conversationId: reconciliationConvoId,
             error,
           });
-          retryFencedTerminalAttachment('terminal history unavailable');
-          return;
+          if (toStartGenerationError(error)?.response?.status !== 404) {
+            retryFencedTerminalAttachment('terminal history unavailable');
+            return;
+          }
         }
         try {
           await queryClient.invalidateQueries({
@@ -3007,15 +3015,11 @@ export default function useResumableSSE(
         });
         setIsSubmitting(false);
         setShowStopButton(false);
-        if (event.reconcileReason === 'abort_persistence_failed') {
+        if (persistedMessages == null || event.reconcileReason === 'abort_persistence_failed') {
           /** Interrupt & send arms an override that drains even an `aborted`
-           * run. This terminal frame explicitly says durable persistence is
-           * unknown, so consume that override before publishing runEnd; the
-           * queued words remain available for a deliberate retry. */
-          clearDrainAfterAbort(
-            currentSubmission.conversation?.conversationId || String(Constants.NEW_CONVO),
-            generationCreatedAt,
-          );
+           * run. Missing history or failed persistence cannot authorize that
+           * send; leave queued words available for a deliberate retry. */
+          clearAttachedDrainAfterAbort(reconciliationConvoId);
         }
         let reconciliationOutcome: 'completed' | 'aborted' | 'error' = 'aborted';
         if (event.terminalStatus === 'complete') {
@@ -3230,8 +3234,11 @@ export default function useResumableSSE(
                   conversationId: convoId,
                   error,
                 });
-                retryFencedTerminalAttachment('expired stream history unavailable');
-                return;
+                /** A first turn stopped before persistence has no history to recover. */
+                if (toStartGenerationError(error)?.response?.status !== 404) {
+                  retryFencedTerminalAttachment('expired stream history unavailable');
+                  return;
+                }
               }
               queryClient.removeQueries({ queryKey: streamStatusQueryKey(convoId) });
             }
@@ -3338,6 +3345,9 @@ export default function useResumableSSE(
           // The true outcome is unknown here (job record already cleaned up):
           // a non-'completed' outcome releases parked interrupt flags without
           // auto-sending queued messages the user may not want fired.
+          if (persistedMessages == null) {
+            clearAttachedDrainAfterAbort(recoveryConvoId);
+          }
           setRunEnd({
             conversationId: recoveryConvoId,
             outcome: 'aborted',
@@ -3658,8 +3668,13 @@ export default function useResumableSSE(
               conversationId: recoveryConvoId,
               error,
             });
-            retryFencedTerminalAttachment('disconnected terminal history unavailable');
-            return;
+            if (
+              toStartGenerationError(error)?.response?.status !== 404 ||
+              status.active !== false
+            ) {
+              retryFencedTerminalAttachment('disconnected terminal history unavailable');
+              return;
+            }
           }
 
           const authoritativeValues = [
@@ -3723,6 +3738,9 @@ export default function useResumableSSE(
                     currentSubmission.initialResponse?.messageId,
                 )
               : undefined;
+          if (persistedMessages == null) {
+            clearAttachedDrainAfterAbort(recoveryConvoId);
+          }
           setRunEnd({
             conversationId: recoveryConvoId,
             outcome: recoveryOutcome,
