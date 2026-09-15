@@ -41,6 +41,7 @@ const THINK_REPLY_MARKER = 'E2E_THINK_REPLY:';
 const LONG_THINK_REPLY_MARKER = 'E2E_LONG_THINK_REPLY:';
 const LONG_THINK_WORDS = 400;
 const SLOW_THINK_REPLY_MARKER = 'E2E_SLOW_THINK_REPLY:';
+const RETAINED_PREFIX_MARKER = 'E2E_RETAINED_PREFIX:';
 const COUNTED_REPLY_MARKER = 'E2E_COUNTED_REPLY:';
 const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
 const SLOW_REPLY_MARKER = 'E2E_SLOW_REPLY:';
@@ -3470,6 +3471,20 @@ function resolveResponses({ graph, messages, text, toolNames }) {
   const approvalLabel = getMarkerValue(text, TOOL_APPROVAL_MARKER);
   if (approvalLabel) {
     return approvalToolResponses(approvalLabel, toolNames);
+  }
+
+  const retainedPrefixLabel = getMarkerValue(text, RETAINED_PREFIX_MARKER);
+  if (retainedPrefixLabel) {
+    /** The UI rerun retains the assistant's TEXT after its edited THINK. Detect
+     * that real history, not a process-local counter, and generate TEXT first. */
+    const hasRetainedTail = (messages ?? []).some(
+      (message) =>
+        messageType(message) === 'ai' &&
+        getContentText(message.content).includes(`E2E reply ${retainedPrefixLabel}`),
+    );
+    return replyResponses(
+      `${hasRetainedTail ? RESUME_ICON_REPLY_MARKER : THINK_REPLY_MARKER}${retainedPrefixLabel}`,
+    );
   }
 
   const reply = replyResponses(text);

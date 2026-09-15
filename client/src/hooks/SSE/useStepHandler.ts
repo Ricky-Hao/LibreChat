@@ -709,11 +709,10 @@ export default function useStepHandler({
             messageDelta,
             editPrefixOffset,
             submission.editPrefixFirstPartFolded,
+            submission.editPrefixType ?? submission.editedContent?.type,
           );
-          if (result.foldedEditPrefix && submission != null) {
-            submission.editPrefixFirstPartFolded = true;
-          }
           if (result.updated) {
+            submission.editPrefixFirstPartFolded = result.foldedEditPrefix;
             messageMap.current.set(responseMessageId, result.message);
             scheduleCoalescedMessagesFlush(responseMessageId);
           }
@@ -742,11 +741,10 @@ export default function useStepHandler({
             reasoningDelta,
             editPrefixOffset,
             submission.editPrefixFirstPartFolded,
+            submission.editPrefixType ?? submission.editedContent?.type,
           );
-          if (result.foldedEditPrefix && submission != null) {
-            submission.editPrefixFirstPartFolded = true;
-          }
           if (result.updated) {
+            submission.editPrefixFirstPartFolded = result.foldedEditPrefix;
             messageMap.current.set(responseMessageId, result.message);
             scheduleCoalescedMessagesFlush(responseMessageId);
           }

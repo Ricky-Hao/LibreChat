@@ -19,8 +19,8 @@ export type DeltaResult = {
   message: TMessage;
   /** False when the delta carried no parts, so nothing should be written. */
   updated: boolean;
-  /** True when a part folded into the last part of the retained edit prefix. */
-  foldedEditPrefix: boolean;
+  /** Undefined until index zero decides whether to fold into the retained prefix. */
+  foldedEditPrefix?: boolean;
 };
 
 const toParts = (
@@ -38,9 +38,10 @@ export function applyMessageDelta(
   runStep: Agents.RunStep,
   delta: Agents.MessageDeltaEvent,
   editPrefixOffset: number,
-  firstPartFolded = false,
+  firstPartFolded?: boolean,
+  editedType?: string,
 ): DeltaResult {
-  const result: DeltaResult = { message, updated: false, foldedEditPrefix: false };
+  const result: DeltaResult = { message, updated: false, foldedEditPrefix: firstPartFolded };
   if (!delta.delta.content) {
     return result;
   }
@@ -64,11 +65,14 @@ export function applyMessageDelta(
       result.message.content,
       phase,
       firstPartFolded,
+      editedType,
     );
-    if (!firstPartFolded && foldsEditPrefix(runStep.index, editPrefixOffset, index)) {
-      result.foldedEditPrefix = true;
-      firstPartFolded = true;
-      editPrefixOffset -= 1;
+    if (firstPartFolded === undefined && runStep.index === 0 && editPrefixOffset > 0) {
+      firstPartFolded = foldsEditPrefix(runStep.index, editPrefixOffset, index);
+      result.foldedEditPrefix = firstPartFolded;
+      if (firstPartFolded) {
+        editPrefixOffset -= 1;
+      }
     }
     if (phasedContentPart.type === ContentTypes.THINK) {
       result.message = prepareReasoningPartForStep(result.message, index, delta.id);
@@ -88,9 +92,10 @@ export function applyReasoningDelta(
   runStep: Agents.RunStep,
   delta: Agents.ReasoningDeltaEvent,
   editPrefixOffset: number,
-  firstPartFolded = false,
+  firstPartFolded?: boolean,
+  editedType?: string,
 ): DeltaResult {
-  const result: DeltaResult = { message, updated: false, foldedEditPrefix: false };
+  const result: DeltaResult = { message, updated: false, foldedEditPrefix: firstPartFolded };
   if (delta.delta.content == null) {
     return result;
   }
@@ -106,11 +111,14 @@ export function applyReasoningDelta(
       result.message.content,
       undefined,
       firstPartFolded,
+      editedType,
     );
-    if (!firstPartFolded && foldsEditPrefix(runStep.index, editPrefixOffset, index)) {
-      result.foldedEditPrefix = true;
-      firstPartFolded = true;
-      editPrefixOffset -= 1;
+    if (firstPartFolded === undefined && runStep.index === 0 && editPrefixOffset > 0) {
+      firstPartFolded = foldsEditPrefix(runStep.index, editPrefixOffset, index);
+      result.foldedEditPrefix = firstPartFolded;
+      if (firstPartFolded) {
+        editPrefixOffset -= 1;
+      }
     }
     result.message = prepareReasoningPartForStep(result.message, index, delta.id);
     result.message = updateContent(result.message, index, contentPart, false, metadata);

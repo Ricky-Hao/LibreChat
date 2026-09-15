@@ -98,13 +98,16 @@ export function calculateContentIndex(
   incomingContentType: string,
   existingContent?: TMessageContentParts[],
   incomingPhase?: TextPhase,
-  firstPartFolded = false,
+  firstPartFolded?: boolean,
+  editedType?: string,
 ): number {
-  /** Only apply -1 adjustment for TEXT or THINK types when they match existing content */
+  /** A populated SYNC has already decided. Live index 0 uses the same
+   * edit-type and phase eligibility as mergeEditedMessageContent. */
   if (
-    !firstPartFolded &&
+    firstPartFolded === undefined &&
     serverIndex === 0 &&
     editPrefixOffset > 0 &&
+    incomingContentType === editedType &&
     (incomingContentType === ContentTypes.TEXT || incomingContentType === ContentTypes.THINK)
   ) {
     const targetIndex = serverIndex + editPrefixOffset - 1;
