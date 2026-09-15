@@ -3,7 +3,14 @@ import { useAtom } from 'jotai';
 import copy from 'copy-to-clipboard';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useSetRecoilState, useResetRecoilState } from 'recoil';
-import { Button, Spinner, useMediaQuery, Radio, useToastContext } from '@librechat/client';
+import {
+  Button,
+  Spinner,
+  useMediaQuery,
+  Radio,
+  useToastContext,
+  OverlayBack,
+} from '@librechat/client';
 import {
   Code,
   Maximize2,
@@ -443,7 +450,7 @@ export default function Artifacts() {
       ? (Math.min(blurAmount, MAX_BLUR_AMOUNT) / MAX_BLUR_AMOUNT) * MAX_BACKDROP_OPACITY
       : 0;
 
-  return (
+  const panel = (
     <Tabs.Root value={displayedTab} onValueChange={setActiveTab} asChild>
       <div ref={artifactContainerRef} className="bg-surface-primary flex h-full w-full flex-col">
         {/* Mobile backdrop with dynamic blur */}
@@ -700,5 +707,10 @@ export default function Artifacts() {
         />
       </div>
     </Tabs.Root>
+  );
+  return (
+    <OverlayBack open={isMobile && !isClosing} onClose={closeArtifacts}>
+      {panel}
+    </OverlayBack>
   );
 }

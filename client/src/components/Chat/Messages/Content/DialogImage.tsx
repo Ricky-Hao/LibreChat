@@ -2,7 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { PanelLeftOpen, PanelLeftClose } from 'lucide';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X, ArrowDownToLine, RotateCcw } from 'lucide-react';
-import { Button, MorphIcon, TooltipAnchor, useMediaQuery, useRemScale } from '@librechat/client';
+import {
+  Button,
+  Dialog,
+  MorphIcon,
+  TooltipAnchor,
+  useMediaQuery,
+  useRemScale,
+} from '@librechat/client';
 import { useLocalize } from '~/hooks';
 
 /** The lightbox is z-250 and not an OGDialog, so its tooltips would keep the default 150 and sit behind it. */
@@ -260,7 +267,7 @@ export default function DialogImage({
   const getImageMaxWidth = () => (detailsBeside ? 'calc(90vw - 20rem)' : '90vw');
 
   return (
-    <DialogPrimitive.Root open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className="bg-surface-media-overlay/90 fixed inset-0 z-[250]"
@@ -472,6 +479,6 @@ export default function DialogImage({
           )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+    </Dialog>
   );
 }

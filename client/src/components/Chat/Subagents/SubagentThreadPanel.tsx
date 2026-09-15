@@ -8,6 +8,7 @@ import {
   Button,
   Composer,
   ControlCombobox,
+  OverlayBack,
   useMediaQuery,
   useToastContext,
 } from '@librechat/client';
@@ -1525,7 +1526,7 @@ export default function SubagentThreadPanel({ selection }: { selection: ActiveSu
     );
   }
 
-  return (
+  const panel = (
     <aside
       ref={panelRef}
       role={isMobile ? 'dialog' : 'region'}
@@ -1682,6 +1683,11 @@ export default function SubagentThreadPanel({ selection }: { selection: ActiveSu
         </div>
       )}
     </aside>
+  );
+  return (
+    <OverlayBack open={isMobile} onClose={close}>
+      {panel}
+    </OverlayBack>
   );
 }
 
