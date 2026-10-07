@@ -15,3 +15,5 @@ docs
 
 # Ignore all hidden files
 .*
+# The dev image checks its runtime against this non-secret repository pin.
+!.nvmrc
