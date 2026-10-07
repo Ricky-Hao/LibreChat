@@ -17,3 +17,10 @@ docs
 .*
 # The dev image checks its runtime against this non-secret repository pin.
 !.nvmrc
+
+# Envbuilder appends COPY instructions for these two cache-image files.
+# Allow the directory, but keep all other temporary contents excluded.
+!.envbuilder.tmp
+.envbuilder.tmp/*
+!.envbuilder.tmp/envbuilder
+!.envbuilder.tmp/image

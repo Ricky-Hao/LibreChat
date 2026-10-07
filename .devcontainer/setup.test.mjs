@@ -8,6 +8,31 @@ import { test } from 'node:test';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 
+// Configuration contract only: the actual Envbuilder build verifies COPY semantics.
+test('dockerignore narrowly admits Envbuilder cache files after the hidden-file exclusion', () => {
+  const rules = fs
+    .readFileSync(path.join(source, '..', '.dockerignore'), 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+  const cacheRules = [
+    '!.envbuilder.tmp',
+    '.envbuilder.tmp/*',
+    '!.envbuilder.tmp/envbuilder',
+    '!.envbuilder.tmp/image',
+  ];
+  assert.deepEqual(rules.slice(-cacheRules.length), cacheRules);
+  assert.ok(rules.indexOf('.*') < rules.indexOf('!.envbuilder.tmp'));
+  assert.ok(rules.includes('.*'));
+  assert.ok(rules.includes('**/.git'));
+  assert.ok(rules.includes('**/node_modules'));
+  assert.ok(rules.includes('!.nvmrc'));
+  assert.deepEqual(
+    rules.filter((rule) => rule.startsWith('!')),
+    ['!.nvmrc', ...cacheRules.filter((rule) => rule.startsWith('!'))],
+  );
+});
+
 function fixture(t, uid = process.getuid(), gid = process.getgid()) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'librechat-setup-'));
   const own = (filename) => {
