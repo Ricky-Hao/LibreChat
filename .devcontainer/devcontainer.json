@@ -1,7 +1,9 @@
 {
-  "dockerComposeFile": "docker-compose.yml",
-  "service": "app",
-  "workspaceFolder": "/workspaces",
+  "name": "LibreChat Development",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
   "customizations": {
     "vscode": {
       "extensions": [],
