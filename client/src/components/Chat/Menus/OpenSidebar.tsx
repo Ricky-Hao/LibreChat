@@ -24,14 +24,16 @@ export default function OpenSidebar({
   const ariaKey = useShortcutAriaKey('toggleSidebar');
 
   const handleClick = () => {
+    const opener = document.activeElement;
     const mode = setSidebarOpen(true);
     if (mode === 'none') {
-      /** Desktop only: the expanded panel claims `CLOSE_SIDEBAR_ID` and has
-       * no commit-driven handoff of its own. The mobile drawer focuses its
-       * toggle from the commit itself — a second timer there would steal
-       * focus back from a keyboard user who has already tabbed onward. */
+      /** Desktop panels need a timed handoff. The animator can also be absent
+       * during mobile initialization, so preserve its commit-driven handoff
+       * and any deliberate focus change before this fallback runs. */
       setTimeout(() => {
-        document.getElementById(CLOSE_SIDEBAR_ID)?.focus();
+        if (document.activeElement === opener || document.activeElement === document.body) {
+          document.getElementById(CLOSE_SIDEBAR_ID)?.focus();
+        }
       }, 250);
     }
   };

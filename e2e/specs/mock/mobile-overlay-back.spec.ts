@@ -278,6 +278,9 @@ test.describe('supported mobile Back dismisses overlays without changing history
 
     for (const explicit of [true, false]) {
       await page.getByTestId('header-open-sidebar-button').click();
+      /** The drawer's deferred open commit hands focus to its close control.
+       * Opening a menu before that handoff lets the pending focus dismiss it. */
+      await expect(page.getByTestId('close-sidebar-button')).toBeFocused();
       await page.getByTestId('nav-user').click();
       await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
       const settings = page.getByRole('dialog');
