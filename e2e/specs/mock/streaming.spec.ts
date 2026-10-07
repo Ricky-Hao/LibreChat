@@ -57,19 +57,22 @@ test.describe('stream transport fidelity', () => {
       let attachments = 0;
       let recovered = false;
       let generationPosts = 0;
-      await page.route(`**/api/messages/${conversationId}`, async (route) => {
-        if (recovered) {
-          await route.continue();
-          return;
-        }
-        const response = await route.fetch();
-        const messages: TMessage[] = await response.json();
-        const assistant = messages.findLast((message) => !message.isCreatedByUser);
-        if (assistant == null) throw new Error('Expected a persisted assistant response');
-        assistant.text = 'Pending recovery';
-        assistant.content = [{ type: ContentTypes.TEXT, text: 'Pending recovery' }];
-        await route.fulfill({ response, json: messages });
-      });
+      await page.route(
+        (url) => url.pathname === `/api/messages/${conversationId}`,
+        async (route) => {
+          if (recovered) {
+            await route.continue();
+            return;
+          }
+          const response = await route.fetch();
+          const messages: TMessage[] = await response.json();
+          const assistant = messages.findLast((message) => !message.isCreatedByUser);
+          if (assistant == null) throw new Error('Expected a persisted assistant response');
+          assistant.text = 'Pending recovery';
+          assistant.content = [{ type: ContentTypes.TEXT, text: 'Pending recovery' }];
+          await route.fulfill({ response, json: messages });
+        },
+      );
       page.on('request', (request) => {
         if (
           request.method() === 'POST' &&
@@ -119,12 +122,17 @@ test.describe('stream transport fidelity', () => {
       try {
         /** A row for the current URL is intentionally a no-op; enter from new chat. */
         await page.goto(NEW_CHAT_PATH);
-        await page.getByTestId('convo-item').first().click();
+        await page.locator(`[data-conversation-id="${conversationId}"]`).click();
+        await expect(messagesView(page)).toContainText('Pending recovery');
+        /** Resume must wait for startup config: upstream needs its forced-retention
+         * policy before rebuilding a submission. The late retry policy applies to
+         * the first attachment too. */
+        expect(attachments).toBe(0);
+        releaseConfig();
+        await (await configResponse).finished();
         await unnegotiated;
         expect(attachments).toBe(1);
         await expect(messagesView(page)).toContainText('Pending recovery');
-        releaseConfig();
-        await (await configResponse).finished();
         /** Observe beyond the one-second pending retry, not just its scheduling task. */
         await page.waitForTimeout(1_500);
         expect(attachments).toBe(1);
@@ -199,24 +207,6 @@ test.describe('stream transport fidelity', () => {
               },
             });
           });
-          await page.addInitScript((failureCount) => {
-            let failedReads = 0;
-            const send = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.send = function (body) {
-              this.addEventListener(
-                'loadend',
-                () => {
-                  if (this.status !== 503 || !this.responseURL.includes('/api/messages/')) return;
-                  if (++failedReads !== failureCount) return;
-                  /** Yield past the XHR task's promise rejection chain, so the
-                   * hook has consumed its last failure before we go online. */
-                  setTimeout(() => console.debug('E2E terminal history failures consumed'), 0);
-                },
-                { once: true },
-              );
-              send.call(this, body);
-            };
-          }, failureCount);
         }
         await page.setViewportSize({ width: 390, height: 844 });
         await page.goto(NEW_CHAT_PATH, { timeout: 10000 });
@@ -226,9 +216,11 @@ test.describe('stream transport fidelity', () => {
           await page.reload();
           await expect(messagesView(page)).toContainText('E2E reply seed-history');
         }
+        let resumeAttachments = 0;
         await page.route('**/api/agents/chat/stream/**', async (route) => {
           const url = new URL(route.request().url());
           if (url.searchParams.get('resume') === 'true') {
+            resumeAttachments++;
             if (existingConversation) {
               await route.fulfill({ status: 404, json: { error: 'Stream expired' } });
             } else {
@@ -269,15 +261,20 @@ test.describe('stream transport fidelity', () => {
         const expected = `E2E reply ${label}`;
         await expect(messagesView(page)).not.toContainText(expected);
         const conversationUrl = page.url();
+        const conversationId = new URL(conversationUrl).pathname.split('/')[2];
         let failedHistoryReads = 0;
+        let historyAvailable = false;
         if (existingConversation) {
           await page.route(
-            '**/api/messages/*',
+            (url) => url.pathname === `/api/messages/${conversationId}`,
             async (route) => {
+              if (historyAvailable) {
+                await route.continue();
+                return;
+              }
               failedHistoryReads++;
               await route.fulfill({ status: 503, json: { error: 'Temporarily unavailable' } });
             },
-            { times: failureCount },
           );
         }
         const failedHistory = existingConversation
@@ -287,26 +284,26 @@ test.describe('stream transport fidelity', () => {
                 response.status() === 503,
             )
           : undefined;
-        const failuresConsumed = existingConversation
-          ? page.waitForEvent('console', {
-              predicate: (message) => message.text() === 'E2E terminal history failures consumed',
-              timeout: 45_000,
-            })
-          : undefined;
         await page.evaluate(() =>
           document.dispatchEvent(new Event('visibilitychange', { bubbles: true })),
         );
         await failedHistory;
         if (existingConversation) {
-          await failuresConsumed;
-          expect(failedHistoryReads).toBe(failureCount);
+          /** Background message observers also fetch preview history. Keep the
+           * outage in place and count fenced stream retries, not unrelated reads. */
+          await expect.poll(() => resumeAttachments).toBe(failureCount);
+          await expect.poll(() => failedHistoryReads).toBeGreaterThanOrEqual(failureCount);
+          await page.waitForTimeout(4_500);
+          expect(resumeAttachments).toBe(failureCount);
           await expect(messagesView(page)).not.toContainText(expected);
           /** Keep the page visible: only the browser's online event can rearm
            * the exhausted terminal recovery, not another foreground event. */
           await context.setOffline(true);
+          historyAvailable = true;
           await context.setOffline(false);
         }
         await expect(messagesView(page)).toContainText(expected, { timeout: 15000 });
+        if (existingConversation) expect(resumeAttachments).toBe(failureCount + 1);
         expect(page.url()).toBe(conversationUrl);
       });
     }

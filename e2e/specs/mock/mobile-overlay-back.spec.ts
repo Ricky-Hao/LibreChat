@@ -81,14 +81,11 @@ test.describe('supported mobile Back dismisses overlays without changing history
   }) => {
     const label = 'mobile-instructions-back';
     const chatUrl = await prepareMockChat(page, replyPrompt(label));
-    await page.getByTestId('header-open-sidebar-button').click();
-    await page.getByTestId('panel-switcher-button').click();
-    await page.getByRole('menuitemcheckbox', { name: 'Agent Builder', exact: true }).click();
-
-    const form = page.getByRole('form', { name: 'Agent configuration form' });
+    const form = await openAgentBuilder(page, { navigate: false });
+    const instructions = form.getByTestId('instructions-inline-panel');
     const agentName = uniqueAgentName('E2E Back Draft');
     await form.getByLabel('Agent name').fill(agentName);
-    await form.getByRole('button', { name: 'Expand editor', exact: true }).click();
+    await instructions.getByRole('button', { name: 'Expand editor', exact: true }).click();
 
     const editor = page.getByRole('dialog', { name: 'Instructions', exact: true });
     const draft = 'Keep this unsaved instruction draft.\nDo not navigate away from the chat.';
@@ -97,7 +94,7 @@ test.describe('supported mobile Back dismisses overlays without changing history
     await expect(form.getByLabel('Instructions', { exact: true })).toHaveValue(draft);
     await expect(form.getByLabel('Agent name')).toHaveValue(agentName);
 
-    await form.getByRole('button', { name: 'Expand editor', exact: true }).click();
+    await instructions.getByRole('button', { name: 'Expand editor', exact: true }).click();
     await expect(editor.getByRole('textbox', { name: 'Instructions', exact: true })).toHaveValue(
       draft,
     );
@@ -264,11 +261,17 @@ test.describe('supported mobile Back dismisses overlays without changing history
   test('preserves Forward after explicit close and after Back, reopen, and dismissal', async ({
     page,
   }) => {
-    const chatUrl = await prepareMockChat(page, replyPrompt('forward-preserved'));
+    const completedUrl = await prepareMockChat(page, replyPrompt('forward-preserved'));
     const previous = await previousUrl(page);
     await page.getByTestId('header-new-chat-button').click();
     await expect(page).toHaveURL(/\/c\/new/);
     const nextUrl = page.url();
+    /** Chat initialization mirrors the selected model spec with replaceState.
+     * Returning to a completed turn canonicalizes that same history entry. */
+    const backTarget = new URL(await previousUrl(page));
+    expect(backTarget.pathname).toBe(new URL(completedUrl).pathname);
+    backTarget.searchParams.set('spec', 'e2e-mock-provider-a');
+    const chatUrl = backTarget.href;
     await page.goBack();
     await expect(page).toHaveURL(chatUrl);
     const length = await page.evaluate(() => history.length);
