@@ -15,7 +15,10 @@ test('vendor chunk names depend on packages rather than checkout paths', async (
     { command: 'build', mode: 'production' },
     path.join(root, 'client/vite.config.ts'),
   );
-  const chunkName = loaded.config.build.rolldownOptions.output.codeSplitting.groups[0].name;
+  const chunkName = loaded.config.build.rolldownOptions.output.codeSplitting.groups.find(
+    (group) => typeof group.name === 'function',
+  )?.name;
+  assert.equal(typeof chunkName, 'function');
   for (const checkout of ['/app/LibreChat', '/home/ricky/git/LibreChat', '/work/mermaid/fetch']) {
     for (const [module, expected] of [
       ['react-dom/cjs/react-dom.production.min.js', 'vendor'],
