@@ -39,6 +39,7 @@ import type {
   EarlyBufferRecoveryFailureReason,
   EarlyBufferRecoveryOutcome,
 } from '../types/earlyBufferRecovery';
+import type { SubagentContentBuffer } from '~/agents/subagentContent';
 import type { AgentStartupTelemetry } from '~/agents/startup';
 import type { RecoveredSteerPayload } from './SteerRecovery';
 import type { SteerContentView } from './SteeringLifecycle';
@@ -8468,12 +8469,13 @@ class GenerationJobManagerClass {
     streamId: string,
     contentParts: Agents.MessageContentComplex[],
     expectedCreatedAt?: number,
+    subagentContent?: SubagentContentBuffer,
   ): void {
     const runtime = this.runtimeState.get(streamId);
     if (!runtime || (expectedCreatedAt != null && runtime.createdAt !== expectedCreatedAt)) {
       return;
     }
-    this.jobStore.setContentParts(streamId, contentParts, runtime.createdAt);
+    this.jobStore.setContentParts(streamId, contentParts, runtime.createdAt, subagentContent);
   }
 
   /**

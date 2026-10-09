@@ -33,7 +33,7 @@ jest.mock('@librechat/api', () => ({
   isCodeArtifactToolOutput: jest.requireActual('@librechat/api').isCodeArtifactToolOutput,
   isCodeSessionToolName: jest.requireActual('@librechat/api').isCodeSessionToolName,
   collectToolCallIds: jest.requireActual('@librechat/api').collectToolCallIds,
-  captureSubagentIdentity: jest.requireActual('@librechat/api').captureSubagentIdentity,
+  collectSubagentContent: jest.requireActual('@librechat/api').collectSubagentContent,
   createToolTimingAdapter: jest.requireActual('@librechat/api').createToolTimingAdapter,
   stampCommandExecutor: jest.requireActual('@librechat/api').stampCommandExecutor,
 }));
@@ -497,7 +497,7 @@ describe('resumable event generation fencing', () => {
       });
     }
     expect(jest.requireMock('@librechat/data-schemas').logger.warn).not.toHaveBeenCalled();
-    expect(aggregators.get('parent-call')?.contentParts[0]?.tool_call).toMatchObject({
+    expect([...aggregators.values()][0]?.contentParts[0]?.tool_call).toMatchObject({
       id: 'child-call',
       toolPreparationStartedAt: 100,
       toolPreparationDurationMs: 400,

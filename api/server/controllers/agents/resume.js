@@ -1985,7 +1985,12 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
       // resumed segment keeps historical tool results byte-identical to the paused one.
       client.seedContextMeta?.(job.metadata?.contextMeta);
       if (client.contentParts) {
-        GenerationJobManager.setContentParts(streamId, client.contentParts, job.createdAt);
+        GenerationJobManager.setContentParts(
+          streamId,
+          client.contentParts,
+          job.createdAt,
+          client.subagentAggregatorsByToolCallId,
+        );
       }
 
       const resumeClient = () =>

@@ -20,6 +20,7 @@ import type {
   SubagentUpdateEvent,
   PtcToolCallEvent,
   Agents,
+  FullToolCall,
 } from 'librechat-data-provider';
 import type { PtcTrace, PtcTraceEntry } from '~/common';
 import {
@@ -3663,6 +3664,63 @@ describe('useStepHandler', () => {
       label: 'Subagent "self" started',
       timestamp: new Date().toISOString(),
       ...overrides,
+    });
+
+    it('hydrates a cold child snapshot and extends it without replaying the prefix', () => {
+      const { result, getProgress } = renderStepHandlerWithReader();
+      const response = createResponseMessage({
+        content: [
+          {
+            type: ContentTypes.TOOL_CALL,
+            tool_call: {
+              id: 'call',
+              name: Constants.SUBAGENT,
+              args: '{}',
+              subagent_content: [
+                {
+                  type: ContentTypes.TEXT,
+                  text: 'Before',
+                  phase: 'commentary',
+                  stepId: 'child-text',
+                  subagentRunId: 'child-run-1',
+                  subagentSequence: 4,
+                },
+              ],
+            } as FullToolCall,
+          },
+        ],
+      });
+      mockGetMessages.mockReturnValue([response]);
+      const handler = result.current as ReturnType<typeof useStepHandler>;
+      act(() => handler.syncStepMessage(response));
+      expect(getProgress('call')).toMatchObject({
+        contentParts: [{ text: 'Before' }],
+        lastActivitySequence: 4,
+      });
+      act(() => {
+        for (const [activitySequence, text] of [
+          [4, 'Before'],
+          [5, ' after'],
+        ] as const) {
+          handler.stepHandler(
+            {
+              event: StepEvents.ON_SUBAGENT_UPDATE,
+              data: makeUpdate({
+                parentToolCallId: 'call',
+                phase: 'message_delta',
+                activitySequence,
+                data: { id: 'child-text', delta: { content: [{ type: 'text', text }] } },
+              }),
+            },
+            createSubmission(),
+          );
+        }
+      });
+      expect(getProgress('call')).toMatchObject({
+        contentParts: [{ text: 'Before after', phase: 'commentary' }],
+        lastActivitySequence: 5,
+        recoveredFromSnapshot: true,
+      });
     });
 
     it('signals parent-index discovery on child lifecycle events, not every progress delta', () => {

@@ -1,5 +1,4 @@
 import { logger } from '@librechat/data-schemas';
-import { createContentAggregator } from '@librechat/agents';
 import {
   ContentTypes,
   scheduleMCPOutcomeSchema,
@@ -8,6 +7,7 @@ import {
   getRunStepDurationMs,
   getRunStepCloseMetadata,
 } from 'librechat-data-provider';
+import type { SubagentUpdateEvent } from 'librechat-data-provider';
 import type { StandardGraph } from '@librechat/agents';
 import type { Agents } from 'librechat-data-provider';
 import type { Redis, Cluster } from 'ioredis';
@@ -36,6 +36,7 @@ import type {
   ScheduleProviderOwner,
 } from '~/stream/interfaces/IJobStore';
 import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
+import type { SubagentContentBuffer } from '~/agents/subagentContent';
 import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
 import type { RecoveredSteerPayload } from '~/stream/SteerRecovery';
 import {
@@ -59,10 +60,12 @@ import {
   SCHEDULE_MCP_RECEIPT_LUA,
   SCHEDULE_RETENTION_LUA,
 } from '~/stream/internal/scheduleReceipts';
+import { collectSubagentContent, snapshotSubagentContent } from '~/agents/subagentContent';
 import { parseScheduleMCPCompletion } from '~/schedules/authorization/continuation';
 import { instrumentIORedisClient, RedisUseCases } from '~/cache/redisTelemetry';
 import { RecoveredSteerPayloadMismatchError } from '~/stream/SteerRecovery';
 import { SCHEDULE_MCP_FAILURE_PATCH_LUA } from '../scheduleFailure';
+import { createOccurrenceAggregator } from '~/agents/occurrence';
 import { createCheckpointNamespace } from '~/stream/checkpoints';
 import { createToolTimingTracker } from '~/agents/toolTiming';
 import { evalScript } from '~/cache/redisScript';
@@ -1939,7 +1942,10 @@ export class RedisJobStore implements IJobStoreV2 {
    *  on local reads; cross-instance reads reconstruct from chunks. */
   private localContentParts = new Map<
     string,
-    LocalCacheEntry<WeakRef<Agents.MessageContentComplex[]>>
+    LocalCacheEntry<{
+      parts: WeakRef<Agents.MessageContentComplex[]>;
+      subagents?: WeakRef<SubagentContentBuffer>;
+    }>
   >();
 
   /** Cleanup interval in ms (1 minute) */
@@ -4278,10 +4284,14 @@ export class RedisJobStore implements IJobStoreV2 {
     streamId: string,
     contentParts: Agents.MessageContentComplex[],
     expectedCreatedAt?: number,
+    subagentContent?: SubagentContentBuffer,
   ): void {
     this.setLocalEntry(this.localContentParts, streamId, {
       createdAt: expectedCreatedAt,
-      value: new WeakRef(contentParts),
+      value: {
+        parts: new WeakRef(contentParts),
+        subagents: subagentContent == null ? undefined : new WeakRef(subagentContent),
+      },
     });
   }
 
@@ -4366,9 +4376,9 @@ export class RedisJobStore implements IJobStoreV2 {
       ? undefined
       : this.getLocalEntry(this.localContentParts, streamId, expectedCreatedAt);
     if (hostEntry) {
-      const hostParts = hostEntry.value.deref();
+      const hostParts = hostEntry.value.parts.deref();
       if (hostParts && hostParts.length > 0) {
-        return { content: hostParts };
+        return { content: snapshotSubagentContent(hostParts, hostEntry.value.subagents?.deref()) };
       }
       if (!hostParts) {
         this.deleteLocalEntry(this.localContentParts, streamId, undefined, hostEntry);
@@ -4411,7 +4421,8 @@ export class RedisJobStore implements IJobStoreV2 {
     }
 
     // Use the same content aggregator as live streaming
-    const { contentParts, aggregateContent } = createContentAggregator();
+    const { contentParts, aggregateContent, stepMap } = createOccurrenceAggregator();
+    const subagents: SubagentContentBuffer = new Map();
     const toolTiming = createToolTimingTracker();
 
     // Step ID -> content index, rebuilt from the replayed `on_run_step`
@@ -4441,6 +4452,11 @@ export class RedisJobStore implements IJobStoreV2 {
     for (const chunk of chunks) {
       const event = chunk as { event?: string; data?: unknown };
       if (!event.event || !event.data) {
+        continue;
+      }
+
+      if (event.event === 'on_subagent_update') {
+        collectSubagentContent(subagents, contentParts, event.data as SubagentUpdateEvent, stepMap);
         continue;
       }
 
@@ -4656,7 +4672,7 @@ export class RedisJobStore implements IJobStoreV2 {
     }
 
     return {
-      content: filtered,
+      content: snapshotSubagentContent(filtered, subagents),
       ...(options?.durableOnly === true && {
         reconstructedEventCount: chunks.length,
         durableEventCount: chunkSnapshot.durableEventCount,

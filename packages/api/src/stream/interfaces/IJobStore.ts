@@ -14,6 +14,7 @@ import type { AgentEventDetachedTerminalEvidence } from '~/agents/triggers/types
 import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
 import type { ActivityPhaseSnapshot } from '~/agents/activityPhases/runtime';
 import type { ReplayLimits, ReplayPublication } from '../internal/replay';
+import type { SubagentContentBuffer } from '~/agents/subagentContent';
 import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
 import type { RecoveredSteerPayload } from '../SteerRecovery';
 import type { MCPRuntimeRequestBody } from '~/mcp/types';
@@ -1036,6 +1037,7 @@ export interface IJobStore {
     streamId: string,
     contentParts: Agents.MessageContentComplex[],
     expectedCreatedAt?: number,
+    subagentContent?: SubagentContentBuffer,
   ): void;
   getContentParts(
     streamId: string,
@@ -1351,6 +1353,7 @@ export interface IJobStoreV2 extends IJobStore {
     streamId: string,
     contentParts: Agents.MessageContentComplex[],
     expectedCreatedAt?: number,
+    subagentContent?: SubagentContentBuffer,
   ): void;
 
   /**
