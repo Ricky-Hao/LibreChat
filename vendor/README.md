@@ -35,6 +35,8 @@ The artifact includes ESM, CJS and declarations, plus public source, license and
 README. The package allowlist excludes tests, fixtures, environment files and
 node_modules. `verify-agents.mjs [isolated-install-root]` checks tarball integrity,
 absence of nested stock SDK lock entries, and all require/import subpaths from
-both API consumers. It makes no provider or database calls.
+both API consumers. It makes no provider or database calls. `agents.json` records
+the reviewed artifact identity and checksum for both this verifier and the E2E
+locked-origin policy; update it when intentionally replacing the artifact.
 
 SHA-256: `7c87d4e1234ea21b4c07c56e8428a036c1c00d2cf812c58ae661068131e64320`.

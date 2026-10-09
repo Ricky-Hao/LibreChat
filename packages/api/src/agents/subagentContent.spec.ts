@@ -1,4 +1,5 @@
 import { ContentTypes } from 'librechat-data-provider';
+import { createContentAggregator, GraphEvents, StepTypes } from '@librechat/agents';
 import type { Agents, SubagentUpdateEvent } from 'librechat-data-provider';
 import type { SubagentContentBuffer } from './subagentContent';
 import {
@@ -27,7 +28,7 @@ const update = (
 });
 function start(
   buffer: SubagentContentBuffer,
-  parts: Agents.MessageContentComplex[],
+  parts: Array<Agents.MessageContentComplex | undefined>,
   run = 'child',
 ) {
   collectSubagentContent(
@@ -49,7 +50,7 @@ function start(
 }
 function delta(
   buffer: SubagentContentBuffer,
-  parts: Agents.MessageContentComplex[],
+  parts: Array<Agents.MessageContentComplex | undefined>,
   text: string,
   run = 'child',
 ) {
@@ -76,6 +77,65 @@ it('snapshots without draining or mutating a previously captured view', () => {
   expect(buffer.size).toBe(0);
   expect(parts[0]).toMatchObject({ tool_call: { subagent_content: [{ text: 'Before after' }] } });
 });
+
+it.each(['snapshot', 'finalize'] as const)(
+  '%s preserves SDK sparse parent indices and child activity',
+  (operation) => {
+    const aggregator = createContentAggregator();
+    aggregator.aggregateContent({
+      event: GraphEvents.ON_RUN_STEP,
+      data: {
+        type: StepTypes.TOOL_CALLS,
+        id: 'parent-step',
+        runId: 'parent',
+        index: 2,
+        stepDetails: {
+          type: StepTypes.TOOL_CALLS,
+          tool_calls: [{ id: 'call', name: 'subagent', args: {} }],
+        },
+      },
+    });
+    const parts = aggregator.contentParts;
+    // The SDK reserves global step indices even when preceding steps have no content.
+    expect(parts).toHaveLength(3);
+    expect(0 in parts).toBe(false);
+    const owner = parts[2];
+    const buffer: SubagentContentBuffer = new Map();
+    start(buffer, parts);
+    delta(buffer, parts, 'Child answer');
+    // Preserve a separate parent answer after another unfilled slot.
+    parts[4] = { type: ContentTypes.TEXT, text: 'Parent answer' };
+    let result = parts;
+    if (operation === 'snapshot') {
+      result = snapshotSubagentContent(parts, buffer);
+    } else {
+      finalizeSubagentContent(parts, buffer);
+    }
+    expect(result).toHaveLength(5);
+    expect(result[0]).toBeUndefined();
+    expect(result[1]).toBeUndefined();
+    expect(result[3]).toBeUndefined();
+    expect(result[2]).toMatchObject({
+      tool_call: {
+        id: 'call',
+        subagent_content: [{ text: 'Child answer', subagentRunId: 'child' }],
+      },
+    });
+    expect(result[4]).toEqual({ type: ContentTypes.TEXT, text: 'Parent answer' });
+    expect(owner).not.toHaveProperty('tool_call.subagent_content');
+    expect(buffer.size).toBe(operation === 'snapshot' ? 1 : 0);
+    if (operation === 'snapshot') {
+      expect(parts[2]).toBe(owner);
+      delta(buffer, parts, ' continued');
+      expect(snapshotSubagentContent(parts, buffer)[2]).toMatchObject({
+        tool_call: { subagent_content: [{ text: 'Child answer continued' }] },
+      });
+      expect(result[2]).toMatchObject({
+        tool_call: { subagent_content: [{ text: 'Child answer' }] },
+      });
+    }
+  },
+);
 
 it('does not guess a parent occurrence from an ambiguous legacy call ID', () => {
   const parts = [parent(), parent()];

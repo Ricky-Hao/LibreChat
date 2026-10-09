@@ -1,62 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
+import type { LockEntry, Lockfile } from './registry.helpers';
 import { inOneProject, repoRoot } from './lint.helpers';
+import { offRegistry, PUBLIC_REGISTRY } from './registry.helpers';
 
 /**
  * Every job on this pull request died in `npm ci`: the lockfile entries the stack
  * added resolved to a private mirror that no GitHub runner and no contributor can
  * reach. What a clean install needs is that each locked tarball comes from a host
  * this repository already installs from, and that the registry actually serves
- * it — so the hosts are checked for the whole lockfile and the tarballs are then
- * asked for. Neither half depends on this being a branch: the same assertions
- * hold on `dev` and after this change merges.
+ * it. Hosts are checked for the whole lockfile, with the declared, integrity-checked
+ * repaired SDK archive as the sole file exception. Registry availability is
+ * already exercised by this job's clean install.
  */
-
-type LockEntry = { resolved?: string; integrity?: string; version?: string; link?: boolean };
-type Lockfile = { packages: Record<string, LockEntry> };
-
-const PUBLIC_REGISTRY = 'registry.npmjs.org';
-
-/**
- * The one non-registry host this repository installs from, and the one package
- * it serves: `xlsx` is published on SheetJS's own CDN. Keyed by package rather
- * than listed as a host, so regenerating the lockfile against that CDN cannot
- * quietly move anything else onto it.
- */
-const INHERITED_HOST_OF: Record<string, string> = { xlsx: 'cdn.sheetjs.com' };
-
-/** Lock keys nest: `node_modules/a/node_modules/xlsx` is still `xlsx`. */
-const packageOf = (key: string): string => key.split('node_modules/').pop() ?? key;
-
-/** Workspace links resolve to a directory in this repo, not to a tarball; every
- *  other `resolved` is a URL, and one that is not `https` is itself the
- *  failure, so it is reported as an unusable host rather than skipped. */
-const tarballHost = (entry: LockEntry): string | undefined => {
-  if (entry.link || !entry.resolved) return undefined;
-  if (!entry.resolved.startsWith('https://')) return `insecure:${entry.resolved}`;
-  return new URL(entry.resolved).host;
-};
-
-/**
- * Every locked entry a clean install could not fetch from a host this
- * repository already installs from, named rather than counted so a lockfile
- * written against a private mirror says which package brought it. The exception
- * belongs to a package, not to a host: `xlsx` may come from SheetJS's CDN at
- * any version, and nothing else may come from anywhere but the registry — which
- * is the case a version comparison against the base branch would miss, since
- * regenerating a lockfile can rewrite `resolved` without touching `version`.
- */
-export function offRegistry(head: Lockfile): string[] {
-  const problems: string[] = [];
-  for (const [key, entry] of Object.entries(head.packages)) {
-    const host = tarballHost(entry);
-    if (host === undefined || host === PUBLIC_REGISTRY) continue;
-    if (INHERITED_HOST_OF[packageOf(key)] === host) continue;
-    problems.push(`${key} -> ${entry.resolved}`);
-  }
-  return problems;
-}
 
 test.describe('the locked dependency set', () => {
   test('every locked package resolves from the public registry @scenario:every-locked-package-resolves-from-the-public-registry', () => {

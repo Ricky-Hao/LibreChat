@@ -198,14 +198,19 @@ export function collectSubagentContent(
 
 /** Snapshot without draining live aggregators. Copies parent calls so future deltas cannot
  * mutate an already captured reconnect snapshot. Existing resumed activity is retained. */
-export function snapshotSubagentContent(parts: Part[], buffer?: SubagentContentBuffer): Part[] {
+export function snapshotSubagentContent(parts: Part[], buffer?: SubagentContentBuffer): Part[];
+export function snapshotSubagentContent(parts: Parts, buffer?: SubagentContentBuffer): Parts;
+export function snapshotSubagentContent(parts: Parts, buffer?: SubagentContentBuffer): Parts {
   if (!buffer?.size) return parts;
   const result = parts.slice();
-  const indices = new Map(parts.map((part, index) => [part, index]));
+  const indices = new Map<Part, number>();
   const owners = new Map<string, Part | undefined>();
-  for (const part of parts) {
+  // SDK content is sparse. Index only present owners without compacting stream positions.
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index];
     if (part?.type !== ContentTypes.TOOL_CALL || part.tool_call.name !== Constants.SUBAGENT)
       continue;
+    indices.set(part, index);
     owners.set(JSON.stringify([part.tool_call.id, part.tool_call.stepId]), part);
     const callKey = JSON.stringify([part.tool_call.id]);
     // Without a retained object or step identity, a reused raw ID is ambiguous.
@@ -261,7 +266,7 @@ export function snapshotSubagentContent(parts: Part[], buffer?: SubagentContentB
             },
           ],
     );
-    const projected = result[index];
+    const projected = result[index]!;
     const existing =
       projected.type === ContentTypes.TOOL_CALL
         ? (projected.tool_call.subagent_content as Part[] | undefined)
@@ -285,7 +290,7 @@ export function snapshotSubagentContent(parts: Part[], buffer?: SubagentContentB
 }
 
 /** Final save has the same projection as reconnect, then releases the completed run. */
-export function finalizeSubagentContent(parts: Part[], buffer: SubagentContentBuffer): void {
+export function finalizeSubagentContent(parts: Parts, buffer: SubagentContentBuffer): void {
   const snapshot = snapshotSubagentContent(parts, buffer);
   if (snapshot !== parts) parts.splice(0, parts.length, ...snapshot);
   buffer.clear();
