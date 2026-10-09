@@ -9,6 +9,7 @@ import type {
   SubagentUpdatePhase,
   TMessageContentParts,
   SubagentUpdateEvent,
+  SubagentContentMetadata,
 } from 'librechat-data-provider';
 import type { Getter, PrimitiveAtom, WritableAtom } from 'jotai';
 import type { SetStateAction } from 'react';
@@ -39,6 +40,8 @@ import {
  * capped by item count and encoded size to match the durable public view.
  */
 export interface SubagentProgress {
+  /** Live deltas extend a reconnect snapshot, so this projection supersedes that snapshot. */
+  recoveredFromSnapshot?: boolean;
   /** Child run id from the SDK — unique per spawn; one tool_call may only have one. */
   subagentRunId: string;
   /** `type` identifier from the SubagentConfig (e.g. 'self', 'researcher'). */
@@ -641,7 +644,8 @@ const foldAcceptedSubagentEvents = (
   )
     return foldLegacyInvocations(previous, events, pendingSequencedEvents);
   const firstSequence = events[0].activitySequence;
-  const priorSequence = previous?.lastActivitySequence;
+  const sameRun = previous?.subagentRunId === events[0].subagentRunId;
+  const priorSequence = sameRun ? previous?.lastActivitySequence : undefined;
   const hasGap =
     validActivitySequence(firstSequence) &&
     validActivitySequence(priorSequence) &&
@@ -662,7 +666,8 @@ const foldAcceptedSubagentEvents = (
   }
   const boundedEventKeys = recentEventKeys.slice(-MAX_RECENT_EVENT_KEYS);
   let contentParts = previous?.contentParts ?? [];
-  let aggregatorState = previous?.aggregatorState ?? initSubagentAggregatorState();
+  let aggregatorState =
+    (sameRun ? previous?.aggregatorState : undefined) ?? initSubagentAggregatorState();
   let tickerState = previous?.tickerState ?? initSubagentTickerState();
   let subagentKind = previous?.subagentKind;
   const omissions = acceptedOmissions(previous, events);
@@ -692,6 +697,11 @@ const foldAcceptedSubagentEvents = (
     contentParts,
     aggregatorState,
   ));
+  if (previous?.recoveredFromSnapshot === true) {
+    contentParts = contentParts.map((part: SubagentContentPart & SubagentContentMetadata) =>
+      part.subagentRunId == null ? { ...part, subagentRunId: events[0].subagentRunId } : part,
+    );
+  }
   tickerState = boundTickerState(tickerState);
   const last = events[events.length - 1];
   const lastActivitySequence = [...events]
@@ -702,6 +712,7 @@ const foldAcceptedSubagentEvents = (
   const acceptedRunStart = events.some((event) => event.activitySequence === 0);
   return {
     subagentRunId: last.subagentRunId,
+    recoveredFromSnapshot: previous?.recoveredFromSnapshot,
     subagentType: last.subagentType,
     subagentAgentId: last.subagentAgentId ?? previous?.subagentAgentId,
     subagentKind,
@@ -872,6 +883,50 @@ export function reduceSubagentProgress(
     activityReplayFrom: replayFrom,
     activityReplayThrough: replayThrough,
   });
+}
+
+/** Restore the compact snapshot before folding post-reconnect deltas. No raw replay log is kept. */
+export function recoverSubagentProgress(
+  previous: SubagentProgress | null,
+  content: TMessageContentParts[] | undefined,
+): SubagentProgress | null {
+  const parts = (content ?? []).filter(
+    (part) =>
+      (part.type === ContentTypes.TEXT && typeof part.text === 'string') ||
+      (part.type === ContentTypes.THINK && typeof part.think === 'string') ||
+      part.type === ContentTypes.TOOL_CALL,
+  ) as Array<SubagentContentPart & SubagentContentMetadata>;
+  const last = parts[parts.length - 1];
+  if (!last?.subagentRunId || last.subagentSequence == null) return previous;
+  if (
+    previous?.subagentRunId === last.subagentRunId &&
+    (previous.lastActivitySequence ?? -1) >= last.subagentSequence
+  )
+    return previous;
+  const bounded = boundContentParts(parts, initSubagentAggregatorState());
+  const state = bounded.state;
+  for (let index = 0; index < bounded.parts.length; index++) {
+    const part = bounded.parts[index] as SubagentContentPart & SubagentContentMetadata;
+    if (part.subagentRunId !== last.subagentRunId) continue;
+    if (part.type === ContentTypes.TOOL_CALL) {
+      state.toolCallIndexById[part.tool_call.id] = index;
+    } else if (part.type === ContentTypes.TEXT && part.stepId && part.phase) {
+      state.messagePhaseByStepId[part.stepId] = part.phase;
+    }
+  }
+  if (last.type === ContentTypes.TEXT) state.openTextIdx = bounded.parts.length - 1;
+  if (last.type === ContentTypes.THINK) state.openThinkIdx = bounded.parts.length - 1;
+  return {
+    subagentRunId: last.subagentRunId,
+    subagentType: previous?.subagentType ?? '',
+    contentParts: bounded.parts,
+    aggregatorState: bounded.state,
+    tickerState: initSubagentTickerState(),
+    status: last.subagentStatus ?? 'message_delta',
+    lastActivitySequence: last.subagentSequence,
+    coverage: 'complete',
+    recoveredFromSnapshot: true,
+  };
 }
 
 /** Prefix events are new coverage, not a replacement for newer foreground parts.

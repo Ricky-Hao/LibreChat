@@ -1021,8 +1021,13 @@ describe('measured tool timing replay provenance', () => {
         lifecycle,
         false,
       );
-      expect(progress?.contentParts[0]).not.toHaveProperty('tool_call.toolPreparationDurationMs');
-      expect(progress?.contentParts[0]).not.toHaveProperty('tool_call.toolExecutionDurationMs');
+      expect(progress?.contentParts).toHaveLength(2);
+      const completed = progress?.contentParts.find(
+        (part) => part.type === ContentTypes.TOOL_CALL && part.tool_call.stepId === 'other-step',
+      );
+      expect(completed).toMatchObject({ tool_call: { progress: 1, output: 'found' } });
+      expect(completed).not.toHaveProperty('tool_call.toolPreparationDurationMs');
+      expect(completed).not.toHaveProperty('tool_call.toolExecutionDurationMs');
     },
   );
   it.each([NaN, Infinity, -1, 2_000])(

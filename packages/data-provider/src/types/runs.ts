@@ -566,6 +566,14 @@ export interface SubagentAncestryEntry {
 
 export type SubagentIdentity = Pick<SubagentAncestryEntry, 'subagentKind' | 'subagentAgentId'>;
 
+/** Correlation and replay frontier carried by persisted foreground child parts. */
+export interface SubagentContentMetadata {
+  subagentRunId?: string;
+  subagentSequence?: number;
+  subagentStatus?: SubagentUpdatePhase;
+  stepId?: string;
+}
+
 /** Single streamed subagent update forwarded by the SDK's SubagentExecutor. */
 export interface SubagentUpdateEvent {
   runId: string;

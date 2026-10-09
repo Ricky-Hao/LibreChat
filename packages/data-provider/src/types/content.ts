@@ -1,4 +1,4 @@
-import type { SubagentIdentity, ContentTypes } from './runs';
+import type { SubagentIdentity, SubagentContentMetadata, ContentTypes } from './runs';
 import type { Agents } from './agents';
 import type { TFile } from './files';
 
@@ -199,7 +199,8 @@ export type PartMetadata = {
 };
 
 /** Metadata for parallel content rendering - subset of PartMetadata */
-export type ContentMetadata = Pick<PartMetadata, 'agentId' | 'groupId' | 'streamedIndex'>;
+export type ContentMetadata = Pick<PartMetadata, 'agentId' | 'groupId' | 'streamedIndex'> &
+  SubagentContentMetadata;
 
 export type ContentPart = (
   | CodeToolCall

@@ -7,22 +7,23 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(process.argv[2] ?? resolve(dirname(fileURLToPath(import.meta.url)), '..'));
-const artifact = 'vendor/librechat-agents-4.0.4-ricky.1.tgz';
+const metadata = JSON.parse(readFileSync(new URL('./agents.json', import.meta.url), 'utf8'));
+const { artifact, version, consumers, sha256 } = metadata;
+const archive = readFileSync(resolve(root, artifact));
+assert.equal(createHash('sha256').update(archive).digest('hex'), sha256);
 const lock = JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8'));
 const entries = Object.entries(lock.packages).filter(([name]) =>
   name.endsWith('node_modules/@librechat/agents'),
 );
 assert.equal(entries.length, 1, 'A nested SDK copy is forbidden');
-assert.equal(entries[0][1].version, '4.0.4-ricky.1');
+assert.equal(entries[0][1].version, version);
 assert.equal(entries[0][1].resolved, `file:${artifact}`);
 assert.equal(
   entries[0][1].integrity,
-  `sha512-${createHash('sha512')
-    .update(readFileSync(resolve(root, artifact)))
-    .digest('base64')}`,
+  `sha512-${createHash('sha512').update(archive).digest('base64')}`,
 );
 
-for (const consumer of ['api', 'packages/api']) {
+for (const consumer of consumers) {
   const require = createRequire(resolve(root, consumer, 'package.json'));
   const manifest = JSON.parse(
     readFileSync(
@@ -30,7 +31,7 @@ for (const consumer of ['api', 'packages/api']) {
       'utf8',
     ),
   );
-  assert.equal(manifest.version, '4.0.4-ricky.1');
+  assert.equal(manifest.version, version);
   for (const subpath of Object.keys(manifest.exports)) {
     const specifier = `@librechat/agents${subpath === '.' ? '' : subpath.slice(1)}`;
     assert.ok(require(specifier));

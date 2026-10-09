@@ -17,8 +17,151 @@ import {
   initSubagentAggregatorState,
   initSubagentTickerState,
 } from '~/utils/subagentContent';
+import { recoverSubagentProgress, reduceSubagentProgress } from './state';
 
 describe('child activity adapters', () => {
+  it('keeps a resumed child run separate when it reuses the prior message step ID', () => {
+    const persisted: TMessageContentParts[] = [
+      {
+        type: ContentTypes.TEXT,
+        text: 'First',
+        stepId: 'text',
+        subagentRunId: 'first-run',
+        subagentSequence: 4,
+      },
+    ];
+    const progress = reduceSubagentProgress(recoverSubagentProgress(null, persisted), [
+      {
+        runId: 'parent',
+        subagentRunId: 'second-run',
+        subagentType: 'self',
+        subagentAgentId: 'agent',
+        timestamp: '',
+        phase: 'message_delta',
+        activitySequence: 0,
+        data: { id: 'text', delta: { content: [{ type: 'text', text: 'Second' }] } },
+      },
+    ]);
+    const activity = adaptLivePersistedActivity({
+      title: 'Child',
+      persistedContent: persisted,
+      progress,
+      initialProgress: 0.5,
+      isSubmitting: true,
+    });
+    expect(activity.items).toEqual([
+      { type: 'writing', text: 'First' },
+      { type: 'writing', text: 'Second' },
+    ]);
+  });
+  it('continues recovered reasoning in place and keeps reused tool IDs on their own steps', () => {
+    const persisted: TMessageContentParts[] = [
+      {
+        type: ContentTypes.TOOL_CALL,
+        tool_call: { id: 'reused', name: 'lookup', args: '{}', stepId: 'first', progress: 0.1 },
+        subagentRunId: 'child',
+        stepId: 'first',
+        subagentSequence: 4,
+      },
+      {
+        type: ContentTypes.TOOL_CALL,
+        tool_call: { id: 'reused', name: 'lookup', args: '{}', stepId: 'second', progress: 0.1 },
+        subagentRunId: 'child',
+        stepId: 'second',
+        subagentSequence: 4,
+      },
+      {
+        type: ContentTypes.THINK,
+        think: 'Before',
+        stepId: 'reason',
+        subagentRunId: 'child',
+        subagentSequence: 4,
+      },
+    ];
+    const progress = reduceSubagentProgress(recoverSubagentProgress(null, persisted), [
+      {
+        runId: 'parent',
+        subagentRunId: 'child',
+        subagentType: 'self',
+        timestamp: '',
+        phase: 'reasoning_delta',
+        subagentAgentId: 'agent',
+        activitySequence: 5,
+        data: { id: 'reason', delta: { content: [{ type: 'think', think: ' after' }] } },
+      },
+      {
+        runId: 'parent',
+        subagentRunId: 'child',
+        subagentType: 'self',
+        timestamp: '',
+        phase: 'run_step_completed',
+        subagentAgentId: 'agent',
+        activitySequence: 6,
+        data: {
+          result: { id: 'first', tool_call: { id: 'reused', output: 'First result', progress: 1 } },
+        },
+      },
+    ]);
+    const activity = adaptLivePersistedActivity({
+      title: 'Child',
+      persistedContent: persisted,
+      progress,
+      initialProgress: 0.5,
+      isSubmitting: true,
+    });
+    expect(activity.items).toHaveLength(3);
+    expect(activity.items[0]).toMatchObject({
+      type: 'tool',
+      output: 'First result',
+      status: 'completed',
+    });
+    expect(activity.items[1]).toMatchObject({ type: 'tool', status: 'running' });
+    expect(activity.items[2]).toMatchObject({ type: 'reasoning', text: 'Before after' });
+  });
+  it('keeps a recovered prefix longer than the bounded live atom when new deltas arrive', () => {
+    const persisted: TMessageContentParts[] = Array.from({ length: 110 }, (_, index) => ({
+      type: ContentTypes.TEXT,
+      text: `Part ${index}`,
+      stepId: `step-${index}`,
+      subagentRunId: 'child',
+      subagentSequence: 220,
+    }));
+    const progress = reduceSubagentProgress(recoverSubagentProgress(null, persisted), [
+      {
+        runId: 'parent',
+        subagentRunId: 'child',
+        subagentType: 'self',
+        subagentAgentId: 'agent',
+        timestamp: '',
+        phase: 'message_delta',
+        activitySequence: 221,
+        data: { id: 'step-109', delta: { content: [{ type: 'text', text: ' continued' }] } },
+      },
+    ]);
+    expect(progress?.contentParts).toHaveLength(100);
+    const activity = adaptLivePersistedActivity({
+      title: 'Child',
+      persistedContent: persisted,
+      progress,
+      initialProgress: 0.5,
+      isSubmitting: true,
+    });
+    expect(activity.items).toHaveLength(110);
+    expect(activity.items[0]).toMatchObject({ text: 'Part 0' });
+    expect(activity.items[109]).toMatchObject({ text: 'Part 109 continued' });
+    const final = adaptLivePersistedActivity({
+      title: 'Child',
+      progress,
+      initialProgress: 1,
+      isSubmitting: false,
+      persistedContent: persisted.map((part, index) => ({
+        ...part,
+        subagentSequence: 222,
+        ...(index === 109 ? { text: 'Authoritative final text' } : {}),
+      })),
+    });
+    expect(final.items[109]).toMatchObject({ text: 'Authoritative final text' });
+  });
   it('passes child dispatch and completed durations to the generic tool card', () => {
     const progress = {
       subagentRunId: 'child',

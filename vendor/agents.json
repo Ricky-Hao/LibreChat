@@ -1,0 +1,7 @@
+{
+  "name": "@librechat/agents",
+  "version": "4.0.4-ricky.1",
+  "artifact": "vendor/librechat-agents-4.0.4-ricky.1.tgz",
+  "sha256": "7c87d4e1234ea21b4c07c56e8428a036c1c00d2cf812c58ae661068131e64320",
+  "consumers": ["api", "packages/api"]
+}

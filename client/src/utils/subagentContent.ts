@@ -1,5 +1,9 @@
 import { ContentTypes, ToolCallTypes, getToolTimingDurations } from 'librechat-data-provider';
-import type { SubagentUpdateEvent, ToolTimingStamps } from 'librechat-data-provider';
+import type {
+  SubagentContentMetadata,
+  SubagentUpdateEvent,
+  ToolTimingStamps,
+} from 'librechat-data-provider';
 
 /**
  * Client-side helpers for rendering the live `SubagentCall` UI while
@@ -113,7 +117,7 @@ type ToolCallPart = {
 
 /** Single content-part-shaped entry produced by the aggregator. The union
  *  matches the subset of `TMessageContentParts` a subagent run emits. */
-export type SubagentContentPart = TextPart | ThinkPart | ToolCallPart;
+export type SubagentContentPart = (TextPart | ThinkPart | ToolCallPart) & SubagentContentMetadata;
 
 const extractTextChunk = (
   data: MessageDeltaData | undefined,
@@ -190,6 +194,34 @@ export function initSubagentAggregatorState(): SubagentAggregatorState {
   };
 }
 
+/** The fast raw-ID index covers ordinary calls; reused IDs require the step occurrence. */
+function toolPartIndex(
+  parts: SubagentContentPart[],
+  state: SubagentAggregatorState,
+  id: string,
+  runId: string,
+  stepId?: string,
+): number | undefined {
+  const index = state.toolCallIndexById[id];
+  if (index == null) return undefined;
+  const part = parts[index];
+  if (
+    part?.type === ContentTypes.TOOL_CALL &&
+    (part.subagentRunId == null || part.subagentRunId === runId) &&
+    (stepId == null || part.tool_call.stepId == null || part.tool_call.stepId === stepId)
+  )
+    return index;
+  if (stepId == null) return undefined;
+  const matched = parts.findIndex(
+    (entry) =>
+      entry.type === ContentTypes.TOOL_CALL &&
+      (entry.subagentRunId == null || entry.subagentRunId === runId) &&
+      entry.tool_call.id === id &&
+      entry.tool_call.stepId === stepId,
+  );
+  return matched < 0 ? undefined : matched;
+}
+
 /**
  * Incrementally fold a single {@link SubagentUpdateEvent} into an existing
  * `contentParts` array, returning a new array + updated cursor state.
@@ -256,7 +288,7 @@ export function foldSubagentEvent(
       const idx = afterTextClose.openThinkIdx;
       const existing = parts[idx] as ThinkPart;
       const next = parts.slice();
-      next[idx] = { type: ContentTypes.THINK, think: existing.think + chunk };
+      next[idx] = { ...existing, think: existing.think + chunk };
       return { parts: next, state: afterTextClose };
     }
     const next = parts.slice();
@@ -293,7 +325,18 @@ export function foldSubagentEvent(
     let next = parts;
     const toolCallIndexById = { ...state.toolCallIndexById };
     for (const tc of toolCalls) {
-      if (typeof tc?.id !== 'string' || !tc.id || tc.id in toolCallIndexById) continue;
+      if (
+        typeof tc?.id !== 'string' ||
+        !tc.id ||
+        toolPartIndex(
+          next,
+          { ...state, toolCallIndexById },
+          tc.id,
+          event.subagentRunId,
+          data?.id,
+        ) != null
+      )
+        continue;
       if (next === parts) next = parts.slice();
       toolCallIndexById[tc.id] = next.length;
       next.push({
@@ -328,8 +371,9 @@ export function foldSubagentEvent(
     const id = data?.toolCallId;
     const at = data?.observed_at;
     if (!id || typeof at !== 'number' || !Number.isFinite(at) || at < 0) return { parts, state };
-    const idx = state.toolCallIndexById[id];
-    const part = idx == null ? undefined : parts[idx];
+    const idx = toolPartIndex(parts, state, id, event.subagentRunId, data.id);
+    if (idx == null) return { parts, state };
+    const part = parts[idx];
     if (
       part?.type !== ContentTypes.TOOL_CALL ||
       part.tool_call.stepId !== data.id ||
@@ -354,8 +398,9 @@ export function foldSubagentEvent(
     let next = parts;
     for (const call of data?.toolCalls ?? []) {
       if (!call.id || !call.stepId) continue;
-      const idx = state.toolCallIndexById[call.id];
-      const part = idx == null ? undefined : next[idx];
+      const idx = toolPartIndex(next, state, call.id, event.subagentRunId, call.stepId);
+      if (idx == null) continue;
+      const part = next[idx];
       if (
         part?.type !== ContentTypes.TOOL_CALL ||
         part.tool_call.stepId !== call.stepId ||
@@ -378,7 +423,7 @@ export function foldSubagentEvent(
     const data = event.data as RunStepCompletedData | undefined;
     const tc = data?.result?.tool_call;
     if (typeof tc?.id !== 'string' || !tc.id) return { parts, state };
-    const existingIdx = state.toolCallIndexById[tc.id];
+    const existingIdx = toolPartIndex(parts, state, tc.id, event.subagentRunId, data?.result?.id);
     if (existingIdx != null) {
       const existing = parts[existingIdx] as ToolCallPart;
       const completedAt = data?.result?.completed_at;
@@ -399,7 +444,7 @@ export function foldSubagentEvent(
             })
           : {};
       const merged: ToolCallPart = {
-        type: ContentTypes.TOOL_CALL,
+        ...existing,
         tool_call: {
           ...existing.tool_call,
           ...completion,

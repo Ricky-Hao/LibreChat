@@ -2181,7 +2181,12 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
 
     // Store reference to client's contentParts - graph will be set when run is created
     if (client?.contentParts) {
-      GenerationJobManager.setContentParts(streamId, client.contentParts, jobCreatedAt);
+      GenerationJobManager.setContentParts(
+        streamId,
+        client.contentParts,
+        jobCreatedAt,
+        client.subagentAggregatorsByToolCallId,
+      );
     }
 
     let userMessage;

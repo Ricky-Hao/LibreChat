@@ -288,6 +288,43 @@ const liveStatus = ({
   return isSubmitting ? 'running' : 'cancelled';
 };
 
+/** Overlay the bounded live tail without dropping the snapshot's older prefix. */
+function mergeRecoveredContent(
+  persisted: TMessageContentParts[],
+  live: TMessageContentParts[],
+  runId: string,
+  sequence?: number,
+): TMessageContentParts[] {
+  const identity = (part: TMessageContentParts): string | undefined => {
+    const tool = part.type === ContentTypes.TOOL_CALL ? part.tool_call : undefined;
+    const stepId = part.stepId ?? (tool != null && 'stepId' in tool ? tool.stepId : undefined);
+    if (stepId == null) return undefined;
+    return JSON.stringify([part.subagentRunId ?? runId, stepId, part.type, tool?.id]);
+  };
+  const indices = new Map<string, number>();
+  const references = new Set(persisted);
+  const merged = persisted.slice();
+  for (const [index, part] of persisted.entries()) {
+    const key = identity(part);
+    if (key != null) indices.set(key, index);
+  }
+  for (const part of live) {
+    const key = identity(part);
+    const index = key == null ? undefined : indices.get(key);
+    if (index != null) {
+      const liveSequence =
+        part.subagentRunId != null && part.subagentRunId !== runId
+          ? part.subagentSequence
+          : sequence;
+      const storedSequence = merged[index].subagentSequence;
+      if (storedSequence != null && liveSequence != null && storedSequence >= liveSequence)
+        continue;
+      merged[index] = part;
+    } else if (!references.has(part)) merged.push(part);
+  }
+  return merged;
+}
+
 /** Adapts live SSE state, parent persistence, and legacy output at one seam. */
 export function adaptLivePersistedActivity(input: {
   title: string;
@@ -304,8 +341,19 @@ export function adaptLivePersistedActivity(input: {
   const persisted = input.persistedContent ?? [];
   const live = (input.progress?.contentParts ?? []) as TMessageContentParts[];
   const approvalVisibility = input.approvalVisibility ?? 'visible';
-  const persistedItems = contentPartsToActivity(persisted, approvalVisibility);
-  const liveItems = contentPartsToActivity(live, approvalVisibility);
+  const recovered = input.progress?.recoveredFromSnapshot === true && live.length > 0;
+  const persistedItems = contentPartsToActivity(
+    recovered
+      ? mergeRecoveredContent(
+          persisted,
+          live,
+          input.progress!.subagentRunId,
+          input.progress!.lastActivitySequence,
+        )
+      : persisted,
+    approvalVisibility,
+  );
+  const liveItems = recovered ? [] : contentPartsToActivity(live, approvalVisibility);
   let items = persistedItems.length > 0 ? persistedItems : liveItems;
   if (input.isDetached === true && input.progress?.coverage === 'suffix') {
     items = mergePersistedAndLiveActivity(persistedItems, liveItems);

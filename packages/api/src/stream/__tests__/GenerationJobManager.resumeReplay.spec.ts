@@ -1,6 +1,7 @@
 import { StepEvents, ContentTypes } from 'librechat-data-provider';
 import type { StandardGraph } from '@librechat/agents';
 import type { Agents } from 'librechat-data-provider';
+import type { SubagentContentBuffer } from '~/agents/subagentContent';
 import type { AbortResult } from '../interfaces/IJobStore';
 import type { ServerSentEvent } from '~/types';
 import {
@@ -9,6 +10,7 @@ import {
 } from '~/stream/GenerationJobManager';
 import { InMemoryEventTransport } from '~/stream/implementations/InMemoryEventTransport';
 import { InMemoryJobStore } from '~/stream/implementations/InMemoryJobStore';
+import { collectSubagentContent } from '~/agents/subagentContent';
 import { createToolTimingTracker } from '~/agents/toolTiming';
 
 jest.spyOn(console, 'log').mockImplementation();
@@ -71,6 +73,40 @@ describe('GenerationJobManager resume replay events', () => {
   afterEach(async () => {
     await manager?.destroy();
     manager = undefined;
+  });
+
+  test('same-instance reconnect includes a finished child before parent finalization', async () => {
+    manager = createInMemoryManager();
+    const job = await manager.createJob('child-reconnect', 'user-1', 'child-reconnect');
+    const content: Agents.MessageContentComplex[] = [
+      { type: ContentTypes.TOOL_CALL, tool_call: { id: 'call', name: 'subagent', args: '{}' } },
+    ];
+    const buffer: SubagentContentBuffer = new Map();
+    manager.setContentParts('child-reconnect', content, job.createdAt, buffer);
+    const base = {
+      runId: 'parent',
+      subagentRunId: 'child',
+      parentToolCallId: 'call',
+      subagentType: 'self',
+      subagentAgentId: 'child-agent',
+      timestamp: '',
+    };
+    collectSubagentContent(buffer, content, {
+      ...base,
+      phase: 'run_step',
+      data: { id: 'child-text', index: 0, stepDetails: { type: 'message_creation' } },
+    });
+    collectSubagentContent(buffer, content, {
+      ...base,
+      phase: 'message_delta',
+      data: { id: 'child-text', delta: { content: [{ type: 'text', text: 'Recovered work' }] } },
+    });
+    collectSubagentContent(buffer, content, { ...base, phase: 'stop' });
+    const state = await manager.getResumeState('child-reconnect', job.createdAt);
+    expect(state?.aggregatedContent).toMatchObject([
+      { tool_call: { subagent_content: [{ text: 'Recovered work', subagentStatus: 'stop' }] } },
+    ]);
+    expect(buffer.size).toBe(1);
   });
 
   test('projects regeneration ownership into resume state', async () => {

@@ -7,6 +7,7 @@ const {
   Providers,
   GraphEvents,
   FakeChatModel,
+  registerProvider,
   createContentAggregator,
 } = require('@librechat/agents');
 const {
@@ -392,10 +393,10 @@ describe('usage events through the real agents pipeline', () => {
     }
   });
 
-  /** Drives a real summarization (tight context + padded history); self-summarize
-   *  reuses the overridden fake model so no API key is needed. */
+  /** Register both provider fakes: the summarizer is initialized separately, and
+   *  Graph.overrideModel bypasses the primary system/summary prompt runnable. */
   async function runSummarizationLoop({ res, collectedUsage, contextUsageSink, usageEmitSink }) {
-    const { aggregateContent } = createContentAggregator();
+    const { contentParts, aggregateContent } = createContentAggregator();
     const handlers = getDefaultHandlers({
       res,
       aggregateContent,
@@ -410,9 +411,10 @@ describe('usage events through the real agents pipeline', () => {
     const history = [
       new HumanMessage(`Turn 1 question. ${pad}`),
       new AIMessage(`Turn 1 answer. ${pad}`),
-      new HumanMessage(`Turn 2 question. ${pad}`),
-      new AIMessage(`Turn 2 answer. ${pad}`),
-      new HumanMessage(`Final question after a lot of prior history. ${pad}`),
+      // The default recency window preserves the latest two user-led turns.
+      new HumanMessage('Turn 2 question.'),
+      new AIMessage('Turn 2 answer.'),
+      new HumanMessage('Final question.'),
     ];
     const indexTokenCountMap = {};
     history.forEach((message, i) => {
@@ -424,7 +426,7 @@ describe('usage events through the real agents pipeline', () => {
       graphConfig: {
         type: 'standard',
         llmConfig: {
-          provider: Providers.OPENAI,
+          provider: 'usage-primary-test',
           model: 'gpt-4o-mini',
           streaming: true,
           streamUsage: false,
@@ -432,7 +434,7 @@ describe('usage events through the real agents pipeline', () => {
         instructions: 'You are a helpful assistant.',
         maxContextTokens: 700,
         summarizationEnabled: true,
-        summarizationConfig: { provider: Providers.OPENAI, model: 'gpt-4o-mini' },
+        summarizationConfig: { provider: 'usage-summary-test', model: 'gpt-4o-mini' },
       },
       returnContent: true,
       customHandlers: handlers,
@@ -440,20 +442,54 @@ describe('usage events through the real agents pipeline', () => {
       indexTokenCountMap,
     });
 
-    run.Graph.overrideModel = new UsageFakeModel(
-      { responses: ['## Summary\nPrior turns compacted.', 'Here is the final answer.'] },
-      [{ input_tokens: 40, output_tokens: 8, total_tokens: 48 }],
-    );
+    class PrimaryModel extends UsageFakeModel {
+      constructor() {
+        super({ responses: ['Here is the final answer.'] }, [
+          { input_tokens: 40, output_tokens: 8, total_tokens: 48 },
+        ]);
+      }
+    }
+    class SummaryModel extends UsageFakeModel {
+      constructor() {
+        super({ responses: ['## Summary\nPrior turns compacted.'] }, [
+          { input_tokens: 3600, output_tokens: 8, total_tokens: 3608 },
+        ]);
+      }
+    }
+    const summaryCalls = jest.spyOn(SummaryModel.prototype, '_streamResponseChunks');
+    const primaryCalls = jest.spyOn(PrimaryModel.prototype, '_streamResponseChunks');
+    const unregister = registerProvider({
+      provider: 'usage-summary-test',
+      family: 'openai',
+      model: SummaryModel,
+    });
+    const unregisterPrimary = registerProvider({
+      provider: 'usage-primary-test',
+      family: 'openai',
+      model: PrimaryModel,
+    });
 
-    await run.processStream(
-      { messages: history },
-      {
-        configurable: { thread_id: 'summ-e2e-thread', user_id: 'user-1' },
-        streamMode: 'values',
-        version: 'v2',
-      },
-    );
-    return run;
+    try {
+      await run.processStream(
+        { messages: history },
+        {
+          configurable: { thread_id: 'summ-e2e-thread', user_id: 'user-1' },
+          streamMode: 'values',
+          version: 'v2',
+        },
+      );
+      return {
+        history,
+        contentParts,
+        summaryCalls: summaryCalls.mock.calls,
+        primaryCalls: primaryCalls.mock.calls,
+      };
+    } finally {
+      unregister();
+      unregisterPrimary();
+      summaryCalls.mockRestore();
+      primaryCalls.mockRestore();
+    }
   }
 
   /** A summarized turn compacts the context (summary tokens replace the older
@@ -467,13 +503,59 @@ describe('usage events through the real agents pipeline', () => {
     const res = createMockRes();
     const contextUsageSink = { latest: null, count: 0 };
     const usageEmitSink = [];
-    await runSummarizationLoop({ res, collectedUsage: [], contextUsageSink, usageEmitSink });
+    const { history, contentParts, summaryCalls, primaryCalls } = await runSummarizationLoop({
+      res,
+      collectedUsage: [],
+      contextUsageSink,
+      usageEmitSink,
+    });
+
+    expect(history.reduce((sum, message) => sum + charCounter(message), 0)).toBeGreaterThan(700);
+    expect(summaryCalls).toHaveLength(1);
+    expect(primaryCalls).toHaveLength(1);
+    const summarizedContent = summaryCalls[0][0].map((message) => message.content);
+    expect(summarizedContent).toEqual(
+      expect.arrayContaining(history.slice(0, 2).map((message) => message.content)),
+    );
+    expect(summarizedContent).not.toContain('Final question.');
+    expect(summarizedContent).not.toContain('Turn 2 question.');
+    const primaryContent = primaryCalls[0][0].map((message) => message.content);
+    expect(primaryContent).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('## Summary\nPrior turns compacted.'),
+        ...history.slice(2).map((message) => message.content),
+      ]),
+    );
+    expect(primaryContent.join('\n')).not.toContain('context detail to overflow');
+    expect(primaryCalls[0][0].reduce((sum, message) => sum + charCounter(message), 0)).toBeLessThan(
+      700,
+    );
+    expect(contentParts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'text', text: 'Here is the final answer.' }),
+      ]),
+    );
 
     const snapshot = contextUsageSink.latest;
     /** Summarization fired: a summary exists and the kept message tokens are
      *  small (the compacted context, not the full history). */
     expect(snapshot?.breakdown?.summaryTokens).toBeGreaterThan(0);
     expect(snapshot?.breakdown?.messageTokens).toBeLessThan(snapshot?.breakdown?.summaryTokens);
+    expect(snapshot.breakdown.maxContextTokens).toBe(700);
+    expect(snapshot.breakdown.messageCount).toBe(3);
+    expect(snapshot.remainingContextTokens).toBeGreaterThan(0);
+
+    const summaryComplete = res.events.findIndex(
+      (event) => event.event === GraphEvents.ON_SUMMARIZE_COMPLETE,
+    );
+    const contextEmitted = res.events.findIndex((event) => event.event === 'on_context_usage');
+    const primaryUsage = res.events.findIndex(
+      (event) => event.event === 'on_token_usage' && event.data.usage_type == null,
+    );
+    expect(summaryComplete).toBeGreaterThanOrEqual(0);
+    expect(contextEmitted).toBeGreaterThan(summaryComplete);
+    expect(primaryUsage).toBeGreaterThan(contextEmitted);
+    expect(usageEmitSink.filter((event) => event.usage_type === 'summarization')).toHaveLength(1);
 
     /** The save guard keeps it: a primary usage follows the latest snapshot. */
     const afterLatest = usageEmitSink.slice(contextUsageSink.latestUsageIndex ?? 0);

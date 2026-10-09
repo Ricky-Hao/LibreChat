@@ -10,6 +10,7 @@ import {
 } from 'librechat-data-provider';
 import type {
   Agents,
+  FullToolCall,
   TMessage,
   EventSubmission,
   TMessageContentParts,
@@ -23,6 +24,7 @@ import {
   closeParentSubagentProgress,
   listRegisteredSubagentProgressKeys,
   reduceSubagentProgress,
+  recoverSubagentProgress,
   registerSubagentProgressKey,
   removeSubagentProgressAtoms,
   subagentParentStreamOpenByToolCallId,
@@ -1206,6 +1208,24 @@ export default function useStepHandler({
     (message: TMessage) => {
       if (!message?.messageId) return;
       messageMap.current.set(message.messageId, { ...message });
+      for (const [index, part] of (message.content ?? []).entries()) {
+        if (
+          part?.type !== ContentTypes.TOOL_CALL ||
+          !('name' in part.tool_call) ||
+          part.tool_call.name !== Constants.SUBAGENT
+        )
+          continue;
+        const key = subagentProgressKey(message.messageId, part.tool_call.id ?? '', index);
+        const recovered = recoverSubagentProgress(
+          subagentStore.get(subagentProgressByToolCallId(key)),
+          (part.tool_call as FullToolCall).subagent_content,
+        );
+        if (recovered == null) continue;
+        registerSubagentProgressKey(key);
+        subagentStore.set(subagentProgressByToolCallId(key), recovered);
+        subagentRunToInvocationKey.current.set(recovered.subagentRunId, key);
+        claimedSubagentInvocationKeys.current.add(key);
+      }
       const ready = [...pendingSubagentBuffer.current.entries()].filter(
         ([, pending]) => pending.parentMessageId === message.messageId,
       );
@@ -1216,7 +1236,7 @@ export default function useStepHandler({
         }
       }
     },
-    [applySubagentUpdate],
+    [applySubagentUpdate, subagentStore],
   );
 
   return {

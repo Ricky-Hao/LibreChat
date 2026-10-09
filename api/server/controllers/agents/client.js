@@ -207,6 +207,8 @@ const {
   markCompactionOutcome,
   resolvePersistableCodeEnvironmentDecision,
   getChatProjectContextKey,
+  snapshotSubagentContent,
+  finalizeSubagentContent,
 } = require('@librechat/api');
 const {
   Run,
@@ -787,7 +789,7 @@ class AgentClient extends BaseClient {
    * Returns the aggregated content parts for the current run.
    * @returns {MessageContentComplex[]} */
   getContentParts() {
-    return this.contentParts;
+    return snapshotSubagentContent(this.contentParts, this.subagentAggregatorsByToolCallId);
   }
 
   /**
@@ -800,37 +802,7 @@ class AgentClient extends BaseClient {
    * appeared in `contentParts` are discarded (no home to attach to).
    */
   finalizeSubagentContent() {
-    const buffer = this.subagentAggregatorsByToolCallId;
-    if (!buffer || buffer.size === 0 || !Array.isArray(this.contentParts)) {
-      return;
-    }
-    for (const part of this.contentParts) {
-      if (part?.type !== ContentTypes.TOOL_CALL) continue;
-      const toolCall = part[ContentTypes.TOOL_CALL];
-      if (!toolCall || toolCall.name !== Constants.SUBAGENT || !toolCall.id) continue;
-      const aggregator = buffer.get(toolCall.id);
-      if (!aggregator) continue;
-      try {
-        if (aggregator.subagentIdentity != null) {
-          toolCall.subagentIdentity = aggregator.subagentIdentity;
-        }
-        /** `createContentAggregator` returns a sparse array (undefined
-         *  slots for indices that never received content). Strip those
-         *  so the persisted shape is a clean `TMessageContentParts[]`. */
-        const parts = Array.isArray(aggregator.contentParts)
-          ? aggregator.contentParts.filter((p) => p != null)
-          : [];
-        if (parts.length > 0) {
-          toolCall.subagent_content = parts;
-        }
-      } catch (err) {
-        logger.warn(
-          `[AgentClient] Failed to attach subagent content for tool_call ${toolCall.id}`,
-          getSafeErrorMetadata(err),
-        );
-      }
-    }
-    buffer.clear();
+    finalizeSubagentContent(this.contentParts, this.subagentAggregatorsByToolCallId);
   }
 
   /** Stamps host-resolved MCP identities onto persisted calls so future replay
@@ -5957,7 +5929,12 @@ class AgentClient extends BaseClient {
       // introspection fall back to the durable chunk reconstruction, which is complete.
       // `setContentParts` still points the in-memory store at the seeded client content.
       if (streamId && this.contentParts) {
-        GenerationJobManager.setContentParts(streamId, this.contentParts, this.jobCreatedAt);
+        GenerationJobManager.setContentParts(
+          streamId,
+          this.contentParts,
+          this.jobCreatedAt,
+          this.subagentAggregatorsByToolCallId,
+        );
       }
 
       // Carry the user's MCP auth into the rebuilt run so an approved MCP tool executes

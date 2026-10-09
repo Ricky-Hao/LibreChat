@@ -355,7 +355,9 @@ describe('AgentClient - event actor history adapter', () => {
     const skillManifest = [{ id: 'skill-1', name: 'analysis', version: 3 }];
     const skillPrimeResult = {
       skillManifest,
-      skills: new Map([['analysis', 'Analyze carefully.']]),
+      skills: new Map([
+        ['analysis', { body: 'Analyze carefully.', skillId: 'skill-1', skillVersion: 3 }],
+      ]),
     };
     const primeInvokedSkills = jest.fn().mockResolvedValue(skillPrimeResult);
     const client = Object.create(AgentClient.prototype);
@@ -372,16 +374,15 @@ describe('AgentClient - event actor history adapter', () => {
       compactionSemanticIndex,
     });
 
-    await expect(
-      client.prepareEventActorContext({
-        contextFingerprint: fingerprint,
-        skillManifest,
-        discoveredToolNames: ['deferred_tool'],
-        summary: { text: 'Earlier compacted context.', tokenCount: 12, version: 1 },
-        contextMeta: { calibrationRatio: 1.25, encoding: 'o200k_base' },
-        compactionSemanticIndex,
-      }),
-    ).resolves.toMatchObject({
+    const context = await client.prepareEventActorContext({
+      contextFingerprint: fingerprint,
+      skillManifest,
+      discoveredToolNames: ['deferred_tool'],
+      summary: { text: 'Earlier compacted context.', tokenCount: 12, version: 1 },
+      contextMeta: { calibrationRatio: 1.25, encoding: 'o200k_base' },
+      compactionSemanticIndex,
+    });
+    expect(context).toMatchObject({
       fingerprint,
       skillManifest,
       discoveredToolNames: ['deferred_tool'],
@@ -392,18 +393,31 @@ describe('AgentClient - event actor history adapter', () => {
         source: 'skill',
         messages: [
           expect.objectContaining({
-            content: 'Analyze carefully.',
+            content: expect.stringContaining('\nAnalyze carefully.\n[End skill source]'),
+            id: expect.stringMatching(/^event-actor-skill:[\w-]+$/),
             additional_kwargs: expect.objectContaining({
+              isMeta: true,
               source: 'skill',
+              trigger: 'model',
               skillName: 'analysis',
+              skillId: 'skill-1',
+              skillVersion: 3,
             }),
           }),
         ],
       },
     });
+    const [message] = context.checkpointMessageOverlay.messages;
+    expect(message.getType()).toBe('human');
+    expect(message.content).toContain(
+      '[Skill source {"name":"analysis","id":"skill-1","version":3}]',
+    );
+    expect(message.content).toContain('application-loaded Skill resource');
+    expect(message.content.match(/\[Skill source /g)).toHaveLength(1);
+    expect(primeInvokedSkills).toHaveBeenCalledTimes(1);
     expect(primeInvokedSkills).toHaveBeenCalledWith([], ['analysis']);
     expect(client.getEventActorContext).toHaveBeenCalledWith(skillManifest, ['deferred_tool']);
-    expect(client.eventActorSkillPrimeResult).toEqual(skillPrimeResult);
+    expect(client.eventActorSkillPrimeResult).toBe(skillPrimeResult);
     expect(client.eventActorDiscoveredToolNames).toEqual(['deferred_tool']);
     expect(client.eventActorSummary).toEqual({
       text: 'Earlier compacted context.',
@@ -485,8 +499,16 @@ describe('AgentClient - event actor history adapter', () => {
 
     expect(context.checkpointMessageOverlay.messages).toEqual([
       expect.objectContaining({
-        content: 'Root instructions.',
-        additional_kwargs: expect.objectContaining({ skillName: 'root-skill' }),
+        content: expect.stringContaining('\nRoot instructions.\n[End skill source]'),
+        id: expect.stringMatching(/^event-actor-skill:[\w-]+$/),
+        additional_kwargs: expect.objectContaining({
+          isMeta: true,
+          source: 'skill',
+          trigger: 'model',
+          skillName: 'root-skill',
+          skillId: 'root-skill',
+          skillVersion: 1,
+        }),
       }),
     ]);
     expect(context.checkpointMessageOverlay.messages).not.toEqual(
@@ -496,6 +518,17 @@ describe('AgentClient - event actor history adapter', () => {
         }),
       ]),
     );
+    expect(context.checkpointMessageOverlay.source).toBe('skill');
+    const [message] = context.checkpointMessageOverlay.messages;
+    expect(message.getType()).toBe('human');
+    expect(message.content).toContain(
+      '[Skill source {"name":"root-skill","id":"root-skill","version":1}]',
+    );
+    expect(message.content).toContain('application-loaded Skill resource');
+    expect(message.content.match(/\[Skill source /g)).toHaveLength(1);
+    expect(message.content).not.toContain('Child instructions.');
+    const replay = await client.prepareEventActorContext({ contextFingerprint: fingerprint });
+    expect(replay.checkpointMessageOverlay.messages[0].id).toBe(message.id);
   });
 
   it('keeps child manual Skills out of the root durable manifest', async () => {
