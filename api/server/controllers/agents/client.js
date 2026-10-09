@@ -2224,7 +2224,10 @@ class AgentClient extends BaseClient {
       ...context,
       checkpointMessageOverlay: {
         source: 'skill',
-        messages: buildAgentEventActorSkillMessages(skillBodies),
+        messages: buildAgentEventActorSkillMessages(skillBodies, [
+          ...(rootAgentContext?.manualSkillPrimes ?? []),
+          ...(rootAgentContext?.alwaysApplySkillPrimes ?? []),
+        ]),
       },
     };
   }

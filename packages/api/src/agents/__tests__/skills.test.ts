@@ -1970,7 +1970,8 @@ describe('injectManualSkillPrimes', () => {
     expect(result.inserted).toBe(1);
     expect(result.insertIdx).toBe(0);
     expect(messages).toHaveLength(2);
-    expect(messages[0].content).toBe('X means...');
+    expect(messages[0].content).toContain('X means...');
+    expect(messages[0].content).toContain('Skill source');
     expect(messages[1]).toBe(userMsg);
     // The prior-index-0 count follows the message it was attached to: now at idx 1.
     expect(result.indexTokenCountMap).toEqual({ 1: 7 });
@@ -1992,8 +1993,8 @@ describe('injectManualSkillPrimes', () => {
     expect(messages).toHaveLength(5);
     expect(messages[0].content).toBe('turn 1 user');
     expect(messages[1].content).toBe('turn 1 reply');
-    expect(messages[2].content).toBe('A body');
-    expect(messages[3].content).toBe('B body');
+    expect(messages[2].content).toContain('A body');
+    expect(messages[3].content).toContain('B body');
     expect(messages[4].content).toBe('turn 2 user');
     // idx 0 unchanged, idx 1 unchanged, idx 2 shifts to 4 (+ numPrimes).
     expect(result.indexTokenCountMap).toEqual({ 0: 1, 1: 2, 4: 3 });
@@ -2563,8 +2564,8 @@ describe('injectSkillPrimes', () => {
     });
     expect(result.inserted).toBe(2);
     expect(messages).toHaveLength(3);
-    expect(messages[0].content).toBe('legal-body');
-    expect(messages[1].content).toBe('brand-body');
+    expect(messages[0].content).toContain('legal-body');
+    expect(messages[1].content).toContain('brand-body');
     expect(messages[2]).toBe(userMsg);
   });
 
@@ -2609,7 +2610,12 @@ describe('injectSkillPrimes', () => {
     expect(result.inserted).toBe(3);
     expect(result.alwaysApplyDropped).toBe(2);
     // Ordering: [a1, m1, m2, user]
-    expect(messages.map((m) => (m as HumanMessage).content)).toEqual(['a1', 'm1', 'm2', 'user']);
+    expect(messages.map((m) => (m as HumanMessage).content)).toEqual([
+      expect.stringContaining('\na1\n'),
+      expect.stringContaining('\nm1\n'),
+      expect.stringContaining('\nm2\n'),
+      'user',
+    ]);
   });
 
   it('preserves all manual primes when the cap is below their count (budget clamped to 0)', () => {
@@ -2629,7 +2635,10 @@ describe('injectSkillPrimes', () => {
     // resolver is responsible for capping manual to MAX_MANUAL_SKILLS before here).
     expect(result.inserted).toBe(5);
     const contents = messages.map((m) => (m as HumanMessage).content);
-    expect(contents).toEqual(['m0', 'm1', 'm2', 'm3', 'm4', 'user']);
+    expect(contents).toEqual([
+      ...['m0', 'm1', 'm2', 'm3', 'm4'].map((body) => expect.stringContaining(`\n${body}\n`)),
+      'user',
+    ]);
   });
 
   it('uses MAX_PRIMED_SKILLS_PER_TURN as the default combined cap', () => {
@@ -2672,7 +2681,8 @@ describe('injectSkillPrimes', () => {
     expect(result.inserted).toBe(1);
     expect(result.alwaysApplyDedupedFromManual).toBe(1);
     expect(messages).toHaveLength(2);
-    expect((messages[0] as HumanMessage).content).toBe('manual-body');
+    expect((messages[0] as HumanMessage).content).toContain('manual-body');
+    expect(String(messages[0].content).match(/Skill source/g)).toHaveLength(1);
     expect((messages[0] as HumanMessage).additional_kwargs.trigger).toBe('manual');
   });
 
@@ -2688,7 +2698,11 @@ describe('injectSkillPrimes', () => {
     expect(result.alwaysApplyDedupedFromManual).toBe(1);
     // Order: always-apply first (distinct), then manual (shared), then user.
     const contents = messages.map((m) => (m as HumanMessage).content);
-    expect(contents).toEqual(['dist-body', 'shared-manual', 'user']);
+    expect(contents).toEqual([
+      expect.stringContaining('\ndist-body\n'),
+      expect.stringContaining('\nshared-manual\n'),
+      'user',
+    ]);
   });
 
   it('dedups before applying the combined cap so the cap reflects real primes', () => {

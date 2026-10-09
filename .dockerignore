@@ -10,6 +10,7 @@
 data-node
 meili_data*
 librechat*
+!vendor/librechat-agents-*.tgz
 Dockerfile*
 docs
 
