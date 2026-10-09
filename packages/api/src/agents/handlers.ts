@@ -5296,7 +5296,9 @@ async function handleSkillToolCall(
     return filtered;
   }
 
-  const injectedMessages: InjectedMessage[] = [buildSkillPrimeMessage({ name: skill.name, body })];
+  const injectedMessages: InjectedMessage[] = [
+    buildSkillPrimeMessage({ name: skill.name, body, _id: skill._id, version: skill.version }),
+  ];
 
   let contentText = `Skill "${args.skillName}" loaded. Follow the instructions below.`;
   let artifact:

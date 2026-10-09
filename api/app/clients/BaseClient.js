@@ -23,8 +23,7 @@ const {
   isModelBoundAttachmentFile,
   isToolOwnedAttachment,
   withBalanceReservations,
-  findCheckpointSummaryPart,
-  getSummaryPartText,
+  findPreviousSummary,
   resolveCheckpointMessage,
   runAfterSeed,
   saveTurnConversation,
@@ -1282,27 +1281,7 @@ class BaseClient {
       mapMethod,
     });
     if (this.shouldSummarize) {
-      for (let i = _messages.length - 1; i >= 0; i--) {
-        const msg = _messages[i];
-        if (!msg) {
-          continue;
-        }
-
-        const summaryBlock = findCheckpointSummaryPart(msg.content);
-        if (summaryBlock) {
-          this.previous_summary = {
-            ...msg,
-            summary: getSummaryPartText(summaryBlock),
-            summaryTokenCount: summaryBlock.tokenCount,
-          };
-          break;
-        }
-
-        if (msg.summary) {
-          this.previous_summary = msg;
-          break;
-        }
-      }
+      this.previous_summary = findPreviousSummary(_messages);
 
       _messages = this.constructor.getMessagesForConversation({
         messages,

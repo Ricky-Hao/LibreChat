@@ -1,3 +1,4 @@
+import { isMetadataSummaryStub } from '@librechat/agents';
 import { ContentTypes, ErrorTypes } from 'librechat-data-provider';
 import {
   COMPACTION_SEMANTIC_INDEX_PROJECTION_VERSION,
@@ -72,10 +73,14 @@ export function isUsableSummaryPart(part: unknown): part is SummaryContentPart {
   if (summary.failed === true || summary.summarizing === true) {
     return false;
   }
+  if ('outcome' in summary && summary.outcome === 'failed') {
+    return false;
+  }
   if (Array.isArray(summary.content) && summary.boundary == null) {
     return false;
   }
-  return getSummaryPartText(summary).length > 0;
+  const text = getSummaryPartText(summary);
+  return text.length > 0 && !isMetadataSummaryStub(text);
 }
 
 /**
@@ -104,6 +109,21 @@ export interface CheckpointCandidate {
   tokenCount?: number | null;
 }
 
+/** Uses the same checkpoint validation for early history loading and replay. */
+export function findPreviousSummary<T extends CheckpointCandidate>(
+  messages: readonly T[],
+): T | undefined {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    const part = findCheckpointSummaryPart(message.content);
+    if (part != null) {
+      return { ...message, summary: getSummaryPartText(part), summaryTokenCount: part.tokenCount };
+    }
+    if (message.summary && !isMetadataSummaryStub(message.summary)) return message;
+  }
+  return undefined;
+}
+
 /**
  * The row a history read stops at, as it enters the prompt, or null when the
  * row is no checkpoint and the read continues past it. A content-block summary
@@ -124,7 +144,7 @@ export function resolveCheckpointMessage<T extends CheckpointCandidate>(
       ? message
       : { ...message, content: message.content.slice(summaryIndex), tokenCount: undefined };
   }
-  if (!message.summary) {
+  if (!message.summary || isMetadataSummaryStub(message.summary)) {
     return null;
   }
   return {

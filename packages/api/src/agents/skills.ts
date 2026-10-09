@@ -1,13 +1,18 @@
 import { logger } from '@librechat/data-schemas';
 import { HumanMessage } from '@librechat/agents/langchain/messages';
 import { SkillsScope, isEphemeralAgentId, resolveAgentSkillsScope } from 'librechat-data-provider';
-import { formatSkillCatalog, SkillToolDefinition, ReadFileToolDefinition } from '@librechat/agents';
+import {
+  formatSkillCatalog,
+  SkillToolDefinition,
+  ReadFileToolDefinition,
+  buildSkillCarrierText,
+} from '@librechat/agents';
 import type {
   Agent,
   CodeWorkspaceOperation,
   CodeWorkspaceDescriptor,
 } from 'librechat-data-provider';
-import type { LCToolRegistry, LCTool, InjectedMessage } from '@librechat/agents';
+import type { LCToolRegistry, LCTool, InjectedMessage, SkillBody } from '@librechat/agents';
 import type { BaseMessage } from '@librechat/agents/langchain/messages';
 import type { Types } from 'mongoose';
 import { getSkillToolDefinition, isSkillToolAvailable, registerCodeExecutionTools } from './tools';
@@ -905,35 +910,54 @@ export async function injectSkillCatalog(
  *  - `handleSkillToolCall` for model-invoked skills — called from the tool
  *    execution handler.
  */
-export function buildSkillPrimeMessage(skill: { name: string; body: string }): InjectedMessage {
+export function buildSkillPrimeMessage(skill: {
+  name: string;
+  body: string;
+  _id?: { toString(): string };
+  version?: number;
+}): InjectedMessage {
   return {
     role: 'user',
     content: skill.body,
     isMeta: true,
     source: SKILL_MESSAGE_SOURCE,
     skillName: skill.name,
+    skillId: skill._id?.toString(),
+    skillVersion: skill.version,
   };
 }
 
 /** Builds the exact live Skill overlay placed at the tail of an event actor checkpoint fork. */
 export function buildAgentEventActorSkillMessages(
-  skills: ReadonlyMap<string, string>,
+  skills: ReadonlyMap<string, SkillBody>,
+  primes: readonly ResolvedSkillPrime[] = [],
 ): HumanMessage[] {
-  return [...skills.entries()]
+  const sources = new Map(skills);
+  for (const prime of primes) {
+    sources.set(prime.name, {
+      body: prime.body,
+      skillId: prime._id.toString(),
+      skillVersion: prime.version,
+    });
+  }
+  return [...sources.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(
-      ([name, body]) =>
-        new HumanMessage({
-          id: `event-actor-skill:${createSkillContentDigest(`${name}\0${body}`)}`,
-          content: body,
-          additional_kwargs: {
-            isMeta: true,
-            source: SKILL_MESSAGE_SOURCE,
-            trigger: SKILL_TRIGGER_MODEL,
-            skillName: name,
-          },
-        }),
-    );
+    .map(([name, resolved]) => {
+      const body = typeof resolved === 'string' ? resolved : resolved.body;
+      const source = { ...(typeof resolved === 'string' ? {} : resolved), skillName: name };
+      return new HumanMessage({
+        id: `event-actor-skill:${createSkillContentDigest(`${name}\0${body}`)}`,
+        content: buildSkillCarrierText(body, source),
+        additional_kwargs: {
+          isMeta: true,
+          source: SKILL_MESSAGE_SOURCE,
+          trigger: SKILL_TRIGGER_MODEL,
+          skillName: name,
+          skillId: source.skillId,
+          skillVersion: source.skillVersion,
+        },
+      });
+    });
 }
 
 export interface ResolveManualSkillsParams {
@@ -1337,18 +1361,19 @@ export async function resolveAlwaysApplySkills(
   return resolved;
 }
 
+type SkillPrimeInput = Pick<ResolvedSkillPrime, 'name' | 'body'> &
+  Partial<Pick<ResolvedSkillPrime, '_id' | 'version'>>;
+
 export interface InjectManualSkillPrimesParams {
   /** Formatted LangChain messages produced by `formatAgentMessages`. Mutated in place. */
   initialMessages: BaseMessage[];
   /** Per-index token count map returned by `formatAgentMessages`. */
   indexTokenCountMap: Record<number, number> | undefined;
   /**
-   * Resolved skill primes to splice in. Only `name` and `body` are used
-   * to construct the meta `HumanMessage`; widening the type to `Pick<...>`
-   * lets tests pass minimal `{ name, body }` literals without inventing
-   * `_id`s. The resolver always returns full primes in production.
+   * Resolved skill primes to splice in, retaining source identity when known.
+   * Minimal callers may omit identity; the carrier marks it unknown.
    */
-  manualSkillPrimes: Pick<ResolvedManualSkill, 'name' | 'body'>[];
+  manualSkillPrimes: SkillPrimeInput[];
 }
 
 export interface InjectManualSkillPrimesResult {
@@ -1410,12 +1435,18 @@ export function injectManualSkillPrimes(
   const primeMessages = manualSkillPrimes.map(
     (p) =>
       new HumanMessage({
-        content: p.body,
+        content: buildSkillCarrierText(p.body, {
+          skillName: p.name,
+          skillId: p._id?.toString(),
+          skillVersion: p.version,
+        }),
         additional_kwargs: {
           isMeta: true,
           source: SKILL_MESSAGE_SOURCE,
           trigger: SKILL_TRIGGER_MANUAL,
           skillName: p.name,
+          skillId: p._id?.toString(),
+          skillVersion: p.version,
         },
       }),
   );
@@ -1456,9 +1487,9 @@ export interface InjectSkillPrimesParams {
   /** Per-index token count map returned by `formatAgentMessages`. */
   indexTokenCountMap: Record<number, number> | undefined;
   /** Resolved manual-invocation primes ($-popover). */
-  manualSkillPrimes?: Pick<ResolvedManualSkill, 'name' | 'body'>[];
+  manualSkillPrimes?: SkillPrimeInput[];
   /** Resolved `always-apply` primes (frontmatter-driven, auto-applied every turn). */
-  alwaysApplySkillPrimes?: Pick<ResolvedAlwaysApplySkill, 'name' | 'body'>[];
+  alwaysApplySkillPrimes?: SkillPrimeInput[];
   /**
    * Combined ceiling on primes per turn. Defaults to
    * `MAX_PRIMED_SKILLS_PER_TURN`. When the sum of `manualSkillPrimes` +
@@ -1609,14 +1640,20 @@ export function injectSkillPrimes(params: InjectSkillPrimesParams): InjectSkillP
     indexTokenCountMap = shifted;
   }
 
-  const buildPrime = (p: { name: string; body: string }, trigger: SkillTrigger): HumanMessage =>
+  const buildPrime = (p: SkillPrimeInput, trigger: SkillTrigger): HumanMessage =>
     new HumanMessage({
-      content: p.body,
+      content: buildSkillCarrierText(p.body, {
+        skillName: p.name,
+        skillId: p._id?.toString(),
+        skillVersion: p.version,
+      }),
       additional_kwargs: {
         isMeta: true,
         source: SKILL_MESSAGE_SOURCE,
         trigger,
         skillName: p.name,
+        skillId: p._id?.toString(),
+        skillVersion: p.version,
       },
     });
 

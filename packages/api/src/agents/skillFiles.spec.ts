@@ -65,7 +65,9 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
 
     const result = await primeInvokedSkills(deps);
 
-    expect(result.skills?.get('brand-guidelines')).toBe('skill body');
+    expect(result.skills?.get('brand-guidelines')).toEqual(
+      expect.objectContaining({ body: 'skill body', skillVersion: 7 }),
+    );
     expect(deps.listSkillFiles).not.toHaveBeenCalled();
     expect(deps.batchUploadCodeEnvFiles).not.toHaveBeenCalled();
   });
@@ -883,7 +885,14 @@ describe('primeInvokedSkillsForProfiles', () => {
 
     const result = await primeInvokedSkillsForProfiles(deps);
 
-    expect(result.skills).toEqual(new Map([['brand-guidelines', 'skill body']]));
+    expect(result.skills).toEqual(
+      new Map([
+        [
+          'brand-guidelines',
+          expect.objectContaining({ body: 'skill body', skillId: SKILL_ID.toString() }),
+        ],
+      ]),
+    );
     expect(result.skillManifest).toEqual([
       {
         id: SKILL_ID.toString(),

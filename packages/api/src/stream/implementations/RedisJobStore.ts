@@ -4433,6 +4433,8 @@ export class RedisJobStore implements IJobStoreV2 {
       'on_reasoning_delta',
       'on_run_step_delta',
       'on_run_step_completed',
+      'on_summarize_delta',
+      'on_summarize_complete',
       'on_agent_update',
     ]);
 

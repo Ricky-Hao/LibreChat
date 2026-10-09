@@ -257,6 +257,22 @@ describe('resolveFailedTurnContent', () => {
 });
 
 describe('resolveCheckpointMessage', () => {
+  it('rejects exact legacy stubs without rejecting summaries quoting them', () => {
+    const stub = '[Metadata summary: 2 messages (1 human, 1 ai)]\n[Tools used: lookup]';
+    expect(resolveCheckpointMessage({ summary: stub })).toBeNull();
+    expect(resolveCheckpointMessage({ summary: `The failure returned ${stub}` })).not.toBeNull();
+    expect(
+      resolveCheckpointMessage({
+        content: [
+          {
+            type: ContentTypes.SUMMARY,
+            content: [{ type: 'text', text: stub }],
+            boundary: { messageId: 'boundary', contentIndex: 0 },
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
   const summaryPart = {
     type: ContentTypes.SUMMARY,
     content: [{ type: ContentTypes.TEXT, text: 'Earlier context' }],
