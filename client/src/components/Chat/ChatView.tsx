@@ -164,7 +164,23 @@ function ChatView({
   } else if ((isLoading || isNavigating) && !isLandingPage) {
     content = <LoadingSpinner />;
   } else if (!isLandingPage) {
-    content = <MessagesView messagesTree={messagesTree} messages={messages} />;
+    content = (
+      <MessagesView
+        messagesTree={messagesTree}
+        messages={messages}
+        scrollNavigation={{
+          conversationKey: conversationId,
+          ready: !routePending,
+          explicitSendId:
+            rootSubmission &&
+            !('resumeStreamId' in rootSubmission) &&
+            (rootSubmission.conversation?.conversationId == null ||
+              rootSubmission.conversation?.conversationId === conversationId)
+              ? (rootSubmission.clientRequestId ?? rootSubmission.initialResponse?.messageId)
+              : undefined,
+        }}
+      />
+    );
   } else {
     content = <Landing centerFormOnLanding={centerFormOnLanding} />;
   }

@@ -1,6 +1,7 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
 import '@testing-library/jest-dom';
+import type { TSubmission } from 'librechat-data-provider';
 import { render, screen } from 'test/layout-test-utils';
 import ChatView from '../ChatView';
 import store from '~/store';
@@ -8,6 +9,7 @@ import store from '~/store';
 const mockParams = jest.fn();
 const mockConversation = jest.fn();
 const mockChatFormProps = jest.fn();
+const mockMessagesViewProps = jest.fn();
 const mockGetMessages = jest
   .fn()
   .mockReturnValue({ data: null, isLoading: false, isFetching: false });
@@ -56,7 +58,13 @@ jest.mock('../Footer', () => ({
 }));
 jest.mock('../Landing', () => ({ __esModule: true, default: () => <div /> }));
 jest.mock('~/components/Lia', () => ({ __esModule: true, default: () => null }));
-jest.mock('../Messages/MessagesView', () => ({ __esModule: true, default: () => <div /> }));
+jest.mock('../Messages/MessagesView', () => ({
+  __esModule: true,
+  default: (props: Record<string, unknown>) => {
+    mockMessagesViewProps(props);
+    return <div />;
+  },
+}));
 jest.mock('../Input/ChatForm', () => ({
   __esModule: true,
   default: (props: Record<string, unknown>) => {
@@ -218,4 +226,49 @@ describe('ChatView foreground recovery', () => {
       { isStreaming: isSubmitting },
     );
   });
+});
+
+describe('ChatView scroll navigation', () => {
+  test.each(['explicit', 'resume', 'outgoing', 'cleared'])(
+    'identifies %s submissions without inferring send intent from isSubmitting',
+    (kind) => {
+      mockParams.mockReturnValue({ conversationId: 'convo-1' });
+      mockConversation.mockReturnValue({ conversationId: 'convo-1' });
+      mockGetMessages.mockReturnValue({
+        data: [{ messageId: 'response', conversationId: 'convo-1', parentMessageId: null }],
+        isLoading: false,
+        isFetching: true,
+      });
+      const submission = (
+        kind === 'cleared'
+          ? {}
+          : {
+              conversation: { conversationId: kind === 'outgoing' ? 'convo-2' : 'convo-1' },
+              initialResponse: { messageId: 'response' },
+              clientRequestId: 'request',
+              ...(kind === 'resume' ? { resumeStreamId: 'convo-1' } : {}),
+            }
+      ) as TSubmission;
+      render(
+        <RecoilRoot
+          initializeState={({ set }) => {
+            set(store.submissionByIndex(0), submission);
+            set(store.isSubmittingFamily(0), true);
+          }}
+        >
+          <ChatView routePending />
+        </RecoilRoot>,
+      );
+      expect(mockMessagesViewProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          scrollNavigation: {
+            conversationKey: 'convo-1',
+            ready: false,
+            explicitSendId: kind === 'explicit' ? 'request' : undefined,
+          },
+        }),
+      );
+      mockGetMessages.mockReturnValue({ data: null, isLoading: false, isFetching: false });
+    },
+  );
 });

@@ -3,6 +3,7 @@ import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import { Constants } from 'librechat-data-provider';
 import type { TMessage } from 'librechat-data-provider';
+import type { ScrollNavigation } from '~/hooks/Messages/useMessageScrolling';
 import {
   useLocalize,
   useScreenshot,
@@ -29,9 +30,11 @@ import store from '~/store';
 function MessagesViewContent({
   messagesTree: _messagesTree,
   messages,
+  scrollNavigation,
 }: {
   messagesTree?: TMessage[] | null;
   messages?: TMessage[] | null;
+  scrollNavigation?: ScrollNavigation;
 }) {
   const localize = useLocalize();
   const fontSize = useAtomValue(fontSizeAtom);
@@ -46,7 +49,7 @@ function MessagesViewContent({
     handleSmoothToRef,
     debouncedHandleScroll,
     handleNearBottomChange,
-  } = useMessageScrolling(_messagesTree);
+  } = useMessageScrolling(_messagesTree, scrollNavigation);
 
   useScrollbarGutter(scrollableRef);
 
@@ -232,14 +235,20 @@ function MessagesViewContent({
 export default function MessagesView({
   messagesTree,
   messages,
+  scrollNavigation,
 }: {
   messagesTree?: TMessage[] | null;
   messages?: TMessage[] | null;
+  scrollNavigation?: ScrollNavigation;
 }) {
   return (
     <MessagesViewProvider>
       <MessagePartsHostProvider host={appMessagePartsHost}>
-        <MessagesViewContent messagesTree={messagesTree} messages={messages} />
+        <MessagesViewContent
+          messagesTree={messagesTree}
+          messages={messages}
+          scrollNavigation={scrollNavigation}
+        />
       </MessagePartsHostProvider>
     </MessagesViewProvider>
   );
