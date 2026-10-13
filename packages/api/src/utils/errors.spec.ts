@@ -1,6 +1,20 @@
 import { getSafeErrorMetadata, getSafeErrorText, isAbortError, isOwnedAbortError } from './errors';
 
 describe('getSafeErrorMetadata', () => {
+  it('survives hostile property and prototype traps', () => {
+    const error = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('private data');
+        },
+        getPrototypeOf() {
+          throw new Error('private data');
+        },
+      },
+    );
+    expect(getSafeErrorMetadata(error)).toEqual({ type: 'UnknownError' });
+  });
   it('keeps bounded diagnostic fields without serializing raw provider data', () => {
     const rawValue = 'PRIVATE-SUBMITTED-CONTENT';
     const error = Object.assign(new Error(`Provider echoed ${rawValue}`), {

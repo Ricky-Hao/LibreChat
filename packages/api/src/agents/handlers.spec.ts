@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { performance } from 'node:perf_hooks';
 import { applyTextEdits, HostEditError } from './files/matching';
 import * as hostEditProcessing from './files/processing';
@@ -11,7 +12,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Constants } from '@librechat/agents';
 import { logger } from '@librechat/data-schemas';
-import { tool } from '@librechat/agents/langchain/tools';
+import { tool, DynamicStructuredTool } from '@librechat/agents/langchain/tools';
 import type {
   ToolExecuteBatchRequest,
   ToolExecuteResult,
@@ -810,6 +811,41 @@ describe('createToolExecuteHandler', () => {
   });
 
   describe('tool argument normalization', () => {
+    it.each([false, true])(
+      'invokes a real strict tool with UI intent (JSON=%s)',
+      async (encoded) => {
+        const args = Object.freeze({ id: 'agent', expanded: false, intent: 'Inspecting agent' });
+        const received: unknown[] = [];
+        const strictTool = new DynamicStructuredTool({
+          name: 'agents_get',
+          description: 'fixture',
+          schema: z.object({ id: z.string(), expanded: z.boolean() }).strict(),
+          func: async (input) => {
+            received.push(input);
+            return 'ok';
+          },
+        });
+        const handler = createToolExecuteHandler({
+          loadTools: async () => ({ loadedTools: [strictTool] }),
+        });
+        const [result] = await invokeHandler(handler, [
+          {
+            id: 'call_intent',
+            name: strictTool.name,
+            args: encoded ? (JSON.stringify(args) as unknown as ToolCallRequest['args']) : args,
+          },
+        ]);
+        expect(result.status).toBe('success');
+        expect(received).toEqual([{ id: 'agent', expanded: false }]);
+        expect(args.intent).toBe('Inspecting agent');
+        const [invalid] = await invokeHandler(handler, [
+          { id: 'call_invalid', name: strictTool.name, args: { ...args, extra: true } },
+        ]);
+        expect(invalid.status).toBe('error');
+        expect(received).toHaveLength(1);
+      },
+    );
+
     it('parses JSON-string args for object-schema tools before invocation', async () => {
       const capturedArgs: unknown[] = [];
       const tool = createMockTool(Constants.BASH_PROGRAMMATIC_TOOL_CALLING, [], {

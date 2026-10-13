@@ -3503,7 +3503,7 @@ describe('initializeClient — subagent loading', () => {
       agentClientArgs.agent.lazySubagentConfigs[0].resolve({
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow(`Subagent ${SUBAGENT_ID} changed`);
+    ).rejects.toMatchObject({ code: 'configuration_changed' });
     expect(mockInitializeAgent).toHaveBeenCalledTimes(1);
   });
 
@@ -3526,7 +3526,7 @@ describe('initializeClient — subagent loading', () => {
       agentClientArgs.agent.lazySubagentConfigs[0].resolve({
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow(`no longer have access to subagent ${SUBAGENT_ID}`);
+    ).rejects.toMatchObject({ code: 'agent_unavailable' });
     expect(mockInitializeAgent).toHaveBeenCalledTimes(1);
   });
 

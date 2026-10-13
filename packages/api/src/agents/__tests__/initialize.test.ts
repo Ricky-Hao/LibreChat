@@ -33,6 +33,7 @@ jest.mock('@librechat/agents', () => ({
 }));
 
 import { Providers } from '@librechat/agents';
+import { Types } from 'mongoose';
 import { createHash } from 'node:crypto';
 import { logger } from '@librechat/data-schemas';
 import { createRepositoryInstructionLoader } from '../../code/instructions';
@@ -98,6 +99,7 @@ const mockOptionalChainWithEmptyCheck = jest.fn();
 const mockGetThreadData = jest.fn();
 
 jest.mock('~/utils', () => ({
+  getSafeErrorMetadata: jest.requireActual('~/utils/errors').getSafeErrorMetadata,
   extractLibreChatParams: (...args: unknown[]) => mockExtractLibreChatParams(...args),
   getModelMaxTokens: (...args: unknown[]) => mockGetModelMaxTokens(...args),
   optionalChainWithEmptyCheck: (...args: unknown[]) => mockOptionalChainWithEmptyCheck(...args),
@@ -143,6 +145,7 @@ jest.mock('../../middleware/modelBoundContent', () => {
 import { initializeAgent } from '../initialize';
 import { primeResources } from '../resources';
 import { isFatalAgentInitializationError } from '../errors';
+import { createSubagentResolutionFailureHandler } from '../initialization';
 
 const realUtils = jest.requireActual<typeof import('~/utils')>('~/utils');
 
@@ -295,6 +298,53 @@ describe('initializeAgent — execution context', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
+
+  it.each(['provider', 'tools', 'skills'] as const)(
+    'tags actual %s initialization rejection without leaking the exception',
+    async (stage) => {
+      const { agent, req, res, loadTools, db } = createMocks();
+      const error = new Error('private token request query prompt');
+      if (stage === 'provider')
+        mockGetProviderConfig.mockImplementationOnce(() => {
+          throw error;
+        });
+      if (stage === 'tools') loadTools.mockRejectedValue(error);
+      if (stage === 'skills') db.listSkillsByAccess = jest.fn().mockRejectedValue(error);
+      const log = jest.fn();
+      await expect(
+        initializeAgent(
+          {
+            req,
+            res,
+            agent,
+            loadTools,
+            allowedProviders: new Set(),
+            endpointOption: { endpoint: EModelEndpoint.agents },
+            accessibleSkillIds: stage === 'skills' ? [new Types.ObjectId()] : [],
+          },
+          db,
+        ).catch((caught) => {
+          expect(caught).toBe(error);
+          expect(
+            createSubagentResolutionFailureHandler(log)(
+              {
+                phase: 'config',
+                subagentType: 'fixture',
+                aborted: false,
+                type: 'Error',
+                cause: 'unknown',
+                message: 'Subagent error: Unable to initialize the selected subagent.',
+              },
+              caught,
+            ),
+          ).toBe('unknown');
+          throw caught;
+        }),
+      ).rejects.toBe(error);
+      expect(log.mock.calls[0][1]).toMatchObject({ errors: [{ type: 'Error', stage }] });
+      expect(JSON.stringify(log.mock.calls)).not.toContain(error.message);
+    },
+  );
 
   it.each(['prefer', 'defer', 'off'] as const)(
     'uses saved repository instruction mode %s in definitions-only initialization',

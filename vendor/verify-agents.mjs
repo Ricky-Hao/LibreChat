@@ -11,6 +11,15 @@ const metadata = JSON.parse(readFileSync(new URL('./agents.json', import.meta.ur
 const { artifact, version, consumers, sha256 } = metadata;
 const archive = readFileSync(resolve(root, artifact));
 assert.equal(createHash('sha256').update(archive).digest('hex'), sha256);
+const { source } = metadata;
+assert.equal(source.dirty, true, 'This artifact records an uncommitted source patch');
+assert.match(source.baseCommit, /^[a-f0-9]{40}$/);
+assert.equal(
+  createHash('sha256')
+    .update(readFileSync(resolve(root, source.patch)))
+    .digest('hex'),
+  source.patchSha256,
+);
 const lock = JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8'));
 const entries = Object.entries(lock.packages).filter(([name]) =>
   name.endsWith('node_modules/@librechat/agents'),
@@ -23,15 +32,91 @@ assert.equal(
   `sha512-${createHash('sha512').update(archive).digest('base64')}`,
 );
 
+/** Self-contained so the identical behavioral smoke also runs in the ESM subprocess. */
+async function verifyIntent(sdk, DynamicStructuredTool) {
+  const strictTool = new DynamicStructuredTool({
+    name: 'intent_fixture',
+    description: 'Local invocation smoke test',
+    schema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    func: async (input) => JSON.stringify(input),
+  });
+  const input = Object.freeze({ id: 'fixture', intent: 'Inspecting fixture' });
+  assert.deepEqual(sdk.stripIntentForInvoke(input, strictTool), { id: 'fixture' });
+  const [result] = await sdk.executeTools(
+    [{ id: 'call', name: strictTool.name, input: JSON.stringify(input) }],
+    new Map([[strictTool.name, strictTool]]),
+  );
+  assert.equal(result.is_error, false);
+  assert.deepEqual(JSON.parse(result.result), { id: 'fixture' });
+  assert.equal(input.intent, 'Inspecting fixture');
+
+  const referenced = {
+    type: 'object',
+    $defs: {
+      business: {
+        type: 'object',
+        properties: { id: { type: 'string' }, intent: { type: 'string' } },
+        required: ['id', 'intent'],
+        additionalProperties: false,
+      },
+    },
+    allOf: [{ $ref: '#/$defs/business' }],
+  };
+  assert.equal(sdk.stripIntentForInvoke(input, { schema: referenced }), input);
+  const businessTool = new DynamicStructuredTool({
+    name: 'business_fixture',
+    description: 'Local reference smoke test',
+    schema: referenced,
+    func: async (args) => JSON.stringify(args),
+  });
+  const [business] = await sdk.executeTools(
+    [{ id: 'business', name: businessTool.name, input: JSON.stringify(input) }],
+    new Map([[businessTool.name, businessTool]]),
+  );
+  assert.equal(business.is_error, false);
+  assert.deepEqual(JSON.parse(business.result), input);
+
+  let probes = 0;
+  Object.defineProperty(strictTool, 'schema', {
+    get() {
+      probes++;
+      throw new Error('PRIVATE_SCHEMA_FIXTURE');
+    },
+  });
+  const [unsafe] = await sdk.executeTools(
+    [{ id: 'unsafe', name: strictTool.name, input }],
+    new Map([[strictTool.name, strictTool]]),
+  );
+  assert.equal(unsafe.is_error, true);
+  assert.equal(unsafe.error_message, 'Tool input schema could not be inspected safely.');
+  assert.equal(probes, 0);
+}
+
 for (const consumer of consumers) {
   const require = createRequire(resolve(root, consumer, 'package.json'));
-  const manifest = JSON.parse(
-    readFileSync(
-      resolve(dirname(require.resolve('@librechat/agents')), '../../package.json'),
-      'utf8',
-    ),
-  );
+  const packageRoot = resolve(dirname(require.resolve('@librechat/agents')), '../..');
+  const manifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'));
   assert.equal(manifest.version, version);
+  assert.equal(manifest.types, manifest.exports['.'].types);
+  assert.match(
+    readFileSync(resolve(packageRoot, manifest.types), 'utf8'),
+    /export \* from ['"]\.\/tools\/intentArg['"]/,
+  );
+  const declarations = readFileSync(
+    resolve(packageRoot, 'dist/types/tools/intentArg.d.ts'),
+    'utf8',
+  );
+  for (const helper of ['stripIntentForInvoke', 'inspectToolInputSchema']) {
+    assert.ok(declarations.includes(`export declare function ${helper}(`));
+  }
+  const sdk = require('@librechat/agents');
+  const { DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
+  await verifyIntent(sdk, DynamicStructuredTool);
   for (const subpath of Object.keys(manifest.exports)) {
     const specifier = `@librechat/agents${subpath === '.' ? '' : subpath.slice(1)}`;
     assert.ok(require(specifier));
@@ -49,6 +134,8 @@ for (const consumer of consumers) {
       await import(specifier);
     }
     const sdk = await import('@librechat/agents');
+    const { DynamicStructuredTool } = await import('@librechat/agents/langchain/tools');
+    await (${verifyIntent.toString()})(sdk, DynamicStructuredTool);
     assert.match(sdk.buildSkillCarrierText('fixture', { skillName: 'fixture' }), /Skill source/);
   `;
   const imported = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
@@ -57,7 +144,7 @@ for (const consumer of consumers) {
   });
   assert.equal(imported.status, 0, imported.stderr);
   console.log(
-    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths verified`,
+    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths, CJS/ESM intent behavior and declaration exports verified`,
   );
 }
 console.log('Tarball integrity and single SDK lock resolution verified');

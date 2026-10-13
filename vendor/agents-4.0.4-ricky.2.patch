@@ -1,0 +1,901 @@
+diff --git a/package-lock.json b/package-lock.json
+index 36a9944cbfa4deb857fb4655c9b31d97af13a8eb..de1960cf2f08b8570aae73b274e27b9ee671673e 100644
+GIT binary patch
+delta 83
+zcmZ3wKz8W@*$LK+MiXti7>%YkrZOr`evl<S`7RgV<o*1t)AuGbicXeO;+$@i&d5L6
+gPMfRQkFnj45rmn5m>Gy!fS47C*|z&JvS0TD0Ea*r=>Px#
+
+delta 83
+zcmZ3wKz8W@*$LK+h7)bN7!9X4rZOr`evl<S`7RgV<o*1t)AuGbicXeO;+$@i&d5L6
+gPMfRQkFnj45rmn5m>Gy!fS47C*|z&JvS0TD0EV#`=Kufz
+
+diff --git a/package.json b/package.json
+index ae21c3f6..3300d2c4 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@librechat/agents",
+-  "version": "4.0.4-ricky.1",
++  "version": "4.0.4-ricky.2",
+   "reova": {
+     "enabled": true,
+     "endpoint": "https://telemetry.reo.dev/data"
+diff --git a/src/tools/ProgrammaticToolCalling.ts b/src/tools/ProgrammaticToolCalling.ts
+index 252e731c..6f7f58ce 100644
+--- a/src/tools/ProgrammaticToolCalling.ts
++++ b/src/tools/ProgrammaticToolCalling.ts
+@@ -42,13 +42,18 @@ import {
+   appendArtifactTruncationWarning,
+   normalizeArtifactTruncation,
+ } from '@/tools/ArtifactTruncation';
++import {
++  INTENT_PROPERTY,
++  PROGRAMMATIC_TOOL_INPUT,
++  inspectToolInputSchema,
++  stripIntentForInvoke,
++} from '@/tools/intentArg';
+ import {
+   describeCodeApiError,
+   logCodeApiDiagnostic,
+ } from '@/tools/diagnostics';
+ import { appendExecutionArtifactFileSummary } from './CodeSessionFileSummary';
+ import { resolveFetchProxyAgent } from '@/utils/proxy';
+-import { INTENT_PROPERTY } from '@/tools/intentArg';
+ import { Constants } from '@/common';
+
+ config();
+@@ -748,83 +753,11 @@ export function unwrapToolResponse(
+   return result;
+ }
+
+-type ToolInputSchemaKind = {
+-  object: boolean;
+-  string: boolean;
+-};
+-
+-function detectSchemaKind(schema: unknown): ToolInputSchemaKind {
+-  const kind: ToolInputSchemaKind = { object: false, string: false };
+-
+-  if (schema == null || typeof schema !== 'object') {
+-    return kind;
+-  }
+-
+-  const jsonSchemaType = (schema as { type?: unknown }).type;
+-  if (jsonSchemaType === 'object') {
+-    kind.object = true;
+-  } else if (jsonSchemaType === 'string') {
+-    kind.string = true;
+-  } else if (Array.isArray(jsonSchemaType)) {
+-    kind.object = jsonSchemaType.includes('object');
+-    kind.string = jsonSchemaType.includes('string');
+-  }
+-
+-  const zodDef = (schema as { _def?: unknown })._def;
+-  if (zodDef == null || typeof zodDef !== 'object') {
+-    return kind;
+-  }
+-
+-  const zodType = (zodDef as { type?: unknown; typeName?: unknown }).type;
+-  const zodTypeName = (zodDef as { type?: unknown; typeName?: unknown })
+-    .typeName;
+-
+-  if (zodType === 'object' || zodTypeName === 'ZodObject') {
+-    kind.object = true;
+-  } else if (zodType === 'string' || zodTypeName === 'ZodString') {
+-    kind.string = true;
+-  }
+-
+-  const innerSchema =
+-    (
+-      zodDef as {
+-        innerType?: unknown;
+-        schema?: unknown;
+-        type?: unknown;
+-      }
+-    ).innerType ?? (zodDef as { schema?: unknown }).schema;
+-  if (innerSchema != null) {
+-    const innerKind = detectSchemaKind(innerSchema);
+-    kind.object ||= innerKind.object;
+-    kind.string ||= innerKind.string;
+-  }
+-
+-  const options = (zodDef as { options?: unknown }).options;
+-  if (Array.isArray(options)) {
+-    for (const option of options) {
+-      const optionKind = detectSchemaKind(option);
+-      kind.object ||= optionKind.object;
+-      kind.string ||= optionKind.string;
+-    }
+-  }
+-
+-  return kind;
+-}
+-
+-function getToolInputSchemaKind(tool: t.GenericTool): ToolInputSchemaKind {
+-  if (tool.constructor.name === 'DynamicTool') {
+-    return { object: false, string: true };
+-  }
+-
+-  const schema = (tool as { schema?: unknown }).schema;
+-  return detectSchemaKind(schema);
+-}
+-
+ function normalizeToolInput(
+   input: t.PTCToolCall['input'],
+   tool: t.GenericTool
+ ): t.PTCToolCall['input'] {
+-  const schemaKind = getToolInputSchemaKind(tool);
++  const schemaKind = inspectToolInputSchema(tool);
+
+   if (typeof input !== 'string') {
+     if (!schemaKind.string || schemaKind.object) {
+@@ -890,9 +823,16 @@ export async function executeTools(
+     }
+
+     try {
+-      const result = await tool.invoke(normalizeToolInput(call.input, tool), {
++      const invokeConfig = {
+         metadata: { [programmaticToolName]: true },
++      };
++      Object.defineProperty(invokeConfig, PROGRAMMATIC_TOOL_INPUT, {
++        value: call.input,
+       });
++      const result = await tool.invoke(
++        stripIntentForInvoke(normalizeToolInput(call.input, tool), tool),
++        invokeConfig
++      );
+
+       const isMCPTool = tool.mcp === true;
+       const unwrappedResult = unwrapToolResponse(result, isMCPTool);
+diff --git a/src/tools/intentArg.ts b/src/tools/intentArg.ts
+index 352de620..d698d5e2 100644
+--- a/src/tools/intentArg.ts
++++ b/src/tools/intentArg.ts
+@@ -19,6 +19,7 @@
+  * parameter it did not declare.
+  */
+
++import { types } from 'node:util';
+ import type { JsonSchemaType, OutcomePatch } from '@/types';
+
+ /** Argument carrying the model-authored label for a tool call. */
+@@ -200,6 +201,194 @@ export function stripIntent(args: unknown): unknown {
+   return rest;
+ }
+
++const SCHEMA_INSPECTION_ERROR =
++  'Tool input schema could not be inspected safely.';
++/** Introspection bounds, not execution limits: uncertainty preserves arguments. */
++const MAX_SCHEMA_NODES = 128;
++const MAX_SCHEMA_DEPTH = 16;
++
++function isInspectable(value: unknown): value is object {
++  return (
++    value != null && (typeof value === 'object' || typeof value === 'function')
++  );
++}
++
++/** Data descriptors avoid executing schema getters or iterable hooks. */
++function schemaProperty(
++  value: unknown,
++  key: PropertyKey,
++  allowToolProxy = false
++): unknown {
++  if (!isInspectable(value)) return undefined;
++  let current: object | null = value;
++  for (let depth = 0; current != null && depth < MAX_SCHEMA_DEPTH; depth++) {
++    if (types.isProxy(current) && !(allowToolProxy && current === value)) {
++      throw new Error(SCHEMA_INSPECTION_ERROR);
++    }
++    const descriptor = Object.getOwnPropertyDescriptor(current, key);
++    if (descriptor != null) {
++      if (!('value' in descriptor)) throw new Error(SCHEMA_INSPECTION_ERROR);
++      return descriptor.value;
++    }
++    current = Object.getPrototypeOf(current);
++  }
++  if (current != null) throw new Error(SCHEMA_INSPECTION_ERROR);
++  return undefined;
++}
++
++function schemaArray(value: unknown): unknown[] {
++  if (value == null) return [];
++  if (!Array.isArray(value) || types.isProxy(value))
++    throw new Error(SCHEMA_INSPECTION_ERROR);
++  if (
++    schemaProperty(value, Symbol.iterator) !== Array.prototype[Symbol.iterator]
++  ) {
++    throw new Error(SCHEMA_INSPECTION_ERROR);
++  }
++  const length = schemaProperty(value, 'length');
++  if (typeof length !== 'number' || length > MAX_SCHEMA_NODES) {
++    throw new Error(SCHEMA_INSPECTION_ERROR);
++  }
++  const entries: unknown[] = [];
++  for (let index = 0; index < length; index++) {
++    entries.push(schemaProperty(value, String(index)));
++  }
++  return entries;
++}
++
++/** Zod stores its object shape lazily; only this necessary evaluation may run schema code. */
++function zodShape(schema: object, definition: unknown, type: unknown): unknown {
++  if (type === 'ZodObject') {
++    const shape = schemaProperty(definition, 'shape');
++    if (typeof shape !== 'function' || types.isProxy(shape)) {
++      throw new Error(SCHEMA_INSPECTION_ERROR);
++    }
++    return Reflect.apply(shape, definition, []);
++  }
++  const zod = schemaProperty(schema, '_zod');
++  if (
++    type === 'object' &&
++    isInspectable(definition) &&
++    schemaProperty(zod, 'def') === definition
++  ) {
++    const descriptor = Object.getOwnPropertyDescriptor(definition, 'shape');
++    if (descriptor?.get != null && !types.isProxy(descriptor.get)) {
++      return Reflect.apply(descriptor.get, definition, []);
++    }
++    return schemaProperty(definition, 'shape');
++  }
++  return schemaProperty(schema, 'shape');
++}
++
++/** Shared by normalization and intent cleanup; never substitutes a model-facing schema. */
++export function inspectToolInputSchema(tool: { schema?: unknown }): {
++  object: boolean;
++  string: boolean;
++  intent: 'declared' | 'absent' | 'unknown';
++} {
++  const result = {
++    object: false,
++    string: false,
++    intent: 'absent' as 'declared' | 'absent' | 'unknown',
++  };
++  const seen = new Set<object>();
++  const active = new Set<object>();
++  const inspect = (value: unknown, depth = 0): void => {
++    if (!isInspectable(value)) return;
++    if (
++      active.has(value) ||
++      depth > MAX_SCHEMA_DEPTH ||
++      seen.size >= MAX_SCHEMA_NODES
++    ) {
++      result.intent = 'unknown';
++      result.string = true;
++      return;
++    }
++    if (seen.has(value)) return;
++    seen.add(value);
++    active.add(value);
++    const type = schemaProperty(value, 'type');
++    const schemaTypes = typeof type === 'string' ? [type] : schemaArray(type);
++    const definition = schemaProperty(value, '_def');
++    const zodType =
++      schemaProperty(definition, 'typeName') ??
++      schemaProperty(definition, 'type');
++    result.object ||=
++      schemaTypes.includes('object') ||
++      zodType === 'ZodObject' ||
++      zodType === 'object';
++    result.string ||=
++      schemaTypes.includes('string') ||
++      zodType === 'ZodString' ||
++      zodType === 'string';
++    if (
++      schemaProperty(value, '$ref') != null ||
++      schemaProperty(value, '$dynamicRef') != null
++    ) {
++      result.intent = 'unknown';
++      // An opaque alternative may accept prose; a root object constraint still rules that out.
++      result.string = true;
++    }
++    const shape =
++      schemaProperty(value, 'properties') ??
++      zodShape(value, definition, zodType);
++    if (isInspectable(shape)) {
++      if (types.isProxy(shape)) throw new Error(SCHEMA_INSPECTION_ERROR);
++      if (
++        Object.getOwnPropertyDescriptor(shape, INTENT_ARG) != null &&
++        result.intent !== 'unknown'
++      ) {
++        result.intent = 'declared';
++      }
++    }
++    inspect(
++      schemaProperty(definition, 'innerType') ??
++        schemaProperty(definition, 'schema'),
++      depth + 1
++    );
++    for (const key of ['anyOf', 'oneOf', 'allOf']) {
++      for (const option of schemaArray(schemaProperty(value, key)))
++        inspect(option, depth + 1);
++    }
++    for (const option of schemaArray(schemaProperty(definition, 'options'))) {
++      inspect(option, depth + 1);
++    }
++    active.delete(value);
++  };
++  try {
++    const constructor = schemaProperty(tool, 'constructor', true);
++    if (schemaProperty(constructor, 'name') === 'DynamicTool') {
++      return { object: false, string: true, intent: 'unknown' };
++    }
++    const schema = schemaProperty(tool, 'schema', true);
++    inspect(schema);
++    if (schemaProperty(schema, 'type') === 'object') result.string = false;
++    return result;
++  } catch {
++    // Never let a schema trap become tool-visible exception text, including during normalization.
++    throw new Error(SCHEMA_INSPECTION_ERROR);
++  }
++}
++
++/** Uses the callee's execution schema; uncertain declarations retain the original arguments. */
++export function stripIntentForInvoke(
++  args: unknown,
++  tool: { schema?: unknown }
++): unknown {
++  const schema = inspectToolInputSchema(tool);
++  if (
++    !schema.object ||
++    schema.intent !== 'absent' ||
++    (typeof args === 'string' && schema.string)
++  ) {
++    return args;
++  }
++  return stripIntent(args);
++}
++
++/** Invocation-local UI input; a symbol keeps it out of serialized tracing metadata. */
++export const PROGRAMMATIC_TOOL_INPUT = Symbol('programmaticToolInput');
++
+ /**
+  * Resolves the settled label for a call from its model-authored `intent` and
+  * the tool's result fields, in precedence order:
+diff --git a/src/tools/__tests__/intentInspection.test.ts b/src/tools/__tests__/intentInspection.test.ts
+new file mode 100644
+index 00000000..3b9a26a1
+--- /dev/null
++++ b/src/tools/__tests__/intentInspection.test.ts
+@@ -0,0 +1,327 @@
++import { z } from 'zod';
++import { z as z4 } from 'zod/v4';
++import { DynamicStructuredTool } from '@langchain/core/tools';
++import type { GenericTool } from '@/types';
++import { executeTools } from '../ProgrammaticToolCalling';
++import { stripIntentForInvoke } from '../intentArg';
++import { Constants } from '@/common';
++
++const secret = 'PRIVATE_SCHEMA_DIAGNOSTIC';
++const input = Object.freeze({ id: 'agent', intent: 'business operation' });
++
++describe('executor schema inspection safety', () => {
++  const probes = [
++    'constructor',
++    'name',
++    'schema',
++    'type',
++    'properties',
++    'shape',
++    '_def',
++    'options',
++    'iterator',
++    'proxy',
++  ] as const;
++
++  it.each(probes)(
++    'contains a hostile %s probe before invoking a real tool',
++    async (probe) => {
++      for (const caller of [
++        Constants.PROGRAMMATIC_TOOL_CALLING,
++        Constants.BASH_PROGRAMMATIC_TOOL_CALLING,
++      ]) {
++        for (const args of [input, { id: 'agent' }, JSON.stringify(input)]) {
++          const body = jest.fn(async () => 'must not execute');
++          const tool = new DynamicStructuredTool({
++            name: 'fixture',
++            description: 'fixture',
++            schema: z.object({ id: z.string() }).strict(),
++            func: body,
++          });
++          const invoke = jest.spyOn(tool, 'invoke');
++          const getter = jest.fn(() => {
++            throw new Error(secret);
++          });
++          const schema = {
++            type: 'object',
++            properties: { id: { type: 'string' } },
++          };
++          Object.defineProperty(tool, 'schema', {
++            value: schema,
++            configurable: true,
++          });
++          if (probe === 'constructor' || probe === 'schema') {
++            Object.defineProperty(tool, probe, { get: getter });
++          } else if (probe === 'name') {
++            const constructor = Object.defineProperty({}, 'name', {
++              get: getter,
++            });
++            Object.defineProperty(tool, 'constructor', { value: constructor });
++          } else if (probe === 'options') {
++            Object.defineProperty(schema, '_def', {
++              value: Object.defineProperty({}, 'options', { get: getter }),
++            });
++          } else if (probe === 'iterator') {
++            const options = Object.defineProperty([], Symbol.iterator, {
++              get: getter,
++            });
++            Object.defineProperty(schema, 'allOf', { value: options });
++          } else if (probe === 'proxy') {
++            Object.defineProperty(tool, 'schema', {
++              value: new Proxy(schema, {
++                get: getter,
++                getOwnPropertyDescriptor: getter,
++              }),
++            });
++          } else {
++            if (probe === 'shape')
++              Object.defineProperty(schema, 'properties', { value: undefined });
++            Object.defineProperty(schema, probe, { get: getter });
++          }
++          const [result] = await executeTools(
++            [{ id: 'call', name: 'fixture', input: args }],
++            new Map([['fixture', tool]]),
++            caller
++          );
++          expect(result.is_error).toBe(true);
++          expect(result.error_message).not.toContain(secret);
++          expect(invoke).not.toHaveBeenCalled();
++          expect(body).not.toHaveBeenCalled();
++          expect(getter).not.toHaveBeenCalled();
++        }
++      }
++    }
++  );
++
++  it('keeps ordinary invocation failures distinct from inspection failures', async () => {
++    const tool = new DynamicStructuredTool({
++      name: 'fixture',
++      description: 'fixture',
++      schema: z.object({ id: z.string() }).strict(),
++      func: async () => 'ok',
++    });
++    const [result] = await executeTools(
++      [{ id: 'call', name: tool.name, input: { extra: true } }],
++      new Map([[tool.name, tool]])
++    );
++    expect(result.is_error).toBe(true);
++    expect(result.error_message).toContain(
++      'Received tool input did not match expected schema'
++    );
++  });
++
++  it('supports transparent tool instrumentation and contains outer Proxy descriptor traps', async () => {
++    const body = jest.fn(async () => 'ok');
++    const target = new DynamicStructuredTool({
++      name: 'fixture',
++      description: 'fixture',
++      schema: z.object({ id: z.string() }).strict(),
++      func: body,
++    });
++    const transparent = new Proxy(target, {
++      get: (tool, key) =>
++        key === 'invoke'
++          ? tool.invoke.bind(tool)
++          : Reflect.get(tool, key, tool),
++    });
++    const [success] = await executeTools(
++      [{ id: 'call', name: target.name, input }],
++      new Map([[target.name, transparent]])
++    );
++    expect(success.is_error).toBe(false);
++    body.mockClear();
++    const trap = jest.fn(() => {
++      throw new Error(secret);
++    });
++    const hostile = new Proxy(target, { getOwnPropertyDescriptor: trap });
++    const [failure] = await executeTools(
++      [{ id: 'call', name: target.name, input }],
++      new Map([[target.name, hostile]])
++    );
++    expect(failure).toMatchObject({
++      is_error: true,
++      error_message: 'Tool input schema could not be inspected safely.',
++    });
++    expect(trap).toHaveBeenCalledTimes(1);
++    expect(body).not.toHaveBeenCalled();
++  });
++
++  it('contains failures from the necessary lazy Zod shape evaluation', async () => {
++    const schema = z.object({ id: z.string() });
++    Object.defineProperty(schema._def, 'shape', {
++      value: () => {
++        throw new Error(secret);
++      },
++    });
++    const body = jest.fn(async () => 'must not execute');
++    const tool = new DynamicStructuredTool({
++      name: 'fixture',
++      description: 'fixture',
++      schema,
++      func: body,
++    });
++    const [result] = await executeTools(
++      [{ id: 'call', name: tool.name, input }],
++      new Map([[tool.name, tool]])
++    );
++    expect(result).toMatchObject({
++      is_error: true,
++      error_message: 'Tool input schema could not be inspected safely.',
++    });
++    expect(body).not.toHaveBeenCalled();
++  });
++
++  it.each([false, true])(
++    'preserves Zod 4 wrapped validation (business intent=%s)',
++    async (business) => {
++      const schema = (
++        business
++          ? z4.object({ id: z4.string(), intent: z4.string() })
++          : z4.object({ id: z4.string() })
++      )
++        .strict()
++        .optional();
++      const tool = new DynamicStructuredTool({
++        name: 'fixture',
++        description: 'fixture',
++        schema,
++        func: async (args) => JSON.stringify(args),
++      });
++      const [result] = await executeTools(
++        [{ id: 'call', name: tool.name, input: JSON.stringify(input) }],
++        new Map([[tool.name, tool]])
++      );
++      expect(result).toMatchObject({
++        is_error: false,
++        result: JSON.stringify(business ? input : { id: 'agent' }),
++      });
++    }
++  );
++
++  it('bounds cyclic, deep and wide schema graphs before invocation', async () => {
++    const cyclic: { type: string; _def?: { innerType: object } } = {
++      type: 'object',
++    };
++    cyclic._def = { innerType: cyclic };
++    let deep: object = {
++      type: 'object',
++      properties: { intent: { type: 'string' } },
++    };
++    for (let i = 0; i < 1000; i++)
++      deep = { type: 'object', _def: { innerType: deep } };
++    for (const schema of [cyclic, deep]) {
++      expect(stripIntentForInvoke(input, { schema })).toBe(input);
++    }
++    const tool = new DynamicStructuredTool({
++      name: 'fixture',
++      description: 'fixture',
++      schema: z.object({ id: z.string() }),
++      func: async () => 'must not execute',
++    });
++    Object.defineProperty(tool, 'schema', {
++      value: { type: 'object', allOf: Array.from({ length: 129 }, () => ({})) },
++    });
++    const invoke = jest.spyOn(tool, 'invoke');
++    const [result] = await executeTools(
++      [{ id: 'call', name: tool.name, input }],
++      new Map([[tool.name, tool]])
++    );
++    expect(result).toMatchObject({
++      is_error: true,
++      error_message: 'Tool input schema could not be inspected safely.',
++    });
++    expect(invoke).not.toHaveBeenCalled();
++  });
++
++  it('does not confuse a shared schema node with a cycle', () => {
++    const shared = { type: 'object', properties: { id: { type: 'string' } } };
++    expect(
++      stripIntentForInvoke(input, {
++        schema: { type: 'object', allOf: [shared, shared] },
++      })
++    ).toEqual({ id: 'agent' });
++  });
++});
++
++describe('real DynamicStructuredTool reference validation', () => {
++  it.each([
++    ['root', false],
++    ['root', true],
++    ['allOf', false],
++    ['allOf', true],
++  ] as const)(
++    'retains %s referenced business intent (required=%s)',
++    async (placement, required) => {
++      const business = {
++        type: 'object' as const,
++        properties: {
++          id: { type: 'string' as const },
++          intent: { type: 'string' as const },
++        },
++        required: required ? ['id', 'intent'] : ['id'],
++        additionalProperties: false,
++      };
++      const schema = {
++        type: 'object' as const,
++        $defs: { business },
++        ...(placement === 'root'
++          ? { $ref: '#/$defs/business' }
++          : { allOf: [{ $ref: '#/$defs/business' }] }),
++      };
++      const body = jest.fn(async (args: unknown) => JSON.stringify(args));
++      const tool: GenericTool = new DynamicStructuredTool({
++        name: 'referenced',
++        description: 'fixture',
++        schema,
++        func: body,
++      });
++      // First prove this validator supports the fixture, independently of normalization.
++      expect(await tool.invoke(input)).toBe(JSON.stringify(input));
++      for (const args of [input, JSON.stringify(input)]) {
++        const [result] = await executeTools(
++          [{ id: 'call', name: tool.name, input: args }],
++          new Map([[tool.name, tool]])
++        );
++        expect(result).toMatchObject({
++          is_error: false,
++          result: JSON.stringify(input),
++        });
++        expect(body.mock.calls.at(-1)?.[0]).toEqual(input);
++      }
++      const [missing] = await executeTools(
++        [{ id: 'call', name: tool.name, input: { id: 'agent' } }],
++        new Map([[tool.name, tool]])
++      );
++      expect(missing.is_error).toBe(required);
++      for (const args of [
++        { ...input, extra: true },
++        { ...input, intent: 42 },
++      ]) {
++        const [invalid] = await executeTools(
++          [{ id: 'call', name: tool.name, input: args }],
++          new Map([[tool.name, tool]])
++        );
++        expect(invalid.is_error).toBe(true);
++      }
++      expect(input.intent).toBe('business operation');
++    }
++  );
++});
++
++describe('helper-only uncertain reference shapes (not sent to the validator)', () => {
++  it.each([
++    { type: 'object', $ref: '#/missing' },
++    { type: 'object', allOf: [{ $ref: '#/missing' }] },
++    { type: 'object', $ref: 'https://invalid.example/schema' },
++    { type: 'object', $ref: '#' },
++    {
++      type: 'object',
++      $defs: { loop: { $ref: '#/$defs/loop' } },
++      allOf: [{ $ref: '#/$defs/loop' }],
++    },
++  ])('preserves input when intent cannot be resolved: %j', (schema) => {
++    expect(stripIntentForInvoke(input, { schema })).toBe(input);
++    const encoded = JSON.stringify(input);
++    expect(stripIntentForInvoke(encoded, { schema })).toBe(encoded);
++  });
++});
+diff --git a/src/tools/__tests__/intentInvoke.test.ts b/src/tools/__tests__/intentInvoke.test.ts
+new file mode 100644
+index 00000000..1305b12f
+--- /dev/null
++++ b/src/tools/__tests__/intentInvoke.test.ts
+@@ -0,0 +1,205 @@
++import { z } from 'zod';
++import { DynamicStructuredTool, DynamicTool } from '@langchain/core/tools';
++import type { GenericTool } from '@/types';
++import { PROGRAMMATIC_TOOL_INPUT, stripIntentForInvoke } from '../intentArg';
++import { executeTools } from '../ProgrammaticToolCalling';
++import { Constants } from '@/common';
++
++describe('execution-schema intent normalization', () => {
++  const schema = z.object({ id: z.string(), expanded: z.boolean() }).strict();
++  const args = Object.freeze({
++    id: 'agent',
++    expanded: false,
++    intent: 'Inspecting agent',
++  });
++
++  it.each([
++    Constants.PROGRAMMATIC_TOOL_CALLING,
++    Constants.BASH_PROGRAMMATIC_TOOL_CALLING,
++  ])(
++    'validates real tools through %s and the shared direct helper',
++    async (caller) => {
++      const tool = new DynamicStructuredTool({
++        name: 'agents_get',
++        description: 'fixture',
++        schema,
++        func: async (input) => JSON.stringify(input),
++      });
++      const invoke = jest.spyOn(tool, 'invoke');
++      for (const input of [
++        args,
++        JSON.stringify(args),
++        { id: 'agent', expanded: false },
++      ]) {
++        const [result] = await executeTools(
++          [{ id: 'call', name: tool.name, input }],
++          new Map([[tool.name, tool]]),
++          caller
++        );
++        expect(result).toMatchObject({
++          is_error: false,
++          result: JSON.stringify({ id: 'agent', expanded: false }),
++        });
++        const direct: GenericTool = tool;
++        expect(await direct.invoke(stripIntentForInvoke(input, tool))).toBe(
++          JSON.stringify({ id: 'agent', expanded: false })
++        );
++      }
++      expect(invoke.mock.calls[0][1]).toMatchObject({
++        [PROGRAMMATIC_TOOL_INPUT]: args,
++      });
++      expect(args.intent).toBe('Inspecting agent');
++      for (const input of [
++        { intent: 'Missing required' },
++        { ...args, extra: true },
++        '{malformed',
++        JSON.stringify({ ...args, extra: true }),
++      ]) {
++        const [result] = await executeTools(
++          [{ id: 'bad', name: tool.name, input }],
++          new Map([[tool.name, tool]]),
++          caller
++        );
++        expect(result.is_error).toBe(true);
++      }
++    }
++  );
++
++  it('retains business intent and its validation, including wrapped Zod schemas', async () => {
++    const business = schema.extend({ intent: z.string() }).strict();
++    for (const wrapped of [
++      business,
++      business.optional(),
++      business.nullable(),
++      business.default(args),
++      business.refine(() => true),
++    ]) {
++      expect(stripIntentForInvoke(args, { schema: wrapped })).toBe(args);
++      expect(
++        stripIntentForInvoke(JSON.stringify(args), { schema: wrapped })
++      ).toBe(JSON.stringify(args));
++      const wrappedTool = new DynamicStructuredTool({
++        name: 'wrapped',
++        description: 'fixture',
++        schema: wrapped,
++        func: async (input) => JSON.stringify(input),
++      });
++      const [result] = await executeTools(
++        [
++          {
++            id: 'wrapped',
++            name: wrappedTool.name,
++            input: JSON.stringify(args),
++          },
++        ],
++        new Map([[wrappedTool.name, wrappedTool]])
++      );
++      expect(result).toMatchObject({
++        is_error: false,
++        result: JSON.stringify(args),
++      });
++    }
++    const tool = new DynamicStructuredTool({
++      name: 'business',
++      description: 'fixture',
++      schema: business,
++      func: async (input) => JSON.stringify(input),
++    });
++    for (const input of [args, JSON.stringify(args)]) {
++      const [result] = await executeTools(
++        [{ id: 'call', name: tool.name, input }],
++        new Map([[tool.name, tool]])
++      );
++      expect(result).toMatchObject({
++        is_error: false,
++        result: JSON.stringify(args),
++      });
++    }
++    const [missing] = await executeTools(
++      [
++        {
++          id: 'call',
++          name: tool.name,
++          input: { id: 'agent', expanded: false },
++        },
++      ],
++      new Map([[tool.name, tool]])
++    );
++    expect(missing.is_error).toBe(true);
++    for (const wrapped of [
++      schema.optional(),
++      schema.nullable(),
++      schema.refine(() => true),
++    ]) {
++      expect(stripIntentForInvoke(args, { schema: wrapped })).toEqual({
++        id: 'agent',
++        expanded: false,
++      });
++      const wrappedTool = new DynamicStructuredTool({
++        name: 'wrapped',
++        description: 'fixture',
++        schema: wrapped,
++        func: async (input) => JSON.stringify(input),
++      });
++      const [result] = await executeTools(
++        [
++          {
++            id: 'wrapped',
++            name: wrappedTool.name,
++            input: JSON.stringify(args),
++          },
++        ],
++        new Map([[wrappedTool.name, wrappedTool]])
++      );
++      expect(result).toMatchObject({
++        is_error: false,
++        result: JSON.stringify({ id: 'agent', expanded: false }),
++      });
++    }
++  });
++
++  it('keeps JSON-looking prose intact for string tools and mixed schemas', async () => {
++    const input = JSON.stringify(args);
++    const tool = new DynamicTool({
++      name: 'text',
++      description: 'fixture',
++      func: async (text) => text,
++    });
++    const invoke = jest.spyOn(tool, 'invoke');
++    await executeTools(
++      [{ id: 'call', name: tool.name, input }],
++      new Map([[tool.name, tool]])
++    );
++    expect(invoke.mock.calls[0][0]).toBe(input);
++    expect(
++      stripIntentForInvoke(input, { schema: z.union([schema, z.string()]) })
++    ).toBe(input);
++  });
++
++  it('honors raw JSON schema business declarations without mutating input', async () => {
++    const tool = new DynamicStructuredTool({
++      name: 'json',
++      description: 'fixture',
++      schema: {
++        type: 'object' as const,
++        properties: {
++          id: { type: 'string' as const },
++          expanded: { type: 'boolean' as const },
++        },
++        required: ['id', 'expanded'],
++        additionalProperties: false,
++      },
++      func: async (input) => JSON.stringify(input),
++    });
++    const [result] = await executeTools(
++      [{ id: 'call', name: tool.name, input: JSON.stringify(args) }],
++      new Map([[tool.name, tool]])
++    );
++    expect(result.is_error).toBe(false);
++    expect(
++      stripIntentForInvoke(args, {
++        schema: { type: 'object', properties: { intent: { type: 'string' } } },
++      })
++    ).toBe(args);
++  });
++});

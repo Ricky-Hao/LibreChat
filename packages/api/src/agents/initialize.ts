@@ -131,6 +131,7 @@ import { createRequestAgentExecutionContext } from './runtime';
 import { resolveTurnDeliveryRouting } from './files/delivery';
 import { filterFilesByEndpointRuntimeConfig } from '~/files';
 import { isFatalAgentInitializationError } from './errors';
+import { withInitializationStage } from './initialization';
 import { hasActiveFilePolicy } from '../protection/files';
 import { resolveAgentCodeExecution } from '~/code/agent';
 import { hasActiveFileFieldPolicy } from '~/protection';
@@ -1375,37 +1376,40 @@ export async function initializeAgent(
   let perSkillExtras: Map<string, string[]> = new Map();
   let resolvedSkillCatalog: ResolvedSkillCatalog | undefined;
   if (hasSkillAccess) {
-    const [manualPrimesResult, alwaysApplyPrimesResult, catalogResult] = await Promise.all([
-      params.manualSkills?.length && db.getSkillByName
-        ? resolveManualSkills({
-            names: params.manualSkills,
-            getSkillByName: db.getSkillByName,
-            accessibleSkillIds: params.accessibleSkillIds!,
-            userId: user?.id,
-            skillStates: params.skillStates,
-            defaultActiveOnShare: params.defaultActiveOnShare,
-          })
-        : Promise.resolve<ResolvedManualSkill[] | undefined>(undefined),
-      db.listAlwaysApplySkills
-        ? resolveAlwaysApplySkills({
-            listAlwaysApplySkills: db.listAlwaysApplySkills,
-            accessibleSkillIds: params.accessibleSkillIds!,
-            userId: user?.id,
-            skillStates: params.skillStates,
-            defaultActiveOnShare: params.defaultActiveOnShare,
-          })
-        : Promise.resolve<ResolvedAlwaysApplySkill[] | undefined>(undefined),
-      hasActivePiiFields(appConfig?.filters?.skills?.pii, ['name', 'description'])
-        ? resolveSkillCatalog({
-            accessibleSkillIds: params.accessibleSkillIds!,
-            listSkillsByAccess: db.listSkillsByAccess,
-            userId: user?.id,
-            skillStates: params.skillStates,
-            defaultActiveOnShare: params.defaultActiveOnShare,
-            maxCatalogSkills: getMaxCatalogSkills(runtime),
-          })
-        : Promise.resolve<ResolvedSkillCatalog | undefined>(undefined),
-    ]);
+    const [manualPrimesResult, alwaysApplyPrimesResult, catalogResult] =
+      await withInitializationStage('skills', () =>
+        Promise.all([
+          params.manualSkills?.length && db.getSkillByName
+            ? resolveManualSkills({
+                names: params.manualSkills,
+                getSkillByName: db.getSkillByName,
+                accessibleSkillIds: params.accessibleSkillIds!,
+                userId: user?.id,
+                skillStates: params.skillStates,
+                defaultActiveOnShare: params.defaultActiveOnShare,
+              })
+            : Promise.resolve<ResolvedManualSkill[] | undefined>(undefined),
+          db.listAlwaysApplySkills
+            ? resolveAlwaysApplySkills({
+                listAlwaysApplySkills: db.listAlwaysApplySkills,
+                accessibleSkillIds: params.accessibleSkillIds!,
+                userId: user?.id,
+                skillStates: params.skillStates,
+                defaultActiveOnShare: params.defaultActiveOnShare,
+              })
+            : Promise.resolve<ResolvedAlwaysApplySkill[] | undefined>(undefined),
+          hasActivePiiFields(appConfig?.filters?.skills?.pii, ['name', 'description'])
+            ? resolveSkillCatalog({
+                accessibleSkillIds: params.accessibleSkillIds!,
+                listSkillsByAccess: db.listSkillsByAccess,
+                userId: user?.id,
+                skillStates: params.skillStates,
+                defaultActiveOnShare: params.defaultActiveOnShare,
+                maxCatalogSkills: getMaxCatalogSkills(runtime),
+              })
+            : Promise.resolve<ResolvedSkillCatalog | undefined>(undefined),
+        ]),
+      );
 
     manualSkillPrimes = manualPrimesResult;
     alwaysApplySkillPrimes = alwaysApplyPrimesResult;
@@ -1511,10 +1515,14 @@ export async function initializeAgent(
    * policy reads the endpoint's own name, but the route each attachment takes also depends on
    * the backing client and on the Responses API decision `getOptions` makes, and nothing
    * between here and tool loading feeds either. */
-  const { getOptions, overrideProvider, customEndpointConfig } = getProviderConfig({
-    provider,
-    appConfig,
-  });
+  const { getOptions, overrideProvider, customEndpointConfig } = await withInitializationStage(
+    'provider',
+    () =>
+      getProviderConfig({
+        provider,
+        appConfig,
+      }),
+  );
   if (overrideProvider !== agent.provider) {
     agent.provider = overrideProvider;
   }
@@ -1524,16 +1532,18 @@ export async function initializeAgent(
     model: agent.model,
   };
 
-  const options: InitializeResultBase = await getOptions({
-    runtime: {
-      appConfig,
-      user,
-      requestBody: runtime.requestBody,
-    },
-    endpoint: provider,
-    model_parameters: finalModelOptions,
-    db,
-  });
+  const options: InitializeResultBase = await withInitializationStage('provider', () =>
+    getOptions({
+      runtime: {
+        appConfig,
+        user,
+        requestBody: runtime.requestBody,
+      },
+      endpoint: provider,
+      model_parameters: finalModelOptions,
+      db,
+    }),
+  );
 
   const llmConfig = options.llmConfig as Record<string, unknown>;
   const webSearchDenied =
@@ -2116,18 +2126,20 @@ export async function initializeAgent(
    * the empty fallback — the agent's own tools are the problem.
    */
   const callLoadTools = async (tools: string[]) =>
-    loadTools?.({
-      provider,
-      agentId: agent.id,
-      tools,
-      model: agent.model,
-      tool_options: agent.tool_options,
-      tool_resources: runtimeToolResources,
-      requestBody,
-      codeExecutionContext,
-      attachedEnvironmentOptOut,
-      accessibleMcpServerNames: resolvedAuditNames,
-    });
+    withInitializationStage('tools', () =>
+      loadTools?.({
+        provider,
+        agentId: agent.id,
+        tools,
+        model: agent.model,
+        tool_options: agent.tool_options,
+        tool_resources: runtimeToolResources,
+        requestBody,
+        codeExecutionContext,
+        attachedEnvironmentOptOut,
+        accessibleMcpServerNames: resolvedAuditNames,
+      }),
+    );
 
   let loadToolsResult;
   const initialFailedSilently = (result: unknown) =>
@@ -2146,7 +2158,7 @@ export async function initializeAgent(
     if (extraAllowedToolNames.length > 0) {
       logger.warn(
         `[allowedTools] loadTools threw with ${extraAllowedToolNames.length} skill-added extra(s); retrying without them`,
-        { errorName: err instanceof Error ? err.name : 'UnknownError' },
+        getSafeErrorMetadata(err),
       );
       if (!baseToolNames.includes(Tools.file_search)) {
         dropFileSearchResources();
@@ -2577,30 +2589,32 @@ export async function initializeAgent(
    * invoke what it creates later in the same conversation.
    */
   if ((accessibleSkillIds && accessibleSkillIds.length > 0) || skillAuthoringAvailable) {
-    const skillResult = await injectSkillCatalog({
-      agent,
-      toolDefinitions,
-      toolRegistry,
-      accessibleSkillIds: accessibleSkillIds ?? [],
-      skillAuthoringAvailable,
-      contextWindowTokens: Number(agentMaxContextTokens) || 200_000,
-      listSkillsByAccess: db?.listSkillsByAccess,
-      codeEnvAvailable: effectiveCodeEnvAvailable,
-      statefulSessions: effectiveStatefulSessions,
-      workspaceTools: attachedWorkspaceTools,
-      workspaceOperations: attachedWorkspaceOperations,
-      userId: user?.id,
-      workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
-      workspaceCommandTimeoutDefaultMs: attachedWorkspaceCommandTimeoutDefaultMs,
-      workspaceReadFileDefaultLines: attachedWorkspaceReadFileDefaultLines,
-      workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
-      workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
-      workspaceNativeSandbox: trustedCodeExecutionContext.codeWorkspace?.nativeSandbox,
-      skillStates: params.skillStates,
-      defaultActiveOnShare: params.defaultActiveOnShare,
-      maxCatalogSkills: getMaxCatalogSkills(runtime),
-      resolvedCatalog: resolvedSkillCatalog,
-    });
+    const skillResult = await withInitializationStage('skills', () =>
+      injectSkillCatalog({
+        agent,
+        toolDefinitions,
+        toolRegistry,
+        accessibleSkillIds: accessibleSkillIds ?? [],
+        skillAuthoringAvailable,
+        contextWindowTokens: Number(agentMaxContextTokens) || 200_000,
+        listSkillsByAccess: db?.listSkillsByAccess,
+        codeEnvAvailable: effectiveCodeEnvAvailable,
+        statefulSessions: effectiveStatefulSessions,
+        workspaceTools: attachedWorkspaceTools,
+        workspaceOperations: attachedWorkspaceOperations,
+        userId: user?.id,
+        workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
+        workspaceCommandTimeoutDefaultMs: attachedWorkspaceCommandTimeoutDefaultMs,
+        workspaceReadFileDefaultLines: attachedWorkspaceReadFileDefaultLines,
+        workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
+        workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
+        workspaceNativeSandbox: trustedCodeExecutionContext.codeWorkspace?.nativeSandbox,
+        skillStates: params.skillStates,
+        defaultActiveOnShare: params.defaultActiveOnShare,
+        maxCatalogSkills: getMaxCatalogSkills(runtime),
+        resolvedCatalog: resolvedSkillCatalog,
+      }),
+    );
     toolDefinitions = skillResult.toolDefinitions;
     skillCount = skillResult.skillCount;
     executableSkillIds = skillResult.activeSkillIds;

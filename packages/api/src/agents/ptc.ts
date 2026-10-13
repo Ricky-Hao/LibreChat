@@ -1,3 +1,4 @@
+import { PROGRAMMATIC_TOOL_INPUT } from '@librechat/agents';
 import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
 import type { PtcToolCallEvent } from 'librechat-data-provider';
 
@@ -155,7 +156,15 @@ export function instrumentPtcToolMap({
               call_id: callId,
               name,
               status: 'running',
-              ...(includePreviews ? { args: summarizePtcArgs(input) } : {}),
+              ...(includePreviews
+                ? {
+                    args: summarizePtcArgs(
+                      (config as { [PROGRAMMATIC_TOOL_INPUT]?: unknown } | undefined)?.[
+                        PROGRAMMATIC_TOOL_INPUT
+                      ] ?? input,
+                    ),
+                  }
+                : {}),
               ...(runId != null ? { runId } : {}),
             });
             try {

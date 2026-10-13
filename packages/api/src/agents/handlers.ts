@@ -1,6 +1,6 @@
 import yaml from 'js-yaml';
 import { Types } from 'mongoose';
-import { GraphEvents, Constants, ToolEndHandler } from '@librechat/agents';
+import { GraphEvents, Constants, ToolEndHandler, stripIntentForInvoke } from '@librechat/agents';
 import {
   logger,
   normalizeSkillFrontmatterKeys,
@@ -141,17 +141,12 @@ import {
   contentFilterModelBoundBlockResponse,
   isContentFilterError,
 } from '~/middleware/contentFilter';
-import {
-  hasIntentArg,
-  stripIntentArg,
-  stripIntentLabelsFromToolDefinitions,
-  INTENT_ARG,
-} from './intent';
 import { editConflictExcerptText, formatEditConflict, parseEditConflict } from '~/code/edits';
 import { buildSkillPrimeMessage, isSkillFilePath, SKILL_FILE_PREFIX } from './skills';
 import { resolveCallerCapabilityProjectionSnapshot } from './callerCapabilities';
 import { SteerToolInterrupt, interruptedToolResult } from './steering/tools';
 import { BACKGROUND_TOOL_INVOCATION_CONFIG_KEY } from './invocation';
+import { stripIntentLabelsFromToolDefinitions } from './intent';
 import { mergeCodeFilesIntoContext } from './codeFilesSession';
 import { toolValidationFeedback } from './validationFeedback';
 import { explainWorkspacePathRejection } from '~/code/paths';
@@ -3239,37 +3234,6 @@ function toolDeclaresRunInBackgroundParam(tool: StructuredToolInterface): boolea
     schema.shape?.[RUN_IN_BACKGROUND_ARG] != null ||
     schema.properties?.[RUN_IN_BACKGROUND_ARG] != null
   );
-}
-
-/**
- * True when the tool's own schema declares `intent` (zod shape or raw JSON
- * schema) — SDK-native intent tools do, so they receive the argument
- * untouched and handle it themselves; host-injected tools do not, so the
- * arg is stripped before invocation.
- */
-function toolDeclaresIntentParam(tool: StructuredToolInterface): boolean {
-  const schema = (
-    tool as StructuredToolInterface & {
-      schema?: { shape?: Record<string, unknown>; properties?: Record<string, unknown> };
-    }
-  ).schema;
-  if (schema == null) {
-    return false;
-  }
-  return schema.shape?.[INTENT_ARG] != null || schema.properties?.[INTENT_ARG] != null;
-}
-
-/**
- * Strips the host-injected `intent` label from invoke args unless the tool's
- * own schema declares it. The label rides `tool_call.args` to the client
- * untouched — only the tool body must never see an undeclared parameter
- * (strict MCP/action schemas would reject it; zod tools would strip-or-throw).
- */
-function stripIntentForInvoke(args: unknown, tool: StructuredToolInterface): unknown {
-  if (!hasIntentArg(args) || toolDeclaresIntentParam(tool)) {
-    return args;
-  }
-  return stripIntentArg(args);
 }
 
 function mergeToolConfigurables(

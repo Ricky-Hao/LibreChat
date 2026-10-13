@@ -33,8 +33,14 @@ export function getSafeErrorMetadata(error: unknown): SafeErrorMetadata {
       ? statusCandidate
       : undefined;
 
+  let type = 'UnknownError';
+  try {
+    type = error instanceof Error ? 'Error' : 'UnknownError';
+  } catch {
+    // A hostile prototype trap must not make diagnostic collection fail.
+  }
   return {
-    type: error instanceof Error ? 'Error' : 'UnknownError',
+    type,
     ...(status !== undefined && { status }),
   };
 }
