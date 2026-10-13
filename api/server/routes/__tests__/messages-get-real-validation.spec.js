@@ -21,6 +21,8 @@ jest.mock('@librechat/agents', () => ({
 }));
 
 jest.mock('@librechat/api', () => ({
+  createMessageReadHandler: jest.requireActual('@librechat/api').createMessageReadHandler,
+  createMessageReadLimits: jest.requireActual('@librechat/api').createMessageReadLimits,
   prepareToolCallPreviews: jest.fn(() => (messages) => Promise.resolve(messages)),
   createToolCallPartHandler: jest.fn(() => (_req, res) => res.status(404).end()),
   rejectToolCallPreviewWrites: (_req, _res, next) => next(),
@@ -76,6 +78,8 @@ jest.mock('~/models', () => ({
   getConvosQueried: jest.fn(),
   searchMessages: jest.fn(),
   getMessagesByCursor: jest.fn(),
+  getMessageReadMetadata: jest.fn(),
+  getMessageReadContent: jest.fn(),
 }));
 
 jest.mock('~/server/services/Artifacts/update', () => ({
@@ -90,6 +94,8 @@ jest.mock('~/server/middleware', () => {
     jest.requireActual('~/server/middleware/messageValidation');
 
   return {
+    createMessageRequestValidation: jest.requireActual('~/server/middleware/messageValidation')
+      .createMessageRequestValidation,
     requireJwtAuth: (req, res, next) => next(),
     validateMessageReq,
     sendValidationResponse,
@@ -121,10 +127,126 @@ describe('GET /api/messages/:conversationId with real validation middleware', ()
       next();
     });
     app.use('/api/messages', messagesRouter);
+    app.use('/api/message-reads', require('../message-reads'));
   });
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it.each([
+    { messages: [] },
+    { messages: [{ conversationId: 'c', messageId: 'metadata', text: 'legacy body' }] },
+  ])(
+    'keeps the legacy zero-or-one array for the literal messageId metadata: %p',
+    async ({ messages }) => {
+      const db = require('~/models');
+      getConvoOwnership.mockResolvedValue({ user: authenticatedUserId });
+      getMessages.mockResolvedValue(messages);
+      const response = await request(app).get('/api/messages/c/metadata');
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.body)).toBe(true);
+      expect(response.body).toEqual(messages);
+      expect(response.headers['x-librechat-message-reads']).toBeUndefined();
+      expect(getMessages).toHaveBeenCalledWith(
+        { conversationId: 'c', messageId: 'metadata', user: authenticatedUserId },
+        CLIENT_MESSAGE_SELECT,
+      );
+      expect(db.getMessageReadMetadata).not.toHaveBeenCalled();
+    },
+  );
+
+  it('serves the noncolliding list and single metadata routes with authorization and byte bounds', async () => {
+    const db = require('~/models');
+    const oldKey = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'synthetic-route-key';
+    try {
+      const row = {
+        _id: 'incarnation',
+        conversationId: 'c',
+        messageId: 'metadata',
+        createdAt: new Date('2026-10-01T00:00:00.123Z'),
+      };
+      getConvoOwnership.mockResolvedValue({ user: authenticatedUserId });
+      db.getMessageReadMetadata.mockResolvedValue([row]);
+      const list = await request(app).get('/api/message-reads/list').query({ conversationId: 'c' });
+      expect(list.status).toBe(200);
+      expect(list.headers['x-librechat-message-reads']).toBe('2');
+      expect(list.body).toMatchObject({
+        schemaVersion: 2,
+        conversationId: 'c',
+        observability: { llmRequests: 'not_recorded', ptcInnerCalls: 'not_recorded' },
+        consistency: 'live',
+        items: [{ messageId: 'metadata' }],
+        nextCursor: null,
+      });
+      expect(Buffer.byteLength(list.text)).toBeLessThanOrEqual(65_536);
+      expect(getConvoOwnership).toHaveBeenCalledWith(authenticatedUserId, 'c', null);
+      expect(db.getMessageReadMetadata.mock.calls[0][0].messageId).toBeUndefined();
+      const single = await request(app)
+        .get('/api/message-reads/list')
+        .query({ conversationId: 'c', messageId: 'metadata' });
+      expect(single.status).toBe(200);
+      expect(single.body.items[0].messageId).toBe('metadata');
+      expect(single.body.conversationId).toBe('c');
+      expect(single.body.observability).toEqual({
+        llmRequests: 'not_recorded',
+        ptcInnerCalls: 'not_recorded',
+      });
+      expect(db.getMessageReadMetadata.mock.calls[1][0]).toHaveProperty('messageId', 'metadata');
+      expect(getMessages).not.toHaveBeenCalled();
+      for (const conversation of [
+        { user: 'other-owner' },
+        { user: authenticatedUserId, subagentThread: {} },
+      ]) {
+        getConvoOwnership.mockResolvedValue(conversation);
+        db.getMessageReadMetadata.mockClear();
+        const denied = await request(app)
+          .get('/api/message-reads/list')
+          .query({ conversationId: 'c' });
+        expect(denied.status).toBe(404);
+        expect(denied.body.error.code).toBe('NOT_FOUND');
+        expect(Buffer.byteLength(denied.text)).toBeLessThanOrEqual(65_536);
+        expect(db.getMessageReadMetadata).not.toHaveBeenCalled();
+      }
+    } finally {
+      if (oldKey === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = oldKey;
+    }
+  });
+
+  it('wires bounded routes through real validation before fetching selected data', async () => {
+    const db = require('~/models');
+    const oldKey = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'synthetic-route-key';
+    try {
+      getConvoOwnership.mockResolvedValue({ user: authenticatedUserId });
+      db.getMessageReadMetadata.mockResolvedValue([
+        { _id: 'incarnation', conversationId: 'c', messageId: 'm', tokenCount: 4 },
+      ]);
+      const response = await request(app)
+        .get('/api/message-reads/list')
+        .query({ conversationId: 'c', messageId: 'm' });
+      expect(response.status).toBe(200);
+      expect(response.headers['x-librechat-message-reads']).toBe('2');
+      expect(response.body.items[0]).toMatchObject({ messageId: 'm', tokenCount: 4 });
+      expect(getConvoOwnership).toHaveBeenCalledWith(authenticatedUserId, 'c', null);
+      expect(db.getMessageReadMetadata).toHaveBeenCalledWith(
+        expect.objectContaining({ user: authenticatedUserId, conversationId: 'c', messageId: 'm' }),
+      );
+      expect(getMessages).not.toHaveBeenCalled();
+      getConvoOwnership.mockResolvedValue({ user: authenticatedUserId, subagentThread: {} });
+      db.getMessageReadMetadata.mockClear();
+      const denied = await request(app)
+        .get('/api/message-reads/list')
+        .query({ conversationId: 'c', messageId: 'm' });
+      expect(denied.status).toBe(404);
+      expect(denied.body.error.code).toBe('NOT_FOUND');
+      expect(db.getMessageReadMetadata).not.toHaveBeenCalled();
+    } finally {
+      if (oldKey === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = oldKey;
+    }
   });
 
   it('returns the existing empty response for new conversations without fetching messages', async () => {
@@ -134,6 +256,64 @@ describe('GET /api/messages/:conversationId with real validation middleware', ()
     expect(response.body).toEqual([]);
     expect(getConvoOwnership).not.toHaveBeenCalled();
     expect(getMessages).not.toHaveBeenCalled();
+  });
+
+  it('wires content and ref-only body reads, and exposes no superseded analysis routes', async () => {
+    const db = require('~/models');
+    const oldKey = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'synthetic-route-key';
+    try {
+      getConvoOwnership.mockResolvedValue({ user: authenticatedUserId });
+      const row = {
+        _id: 'incarnation',
+        conversationId: 'c',
+        messageId: 'm',
+        __v: 1,
+        validScope: true,
+      };
+      db.getMessageReadContent.mockResolvedValue({
+        ...row,
+        textRecorded: true,
+        entries: [],
+        hasMore: false,
+      });
+      const page = await request(app)
+        .get('/api/message-reads/content')
+        .query({ conversationId: 'c', messageId: 'm' });
+      expect(page.status).toBe(200);
+      expect(page.body.text).toBe(true);
+      db.getMessageReadContent.mockResolvedValue({ ...row, recorded: true, stringWindow: 'hello' });
+      const body = await request(app)
+        .get('/api/message-reads/read')
+        .query({ ref: page.body.ref, field: 'text' });
+      expect(body.status).toBe(200);
+      expect(body.body).toMatchObject({
+        representation: 'utf8',
+        data: 'hello',
+        complete: true,
+        nextCursor: null,
+      });
+      expect(getConvoOwnership).toHaveBeenCalledTimes(2);
+      expect(db.getMessageReadContent).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          user: authenticatedUserId,
+          conversationId: 'c',
+          messageId: 'm',
+          field: 'text',
+        }),
+      );
+      for (const path of [
+        '/api/messages/c/metadata/list',
+        '/api/messages/c/m/metadata',
+        '/api/messages/c/m/entries',
+        '/api/messages/c/m/body',
+      ]) {
+        expect((await request(app).get(path)).status).toBe(404);
+      }
+    } finally {
+      if (oldKey === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = oldKey;
+    }
   });
 
   it('starts user-scoped message reads before real conversation validation resolves', async () => {

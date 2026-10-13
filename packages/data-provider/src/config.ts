@@ -3844,6 +3844,15 @@ export const toolCallPreviewsConfigSchema = z.object({
 
 export type TToolCallPreviewsConfig = z.infer<typeof toolCallPreviewsConfigSchema>;
 
+/** Serialized UTF-8 JSON ceilings for the additive, owner-only stored-message reader. */
+export const messageReadsConfigSchema = z.object({
+  responseBytes: z.number().int().min(4096).max(65_536).default(65_536),
+  bodyBytes: z.number().int().min(256).max(32_768).default(16_384),
+  pageSize: z.number().int().min(1).max(100).default(25),
+  tokenTtlSeconds: z.number().int().min(60).max(86_400).default(3600),
+});
+export type TMessageReadsConfig = z.infer<typeof messageReadsConfigSchema>;
+
 export const DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES = 5;
 
 export const resumableStreamsSchema = z
@@ -3885,6 +3894,7 @@ export const configSchema = z.object({
   toolCallPreviews: toolCallPreviewsConfigSchema.default(() =>
     toolCallPreviewsConfigSchema.parse({}),
   ),
+  messageReads: messageReadsConfigSchema.default(() => messageReadsConfigSchema.parse({})),
   includedTools: z.array(z.string()).optional(),
   filteredTools: z.array(z.string()).optional(),
   mcpServers: MCPServersSchema.optional(),

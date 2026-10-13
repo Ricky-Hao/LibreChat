@@ -354,6 +354,8 @@ messageSchema.index({
  * the sort back into memory for them.
  */
 messageSchema.index({ conversationId: 1, user: 1, createdAt: 1, _id: 1 });
+messageSchema.index({ conversationId: 1, user: 1, createdAt: 1, messageId: 1 });
+messageSchema.index({ conversationId: 1, user: 1, updatedAt: 1, messageId: 1 });
 
 /**
  * Serves the batched newest-task read for child threads. `user` is an equality

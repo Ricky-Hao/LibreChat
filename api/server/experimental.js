@@ -640,6 +640,7 @@ if (cluster.isMaster) {
     app.use('/api/user', routes.user);
     app.use('/api/search', routes.search);
     app.use('/api/messages', routes.messages);
+    app.use('/api/message-reads', routes.messageReads);
     app.use('/api/convos', routes.convos);
     app.use('/api/presets', routes.presets);
     app.use('/api/projects', routes.projects);

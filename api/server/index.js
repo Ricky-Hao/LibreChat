@@ -420,6 +420,7 @@ const startServer = async () => {
   app.use('/api/user', routes.user);
   app.use('/api/search', routes.search);
   app.use('/api/messages', routes.messages);
+  app.use('/api/message-reads', routes.messageReads);
   app.use('/api/convos', routes.convos);
   app.use('/api/traces', routes.traces);
   app.use('/api/presets', routes.presets);

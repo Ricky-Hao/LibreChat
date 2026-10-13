@@ -15,6 +15,7 @@ const adminAuditLog = require('./admin/audit');
 const endpoints = require('./endpoints');
 const staticRoute = require('./static');
 const messages = require('./messages');
+const messageReads = require('./message-reads');
 const memories = require('./memories');
 const presets = require('./presets');
 const projects = require('./projects');
@@ -84,6 +85,7 @@ module.exports = {
   presets,
   balance,
   messages,
+  messageReads,
   memories,
   endpoints,
   assistants,

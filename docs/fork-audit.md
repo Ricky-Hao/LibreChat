@@ -14,6 +14,12 @@ retained-prefix and native-dismissal contracts. Browser behavior is verified wit
 the pinned Chromium/memory-service harness, not every browser or live provider.
 Image publication is static-only; the proposed development image is not yet built.
 
+## Current patch maintenance (separate from the dated audit)
+
+The MCP message-read release candidate/source implementation is documented in
+[MCP 消息有界读取：补丁维护与上游移植指南](mcp-message-reads-patch.md).
+Publication status is verified separately. This guide does not change the 2026-10-07 audit results.
+
 ## Evidence key
 
 Private local records (not required to build or run the project) live under

@@ -4,6 +4,12 @@ export * from './common';
 export * from './crypto';
 export * from './schema';
 export * from './utils';
+export type {
+  BoundedMessageMethods,
+  MessageReadRow,
+  MessageReadScope,
+  MessageReadPageInput,
+} from './methods/messageReads';
 export { createModels } from './models';
 export {
   createMethods,

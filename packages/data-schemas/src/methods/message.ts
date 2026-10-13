@@ -9,10 +9,12 @@ import type { UserSubmittedMessageFieldPath } from 'librechat-data-provider';
 import type { SearchParams } from 'meilisearch';
 import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import type { AppConfig, IConversation, IMessage } from '~/types';
+import type { BoundedMessageMethods } from './messageReads';
 import { createChatExpirationDate, createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { activeExpirationFilter, createFallbackRetentionDate } from '~/utils/retention';
 import { fitBoundAppSnapshots, hasBoundAppSnapshots } from './appSnapshots';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
+import { createBoundedMessageMethods } from './messageReads';
 import { tenantStorage } from '~/config/tenantContext';
 import logger from '~/config/winston';
 
@@ -724,7 +726,7 @@ export interface PrivateTextRead {
   readonly privateText: string;
 }
 
-export interface MessageMethods {
+export interface MessageMethods extends BoundedMessageMethods {
   getPersistedPrivateTextId(
     input: Parameters<MessageMethods['hasPersistedPrivateText']>[0],
   ): Promise<string | null>;
@@ -1816,6 +1818,7 @@ export function createMessageMethods(
             $set: {
               'content.$[part].tool_call.backgroundTask.resultClaim': backgroundTask.resultClaim,
             },
+            $inc: { __v: 1 },
           },
           {
             arrayFilters: [
@@ -2434,7 +2437,10 @@ export function createMessageMethods(
            * touches only them instead of re-emitting the whole content array, and
            * needs no read-modify-write. Amazon DocumentDB rejects the
            * aggregation-pipeline form this replaces. */
-          { $set: { 'content.$[part].tool_call.backgroundTask.resultClaim': claimStamp } },
+          {
+            $set: { 'content.$[part].tool_call.backgroundTask.resultClaim': claimStamp },
+            $inc: { __v: 1 },
+          },
           {
             new: true,
             projection: { content: 1 },
@@ -2490,6 +2496,7 @@ export function createMessageMethods(
         },
         {
           $set: { 'content.$[part].tool_call.backgroundTask.resultClaim.receiptReconciled': true },
+          $inc: { __v: 1 },
         },
         {
           arrayFilters: [
@@ -2559,7 +2566,7 @@ export function createMessageMethods(
      * `$ifNull` no-op'd — a legacy row with no array simply has no claims. */
     const updated = await Message.findOneAndUpdate(
       { user: userId, conversationId, messageId, content: { $type: 'array' } },
-      { $unset: { 'content.$[part].tool_call.backgroundTask.resultClaim': 1 } },
+      { $unset: { 'content.$[part].tool_call.backgroundTask.resultClaim': 1 }, $inc: { __v: 1 } },
       {
         new: true,
         projection: { content: 1 },
@@ -4356,6 +4363,7 @@ export function createMessageMethods(
 
   return {
     hasPersistedPrivateText,
+    ...createBoundedMessageMethods(mongoose),
     getPersistedPrivateTextId,
     getPrivateMessageTexts,
     saveMessage,
