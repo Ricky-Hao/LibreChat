@@ -1,4 +1,4 @@
-import { PROGRAMMATIC_TOOL_INPUT } from '@librechat/agents';
+import { PROGRAMMATIC_TOOL_INPUT, normalizeProgrammaticToolResponse } from '@librechat/agents';
 import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
 import type { PtcToolCallEvent } from 'librechat-data-provider';
 
@@ -171,11 +171,16 @@ export function instrumentPtcToolMap({
               const result = await (
                 target.invoke as (input: unknown, config?: unknown) => Promise<unknown>
               ).call(target, input, config);
+              const outcome = normalizeProgrammaticToolResponse(
+                result,
+                (target as StructuredToolInterface & { mcp?: boolean }).mcp === true,
+              );
               safeEmit({
                 tool_call_id: toolCallId,
                 call_id: callId,
                 name,
-                status: 'success',
+                status: outcome.is_error ? 'error' : 'success',
+                ...(includePreviews && outcome.is_error ? { error: outcome.error_message } : {}),
                 durationMs: Date.now() - startedAt,
                 ...(runId != null ? { runId } : {}),
               });

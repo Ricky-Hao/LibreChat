@@ -33,7 +33,7 @@ assert.equal(
 );
 
 /** Self-contained so the identical behavioral smoke also runs in the ESM subprocess. */
-async function verifyIntent(sdk, DynamicStructuredTool) {
+async function verifyIntent(sdk, DynamicStructuredTool, ToolMessage) {
   const strictTool = new DynamicStructuredTool({
     name: 'intent_fixture',
     description: 'Local invocation smoke test',
@@ -95,6 +95,69 @@ async function verifyIntent(sdk, DynamicStructuredTool) {
   assert.equal(unsafe.is_error, true);
   assert.equal(unsafe.error_message, 'Tool input schema could not be inspected safely.');
   assert.equal(probes, 0);
+
+  const failure = new ToolMessage({
+    content: 'Missing fixture',
+    status: 'error',
+    tool_call_id: '',
+  });
+  const resultTool = Object.assign(
+    new DynamicStructuredTool({
+      name: 'result_fixture',
+      description: 'Local result status smoke',
+      schema: { type: 'object', properties: {} },
+      func: async () => failure,
+    }),
+    { mcp: true },
+  );
+  for (const caller of [
+    sdk.Constants.PROGRAMMATIC_TOOL_CALLING,
+    sdk.Constants.BASH_PROGRAMMATIC_TOOL_CALLING,
+  ]) {
+    const [failed] = await sdk.executeTools(
+      [{ id: 'failed', name: resultTool.name, input: {} }],
+      new Map([[resultTool.name, resultTool]]),
+      caller,
+    );
+    assert.equal(failed.is_error, true);
+    assert.equal(failed.error_message, 'Tool reported an error.');
+    assert.equal(failed.result, failure);
+  }
+  assert.equal(
+    sdk.normalizeProgrammaticToolResponse(JSON.parse(JSON.stringify(failure)), true).is_error,
+    true,
+  );
+  for (const envelope of [
+    JSON.parse(JSON.stringify(failure)),
+    { isError: true, content: [], structuredContent: { reason: 'fixture' } },
+  ]) {
+    const pair = [envelope, { type: 'file', uri: 'fixture.txt' }];
+    const outcome = sdk.normalizeProgrammaticToolResponse(pair, true);
+    assert.equal(outcome.is_error, true);
+    assert.equal(outcome.result, pair);
+  }
+  const success = new ToolMessage({
+    content: 'success',
+    status: 'success',
+    tool_call_id: '',
+    artifact: new Date('2026-10-13T00:00:00.000Z'),
+  });
+  const nonMcpSuccess = new ToolMessage({
+    content: 'success',
+    status: 'success',
+    tool_call_id: '',
+  });
+  assert.equal(sdk.normalizeProgrammaticToolResponse(nonMcpSuccess, false).result, nonMcpSuccess);
+  for (const mcp of [false, true]) {
+    const outcome = sdk.normalizeProgrammaticToolResponse(success, mcp);
+    assert.equal(outcome.is_error, false);
+    assert.equal(outcome.result, success);
+  }
+  assert.equal(
+    sdk.normalizeProgrammaticToolResponse({ status: 'error', error: 'business value' }, true)
+      .is_error,
+    false,
+  );
 }
 
 for (const consumer of consumers) {
@@ -114,9 +177,18 @@ for (const consumer of consumers) {
   for (const helper of ['stripIntentForInvoke', 'inspectToolInputSchema']) {
     assert.ok(declarations.includes(`export declare function ${helper}(`));
   }
+  assert.match(
+    readFileSync(resolve(packageRoot, manifest.types), 'utf8'),
+    /export \* from ['"]\.\/tools\/response['"]/,
+  );
+  assert.match(
+    readFileSync(resolve(packageRoot, 'dist/types/tools/response.d.ts'), 'utf8'),
+    /export declare function normalizeProgrammaticToolResponse\(/,
+  );
   const sdk = require('@librechat/agents');
   const { DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
-  await verifyIntent(sdk, DynamicStructuredTool);
+  const { ToolMessage } = require('@librechat/agents/langchain/messages');
+  await verifyIntent(sdk, DynamicStructuredTool, ToolMessage);
   for (const subpath of Object.keys(manifest.exports)) {
     const specifier = `@librechat/agents${subpath === '.' ? '' : subpath.slice(1)}`;
     assert.ok(require(specifier));
@@ -135,7 +207,8 @@ for (const consumer of consumers) {
     }
     const sdk = await import('@librechat/agents');
     const { DynamicStructuredTool } = await import('@librechat/agents/langchain/tools');
-    await (${verifyIntent.toString()})(sdk, DynamicStructuredTool);
+    const { ToolMessage } = await import('@librechat/agents/langchain/messages');
+    await (${verifyIntent.toString()})(sdk, DynamicStructuredTool, ToolMessage);
     assert.match(sdk.buildSkillCarrierText('fixture', { skillName: 'fixture' }), /Skill source/);
   `;
   const imported = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
@@ -144,7 +217,7 @@ for (const consumer of consumers) {
   });
   assert.equal(imported.status, 0, imported.stderr);
   console.log(
-    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths, CJS/ESM intent behavior and declaration exports verified`,
+    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths, CJS/ESM intent/result status and declaration exports verified`,
   );
 }
 console.log('Tarball integrity and single SDK lock resolution verified');
