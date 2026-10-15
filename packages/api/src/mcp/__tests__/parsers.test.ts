@@ -1,3 +1,5 @@
+import sharp from 'sharp';
+import { createHash } from 'node:crypto';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { isMcpAppMimeType, MCP_APP_MIME_TYPE } from 'librechat-data-provider';
 import type * as t from '../types';
@@ -38,17 +40,156 @@ describe('formatToolContent', () => {
       expect(content).toBe('(No response)');
       expect(artifacts).toBeUndefined();
     });
+  });
 
-    it('should preserve the image payload in the string for unrecognized providers', () => {
-      const result: t.MCPToolCallResponse = {
-        content: [{ type: 'image', data: 'iVBORw0KGgoAAAA...', mimeType: 'image/png' }],
-      };
+  describe('synthetic image artifact contract', () => {
+    const providers = ['openai', 'anthropic', 'unknown', undefined] as const;
+    const metadata = Object.freeze({ fixture: 'synthetic-2x2', immutable: true });
+    const text = JSON.stringify(metadata);
+    const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+    let images: t.ImageContent[];
+    let hashes: string[];
+    let jpegBytes: number;
+    const originalMaxImageBytes = process.env.MCP_IMAGE_DATA_MAX_BYTES;
 
-      const [content, artifacts] = formatToolContent(result, 'unknown' as t.Provider);
+    beforeAll(async () => {
+      const buffers = await Promise.all(
+        (['jpeg', 'png', 'webp'] as const).map((format) =>
+          sharp({ create: { width: 2, height: 2, channels: 3, background: '#4287ab' } })
+            .toFormat(format)
+            .toBuffer(),
+        ),
+      );
+      images = buffers.map((buffer, index) => ({
+        type: 'image',
+        mimeType: ['image/jpeg', 'image/png', 'image/webp'][index],
+        data: buffer.toString('base64'),
+      }));
+      hashes = buffers.map(digest);
+      jpegBytes = buffers[0].length;
+    });
 
-      expect(artifacts).toBeUndefined();
-      expect(content).toContain('iVBORw0KGgoAAAA...');
-      expect(content).toContain('image/png');
+    it('uses valid 2x2 JPEG, PNG and WebP fixtures', async () => {
+      for (const image of images) {
+        const dimensions = await sharp(Buffer.from(image.data, 'base64')).metadata();
+        expect([dimensions.width, dimensions.height]).toEqual([2, 2]);
+        expect(`image/${dimensions.format}`).toBe(image.mimeType);
+      }
+    });
+
+    afterEach(() => {
+      if (originalMaxImageBytes === undefined) {
+        delete process.env.MCP_IMAGE_DATA_MAX_BYTES;
+      } else {
+        process.env.MCP_IMAGE_DATA_MAX_BYTES = originalMaxImageBytes;
+      }
+    });
+
+    function checkImages(artifacts: t.Artifacts, expected: number[]) {
+      expect(artifacts?.content?.length ?? 0).toBe(expected.length);
+      expected.forEach((imageIndex, index) => {
+        const part = artifacts?.content?.[index];
+        expect(part?.type).toBe('image_url');
+        if (part?.type !== 'image_url') {
+          throw new Error('Missing image artifact');
+        }
+        const [prefix, data] = part.image_url.url.split(',');
+        expect(prefix).toBe(`data:${images[imageIndex].mimeType};base64`);
+        expect(digest(Buffer.from(data, 'base64'))).toBe(hashes[imageIndex]);
+      });
+    }
+
+    describe.each(providers)('provider %s', (provider) => {
+      it.each([false, true])('preserves canonical metadata and JPEG (isError=%s)', (isError) => {
+        const result = CallToolResultSchema.parse({
+          structuredContent: metadata,
+          content: [{ type: 'text', text }, images[0]],
+          isError,
+        });
+        const before = JSON.stringify(result);
+        const [content, artifacts] = formatToolContent(result, provider as t.Provider);
+        checkImages(artifacts, [0]);
+        expect(content === text).toBe(true);
+        expect(images.some((image) => content.includes(image.data))).toBe(false);
+        expect(JSON.stringify(result) === before).toBe(true);
+      });
+
+      it('keeps multiple image MIME types and order', () => {
+        const [content, artifacts] = formatToolContent({ content: images }, provider as t.Provider);
+        checkImages(artifacts, [0, 1, 2]);
+        expect(content.length).toBe(0);
+      });
+
+      it.each(['ordinary', 'legacy-ui', 'declared-app'] as const)(
+        'enforces the decoded-size boundary on %s results',
+        (path) => {
+          const content: t.ToolContentPart[] = [{ type: 'text', text }, images[0]];
+          if (path === 'legacy-ui') {
+            content.push({
+              type: 'resource',
+              resource: { uri: 'ui://fixture', mimeType: 'text/html', text: '<p>fixture</p>' },
+            });
+          }
+          const app =
+            path === 'declared-app'
+              ? {
+                  resourceUri: 'ui://fixture',
+                  serverName: 'fixture',
+                  toolName: 'image',
+                  serverBinding: 'synthetic-binding',
+                  mcpApps: ENABLED_MCP_APPS_POLICY,
+                }
+              : undefined;
+          process.env.MCP_IMAGE_DATA_MAX_BYTES = String(jpegBytes);
+          const [output, artifacts] = formatToolContent({ content }, provider as t.Provider, app);
+          checkImages(artifacts, [0]);
+          expect(output.includes(images[0].data)).toBe(false);
+          expect(artifacts?.ui_resources?.data?.length ?? 0).toBe(path === 'ordinary' ? 0 : 1);
+          process.env.MCP_IMAGE_DATA_MAX_BYTES = String(jpegBytes - 1);
+          expect(() => formatToolContent({ content }, provider as t.Provider, app)).toThrow(
+            /MCP image result exceeds maximum size/,
+          );
+        },
+      );
+
+      it.each(['file:///fixture.jpeg', 'ui://fixture.jpeg'])(
+        'extracts an embedded image at %s without base64 text',
+        (uri) => {
+          const result: t.MCPToolCallResponse = {
+            content: [
+              {
+                type: 'resource',
+                resource: { uri, mimeType: images[0].mimeType, blob: images[0].data },
+              },
+            ],
+          };
+          const [content, artifacts] = formatToolContent(result, provider as t.Provider);
+          checkImages(artifacts, [0]);
+          expect(content.includes(images[0].data)).toBe(false);
+          process.env.MCP_IMAGE_DATA_MAX_BYTES = String(jpegBytes - 1);
+          expect(() => formatToolContent(result, provider as t.Provider)).toThrow(
+            /MCP image result exceeds maximum size/,
+          );
+        },
+      );
+
+      it.each([false, true])('preserves text-only results (isError=%s)', (isError) => {
+        expect(
+          formatToolContent({ content: [{ type: 'text', text }], isError }, provider as t.Provider),
+        ).toEqual([text, undefined]);
+      });
+
+      it('preserves the existing audio representation', () => {
+        const audio: t.ToolContentPart = {
+          type: 'audio',
+          mimeType: 'audio/wav',
+          data: 'synthetic-audio',
+        };
+        expect(formatToolContent({ content: [audio] }, provider as t.Provider)).toEqual([
+          JSON.stringify(audio, null, 2),
+          undefined,
+        ]);
+      });
     });
   });
 
@@ -1252,6 +1393,16 @@ describe('formatToolContent', () => {
   });
 
   describe('MCP apps on unrecognized providers', () => {
+    let imageData: string;
+    beforeAll(async () => {
+      imageData = (
+        await sharp({
+          create: { width: 2, height: 2, channels: 3, background: '#4287ab' },
+        })
+          .png()
+          .toBuffer()
+      ).toString('base64');
+    });
     it('does not promote an unlinked embedded App while keeping its html out of model text', () => {
       const result: t.MCPToolCallResponse = {
         content: [
@@ -1325,7 +1476,7 @@ describe('formatToolContent', () => {
     it('preserves ordinary unrecognized-provider image output beside an unlinked App resource', () => {
       const result: t.MCPToolCallResponse = {
         content: [
-          { type: 'image', data: 'base64data', mimeType: 'image/png' },
+          { type: 'image', data: imageData, mimeType: 'image/png' },
           {
             type: 'resource',
             resource: { uri: 'ui://app', mimeType: 'text/html;profile=mcp-app', text: '<p>a</p>' },
@@ -1340,14 +1491,14 @@ describe('formatToolContent', () => {
       });
 
       expect(artifacts?.ui_resources).toBeUndefined();
-      expect(artifacts?.content).toBeUndefined();
-      expect(content).toContain('base64data');
+      expect(artifacts?.content).toHaveLength(1);
+      expect(content.includes(imageData)).toBe(false);
     });
 
-    it('keeps bounded standalone images in model output beside a legacy UI attachment', () => {
+    it('keeps bounded standalone images as artifacts beside a legacy UI attachment', () => {
       const result: t.MCPToolCallResponse = {
         content: [
-          { type: 'image', data: 'base64data', mimeType: 'image/png' },
+          { type: 'image', data: imageData, mimeType: 'image/png' },
           {
             type: 'resource',
             resource: { uri: 'ui://legacy', mimeType: 'text/html', text: '<p>view</p>' },
@@ -1358,19 +1509,19 @@ describe('formatToolContent', () => {
       const [content, artifacts] = formatToolContent(result, 'vertexai' as t.Provider);
 
       const resource = artifacts?.ui_resources?.data?.[0];
-      expect(content).toContain('base64data');
+      expect(content.includes(imageData)).toBe(false);
       expect(content).toContain(`UI Resource Marker: \\ui{${resource?.resourceId}}`);
       expect(content.split(`UI Resource Marker: \\ui{${resource?.resourceId}}`)).toHaveLength(2);
-      expect(artifacts?.content).toBeUndefined();
+      expect(artifacts?.content).toHaveLength(1);
       expect(resource).toMatchObject({ uri: 'ui://legacy', mimeType: 'text/html' });
     });
 
-    it('keeps bounded embedded image blobs in model output beside a legacy UI attachment', () => {
+    it('keeps bounded embedded image blobs as artifacts beside a legacy UI attachment', () => {
       const result: t.MCPToolCallResponse = {
         content: [
           {
             type: 'resource',
-            resource: { uri: 'file:///chart.png', mimeType: 'image/png', blob: 'aW1hZ2U=' },
+            resource: { uri: 'file:///chart.png', mimeType: 'image/png', blob: imageData },
           },
           {
             type: 'resource',
@@ -1381,8 +1532,8 @@ describe('formatToolContent', () => {
 
       const [content, artifacts] = formatToolContent(result, 'vertexai' as t.Provider);
 
-      expect(content).toContain('data:image/png;base64,aW1hZ2U=');
-      expect(artifacts?.content).toBeUndefined();
+      expect(content.includes(imageData)).toBe(false);
+      expect(artifacts?.content).toHaveLength(1);
       expect(artifacts?.ui_resources?.data).toHaveLength(1);
     });
 

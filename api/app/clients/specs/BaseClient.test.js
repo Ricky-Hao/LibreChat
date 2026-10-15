@@ -659,6 +659,41 @@ describe('BaseClient', () => {
   });
 
   describe('sendMessage', () => {
+    test('waits for an MCP image artifact before persisting the ordinary response', async () => {
+      saveMessage.mockClear();
+      const storedImage = deferred();
+      const completionStarted = deferred();
+      const attachment = {
+        file_id: 'synthetic-image',
+        type: 'image/jpeg',
+        width: 2,
+        height: 2,
+        filepath: '/synthetic.jpeg',
+        toolCallId: 'synthetic-call',
+      };
+      TestClient.artifactPromises = [storedImage.promise];
+      TestClient.sendCompletion.mockImplementation(async () => {
+        completionStarted.resolve();
+        return { completion: 'Synthetic image result', metadata: undefined };
+      });
+
+      const sending = TestClient.sendMessage('Create a synthetic fixture');
+      await completionStarted.promise;
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(saveMessage.mock.calls.some(([, message]) => message.isCreatedByUser === false)).toBe(
+        false,
+      );
+
+      storedImage.resolve(attachment);
+      const response = await sending;
+      await response.databasePromise;
+      expect(response.attachments).toEqual([attachment]);
+      const persisted = saveMessage.mock.calls.find(
+        ([, message]) => message.isCreatedByUser === false,
+      )?.[1];
+      expect(persisted?.attachments).toEqual([attachment]);
+    });
+
     test('sendMessage should return a response message', async () => {
       const expectedResult = expect.objectContaining({
         sender: TestClient.sender,

@@ -109,6 +109,16 @@ jest.mock('./OboPolicyService', () => ({
   createOboTrustChecker: jest.fn(() => jest.fn()),
 }));
 
+jest.mock('~/server/services/Files/process', () => ({ saveBase64Image: jest.fn() }));
+jest.mock('~/server/services/Files/Citations', () => ({ processFileCitations: jest.fn() }));
+jest.mock('~/server/services/Files/Code/process', () => ({
+  processCodeOutput: jest.fn(),
+  runPreviewFinalize: jest.fn(),
+}));
+jest.mock('~/server/services/Files/Code/preflight', () => ({
+  preflightCodeOutputBatch: jest.fn(),
+}));
+
 describe('tests for the new helper functions used by the MCP connection status endpoints', () => {
   let mockGetMCPManager;
   let mockGetFlowStateManager;
@@ -1620,6 +1630,162 @@ describe('User parameter passing tests', () => {
   });
 
   describe('createMCPTool', () => {
+    describe('image artifact contract', () => {
+      afterEach(() => jest.restoreAllMocks());
+      it.each([
+        ['normalized custom alias', 'openai', undefined, 'openai', false],
+        ['normalized invocation metadata', 'openai', 'openai', 'openai', false],
+        ['explicit alias metadata override', 'openai', 'NewAPI', 'newapi', false],
+        ['anthropic', 'anthropic', 'anthropic', 'anthropic', false],
+        ['unknown', 'unknown', undefined, 'unknown', false],
+        ['undefined', undefined, undefined, undefined, false],
+        ['MCP error', 'unknown', undefined, 'unknown', true],
+      ])(
+        'delivers a synthetic JPEG through the foreground callback: %s',
+        async (_label, capturedProvider, invocationProvider, expectedProvider, isError) => {
+          const sharp = require('sharp');
+          const { createHash } = require('node:crypto');
+          const { CallToolResultSchema } = require('@modelcontextprotocol/sdk/types.js');
+          const {
+            createToolExecuteHandler,
+            getProviderConfig,
+            MCPManager,
+            MCPConnection,
+            MCPServersRegistry,
+          } = require('@librechat/api');
+          const { createToolEndCallback } = require('../controllers/agents/callbacks');
+          const { saveBase64Image } = require('./Files/process');
+          const { overrideProvider } = getProviderConfig({
+            provider: 'NewAPI',
+            appConfig: {
+              endpoints: { custom: [{ name: 'NewAPI', baseURL: 'http://127.0.0.1:1' }] },
+            },
+          });
+          expect(overrideProvider.toLowerCase()).toBe('openai');
+          const bytes = await sharp({
+            create: { width: 2, height: 2, channels: 3, background: '#4287ab' },
+          })
+            .jpeg()
+            .toBuffer();
+          const hash = (buffer) => createHash('sha256').update(buffer).digest('hex');
+          const text = JSON.stringify({ fixture: 'synthetic-2x2', immutable: true });
+          const result = CallToolResultSchema.parse({
+            structuredContent: JSON.parse(text),
+            content: [
+              { type: 'text', text },
+              { type: 'image', mimeType: 'image/jpeg', data: bytes.toString('base64') },
+            ],
+            isError,
+          });
+          const manager = new MCPManager();
+          jest.spyOn(MCPServersRegistry, 'getInstance').mockReturnValue({
+            isAppServerConfig: async () => false,
+            resolveAllowlists: async () => ({
+              allowedDomains: null,
+              allowedAddresses: null,
+              useSSRFProtection: false,
+            }),
+          });
+          const connection = new MCPConnection({
+            serverName: 'synthetic',
+            serverConfig: { type: 'streamable-http', url: 'http://127.0.0.1:1/mcp' },
+          });
+          const request = jest.spyOn(connection.client, 'request').mockResolvedValue(result);
+          jest.spyOn(connection, 'isConnected').mockResolvedValue(true);
+          jest.spyOn(manager, 'getConnection').mockResolvedValue(connection);
+          const callTool = jest.spyOn(manager, 'callTool');
+          mockGetMCPManager.mockReturnValue(manager);
+          require('~/models').getRoleByName.mockResolvedValue({
+            permissions: { [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true } },
+          });
+          const user = { id: 'synthetic-user', role: 'USER' };
+          const toolKey = `image${D}synthetic`;
+          const tool = await createMCPTool({
+            user,
+            config: { url: 'http://127.0.0.1:1/mcp' },
+            toolKey,
+            provider: capturedProvider === 'openai' ? overrideProvider : capturedProvider,
+            userMCPAuthMap: {},
+            availableTools: {
+              [toolKey]: {
+                function: {
+                  description: 'Synthetic image',
+                  parameters: { type: 'object', properties: {} },
+                },
+              },
+            },
+          });
+          expect(tool.responseFormat).toBe('content_and_artifact');
+          const artifactPromises = [];
+          const req = { user, config: {} };
+          const res = {
+            headersSent: true,
+            writableEnded: false,
+            write: jest.fn(),
+            flush: jest.fn(),
+          };
+          saveBase64Image.mockImplementation(async (url) => {
+            const [prefix, data] = url.split(',');
+            expect(prefix).toBe('data:image/jpeg;base64');
+            expect(hash(Buffer.from(data, 'base64'))).toBe(hash(bytes));
+            return {
+              file_id: 'synthetic-file',
+              type: 'image/jpeg',
+              width: 2,
+              height: 2,
+              filepath: '/synthetic.jpeg',
+            };
+          });
+          const callback = jest.fn(createToolEndCallback({ req, res, artifactPromises }));
+          const handler = createToolExecuteHandler({
+            loadTools: async () => ({ loadedTools: [tool] }),
+            toolEndCallback: callback,
+          });
+          const outputs = await new Promise((resolve, reject) => {
+            handler.handle('on_tool_execute', {
+              toolCalls: [
+                { id: 'synthetic-call', name: toolKey, args: {}, stepId: 'synthetic-step' },
+              ],
+              agentId: 'synthetic-agent',
+              metadata: {
+                provider: invocationProvider,
+                thread_id: 'synthetic-thread',
+                run_id: 'synthetic-message',
+              },
+              configurable: { user },
+              resolve,
+              reject,
+            });
+          });
+          expect(callTool).toHaveBeenCalledTimes(1);
+          await expect(callTool.mock.results[0].value).resolves.toHaveLength(2);
+          expect(request).toHaveBeenCalledTimes(1);
+          expect(callTool.mock.calls[0][0].provider).toBe(expectedProvider);
+          expect(callback).toHaveBeenCalledTimes(1);
+          expect(outputs[0].artifact?.content?.length ?? 0).toBe(1);
+          expect(outputs[0].content === text).toBe(true);
+          expect(outputs[0].status).toBe(isError ? 'error' : 'success');
+          expect(artifactPromises.length).toBe(1);
+          const attachments = await Promise.all(artifactPromises);
+          expect(attachments).toEqual([
+            expect.objectContaining({
+              file_id: 'synthetic-file',
+              type: 'image/jpeg',
+              messageId: 'synthetic-message',
+              conversationId: 'synthetic-thread',
+              toolCallId: 'synthetic-call',
+            }),
+          ]);
+          expect(saveBase64Image).toHaveBeenCalledTimes(1);
+          expect(saveBase64Image.mock.calls[0][1].req).toBe(req);
+          expect(res.write).toHaveBeenCalled();
+          expect(res.write.mock.calls.some(([chunk]) => chunk.includes('synthetic-file'))).toBe(
+            true,
+          );
+        },
+      );
+    });
+
     it('preserves the full MCP tuple for the Assistants required-action sink', async () => {
       const mockUser = { id: 'assistants-app-user', role: 'USER' };
       const mockRes = { write: jest.fn(), flush: jest.fn() };
