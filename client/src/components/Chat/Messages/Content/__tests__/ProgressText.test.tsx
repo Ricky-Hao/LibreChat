@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { FailedRevealContext } from '../reveal';
 import ProgressText from '../ProgressText';
 
@@ -92,6 +92,28 @@ describe('ProgressText duration', () => {
     clock.mockRestore();
   });
 
+  it('ticks while running and replaces the live timer with measured intervals on completion', () => {
+    jest.useFakeTimers();
+    try {
+      const { rerender } = renderProgressText({ phase: 'running', phaseStartAt: 1_000 });
+      const initial = screen.getByTestId('stream-elapsed').textContent;
+      act(() => jest.advanceTimersByTime(3000));
+      expect(screen.getByTestId('stream-elapsed').textContent).not.toBe(initial);
+      rerender(
+        <ProgressText
+          {...defaults}
+          toolPreparationDurationMs={13_000}
+          toolExecutionDurationMs={1000}
+        />,
+      );
+      expect(screen.queryByTestId('stream-elapsed')).not.toBeInTheDocument();
+      expect(screen.getByText('· Preparation 13s')).toBeInTheDocument();
+      expect(screen.getByText('· Tool call 1s')).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('does not render while the step is still running', () => {
     renderProgressText({ phase: 'running', durationMs: 3500 });
     expect(screen.queryByText('· Total elapsed 3.5s')).not.toBeInTheDocument();
@@ -175,28 +197,43 @@ describe('ProgressText disclosure', () => {
   });
 
   it('renders no chevron or disclosure state without expandable content', () => {
-    renderProgressText({ hasInput: false });
+    const onClick = jest.fn();
+    renderProgressText({ hasInput: false, onClick });
 
     const button = screen.getByRole('button', { name: 'Completed foo' });
 
     expect(button).toBeDisabled();
     expect(button).not.toHaveAttribute('aria-expanded');
     expect(button.querySelector('svg')).toBeNull();
+    fireEvent.click(button);
+    expect(onClick).not.toHaveBeenCalled();
   });
 });
 
-describe('ProgressText subtitle', () => {
-  it('gives the subtitle every bit of the shrink so the label keeps its last letters', () => {
-    renderProgressText({ subtitle: 'HTTP 429 from github.com' });
-    const label = screen.getByText('Completed foo');
-    const subtitle = screen.getByText('HTTP 429 from github.com');
-    expect(label).toHaveClass('shrink-0', 'max-w-full', 'truncate');
-    expect(subtitle).toHaveClass('shrink', 'min-w-0', 'truncate');
+describe('ProgressText label and metadata', () => {
+  it.each([
+    '核对全部十二项配置检查结果',
+    'Checking all the older configuration entries before creating a complete comparison report. '.repeat(
+      4,
+    ),
+    'CheckEveryConfigurationEntryWithoutBreakingTheOriginalIntent'.repeat(4),
+  ])('preserves the entire label in the disclosure name: %s', (finishedText) => {
+    renderProgressText({
+      finishedText,
+      subtitle: 'Synthetic status details',
+      toolPreparationDurationMs: 13_000,
+      toolExecutionDurationMs: 1000,
+    });
+    expect(screen.getByText(finishedText.trim()).textContent).toBe(finishedText);
+    expect(screen.getByRole('button')).toHaveAccessibleName(
+      `${finishedText.trim()} Synthetic status details Preparation took 13 seconds Tool call took 1 second`,
+    );
   });
 
-  it('lets a lone label shrink into its own ellipsis', () => {
-    renderProgressText();
-    expect(screen.getByText('Completed foo')).not.toHaveClass('shrink-0');
+  it('keeps authentication text ahead of the running intent', () => {
+    renderProgressText({ phase: 'running', authText: 'Authentication required' });
+    expect(screen.getByRole('button')).toHaveAccessibleName('Authentication required');
+    expect(screen.queryByText(defaults.inProgressText)).not.toBeInTheDocument();
   });
 });
 
@@ -260,21 +297,6 @@ describe('ProgressText failed reveal', () => {
     const { rerender } = render(pair(0));
     rerender(pair(1));
     expect(onClick).not.toHaveBeenCalled();
-  });
-});
-
-describe('ProgressText fixed siblings', () => {
-  it('keeps the verdict, duration and chevron out of the shrinking label box', () => {
-    const { container } = renderProgressText({
-      phase: 'completed',
-      subtitle: 'a very long subtitle',
-      durationMs: 3500,
-    });
-    const box = screen.getByText('Completed foo').parentElement;
-    expect(box).toHaveClass('min-w-0');
-    expect(box).toContainElement(screen.getByText('a very long subtitle'));
-    expect(screen.getByText('· Total elapsed 3.5s').parentElement).toHaveClass('shrink-0');
-    expect(container.querySelector('svg')).toHaveClass('shrink-0');
   });
 });
 
