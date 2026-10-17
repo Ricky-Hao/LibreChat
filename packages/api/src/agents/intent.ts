@@ -2,9 +2,8 @@
  * @fileoverview Tool intent labels.
  *
  * Injects an optional `intent` string as the FIRST property of a tool's
- * schema so the model can declare, per call, one sentence stating what that
- * specific call is about to do ("Searching for OAuth handling in the
- * callback router"). Because the property is first, it is the first key
+ * schema so the model can declare a concise action and object in the user's
+ * language ("读取配置"). Because the property is first, it is the first key
  * providers stream in the tool-call args, and the client renders it as the
  * call's live status label — the args already reach the client verbatim, so
  * no new event plumbing is involved. The label is inert server-side: the
@@ -25,11 +24,7 @@
 
 import { logger } from '@librechat/data-schemas';
 import { Tools, Constants } from 'librechat-data-provider';
-import {
-  Constants as AgentConstants,
-  INTENT_LABEL_MARKER,
-  INTENT_DESCRIPTION,
-} from '@librechat/agents';
+import { Constants as AgentConstants, INTENT_LABEL_MARKER } from '@librechat/agents';
 import type { LCTool, LCToolRegistry, JsonSchemaType } from '@librechat/agents';
 import type { AgentToolOptions } from 'librechat-data-provider';
 import type { CapabilityToolNames } from './selection';
@@ -142,14 +137,22 @@ export function stripIntentArg(args: unknown): unknown {
   return rest;
 }
 
+/** Host prompt override; the SDK marker remains the shared label discriminator. */
+const INTENT_DESCRIPTION =
+  `${INTENT_LABEL_MARKER}, before any other argument. ` +
+  'Briefly describe this call in the user language: bare action and necessary object only. ' +
+  'Chinese: at most 12 characters, e.g. 读取配置, 检查构建状态, 查找登录逻辑. Other languages: at most 6 words. ' +
+  'No progress preambles (正在, 正在做, 我正在, or equivalents). ' +
+  'Do not imply completion or success (已完成, 已成功, or equivalents). ' +
+  'No explanation, tool names, or ending punctuation. Distinguish sibling calls with a short object.';
+
 /**
  * Canonical (frozen) shape of the injected property. Injection embeds a
  * copy so downstream schema tooling that mutates subschemas (JSON-schema
  * dereferencers stamp URI markers) never trips on a frozen shared instance.
  *
- * The description is the SDK's, not a local copy: host-injected tools and
- * SDK-native tools must present the model with one identical instruction, and
- * a divergent copy would also miss the SDK's token trimming.
+ * Final sanitization applies this same prompt to SDK-native label schemas.
+ * Length guidance is prose only; no schema limit or runtime truncation.
  */
 const INTENT_PROPERTY: JsonSchemaType = Object.freeze<JsonSchemaType>({
   type: 'string',
@@ -216,6 +219,30 @@ function isIntentLabelProperty(property: JsonSchemaType | undefined): boolean {
     typeof property.description === 'string' &&
     property.description.startsWith(INTENT_LABEL_MARKER)
   );
+}
+
+/** Overrides only label prose, preserving property order and schema constraints. */
+function overrideIntentDescription(def: LCTool): LCTool {
+  const params = def.parameters;
+  const property = params?.properties?.[INTENT_ARG];
+  if (
+    !params ||
+    !property ||
+    !isIntentLabelProperty(property) ||
+    property.description === INTENT_DESCRIPTION
+  ) {
+    return def;
+  }
+  return {
+    ...def,
+    parameters: {
+      ...params,
+      properties: {
+        ...params.properties,
+        [INTENT_ARG]: { ...property, description: INTENT_DESCRIPTION },
+      },
+    },
+  };
 }
 
 /** Returns a copy of the def without the intent LABEL property (marker-guarded). */
@@ -403,6 +430,8 @@ export function applyIntentLabels(params: {
  * advertised: every one when the capability is disabled (the admin kill
  * switch over SDK-native schemas, which otherwise pay the token cost with
  * the feature off), or the explicitly opted-out ones when it is enabled.
+ * Surviving labels receive the host prompt override, including registry-only
+ * definitions used for deferred discovery.
  * Marker-guarded, so a tool's own `intent` business parameter survives.
  */
 export function sanitizeIntentLabels(params: {
@@ -436,31 +465,27 @@ export function sanitizeIntentLabels(params: {
     semanticIntentBlockedToolNames.add(def.name);
   };
   const nextDefs = defs.map((def) => {
-    if (!shouldStrip(def.name)) {
-      projectSemanticTrust(def);
-      return def;
-    }
-    const stripped = removeIntentParam(def);
-    projectSemanticTrust(stripped);
-    if (stripped !== def) {
+    const sanitized = shouldStrip(def.name)
+      ? removeIntentParam(def)
+      : overrideIntentDescription(def);
+    projectSemanticTrust(sanitized);
+    if (sanitized !== def) {
       changed = true;
       const registryEntry = toolRegistry?.get(def.name);
       if (registryEntry) {
-        toolRegistry?.set(def.name, { ...registryEntry, parameters: stripped.parameters });
+        toolRegistry?.set(def.name, { ...registryEntry, parameters: sanitized.parameters });
       }
     }
-    return stripped;
+    return sanitized;
   });
   if (toolRegistry) {
     for (const [name, entry] of toolRegistry) {
-      if (!shouldStrip(name)) {
-        projectSemanticTrust(entry);
-        continue;
-      }
-      const stripped = removeIntentParam(entry);
-      projectSemanticTrust(stripped);
-      if (stripped !== entry) {
-        toolRegistry.set(name, stripped);
+      const sanitized = shouldStrip(name)
+        ? removeIntentParam(entry)
+        : overrideIntentDescription(entry);
+      projectSemanticTrust(sanitized);
+      if (sanitized !== entry) {
+        toolRegistry.set(name, sanitized);
       }
     }
   }

@@ -1,5 +1,17 @@
 import { logger } from '@librechat/data-schemas';
-import type { LCTool, LCToolRegistry } from '@librechat/agents';
+import {
+  Providers,
+  createGraph,
+  withoutIntent,
+  initializeModel,
+  INTENT_LABEL_MARKER,
+  INTENT_DESCRIPTION as SDK_INTENT_DESCRIPTION,
+  BashExecutionToolDefinition,
+  ReadFileToolDefinition,
+  SkillToolDefinition,
+  ToolSearchToolDefinition,
+} from '@librechat/agents';
+import type { LCTool, LCToolRegistry, JsonSchemaType } from '@librechat/agents';
 import {
   INTENT_ARG,
   NATIVE_INTENT_TOOL_NAMES,
@@ -19,6 +31,14 @@ import { applyBackgroundToolCalls, CHECK_BACKGROUND_TASK_NAME } from './backgrou
 import { mergeSynthesizedToolOptions, TOOL_SELECTION_WILDCARD } from './selection';
 import { toolOptionsSchema } from './validation';
 
+const CONCISE_INTENT_DESCRIPTION =
+  'ALWAYS write this field FIRST, before any other argument. ' +
+  'Briefly describe this call in the user language: bare action and necessary object only. ' +
+  'Chinese: at most 12 characters, e.g. 读取配置, 检查构建状态, 查找登录逻辑. Other languages: at most 6 words. ' +
+  'No progress preambles (正在, 正在做, 我正在, or equivalents). ' +
+  'Do not imply completion or success (已完成, 已成功, or equivalents). ' +
+  'No explanation, tool names, or ending punctuation. Distinguish sibling calls with a short object.';
+
 const mcpDef = (name: string): LCTool =>
   ({
     name,
@@ -35,8 +55,7 @@ const sdkNativeDef = (name: string): LCTool =>
       properties: {
         intent: {
           type: 'string',
-          description:
-            'ALWAYS write this field FIRST, before any other argument. One short sentence…',
+          description: SDK_INTENT_DESCRIPTION,
         },
         query: { type: 'string' },
       },
@@ -116,6 +135,18 @@ describe('injectIntentParam', () => {
   it('never adds intent to required', () => {
     const injected = injectIntentParam(mcpDef('search_mcp_docs'));
     expect((injected.parameters as { required?: string[] }).required).toEqual(['q']);
+  });
+
+  it('uses the bare-action prompt without adding validation or truncating labels', () => {
+    const injected = injectIntentParam(mcpDef('search_mcp_docs'));
+    expect(injected.parameters?.properties?.intent).toEqual({
+      type: 'string',
+      description: CONCISE_INTENT_DESCRIPTION,
+    });
+    expect(CONCISE_INTENT_DESCRIPTION.startsWith(INTENT_LABEL_MARKER)).toBe(true);
+    const label = '读取配置并检查所有相关设置以确认内容完整';
+    expect(readIntentArg({ intent: label })).toBe(label);
+    expect(withoutIntent(injected.parameters)?.properties).not.toHaveProperty('intent');
   });
 
   it('creates an object schema when the tool declares no parameters', () => {
@@ -522,7 +553,7 @@ describe('sanitizeIntentLabels', () => {
     expect(INTENT_ARG in (skill.parameters as { properties: object }).properties).toBe(true);
   });
 
-  it('leaves defs untouched when the capability is on and nothing opted out', () => {
+  it('overrides SDK label prose and is idempotent once normalized', () => {
     const skill = sdkNativeDef('skill');
     const defs = [skill];
     const { toolDefinitions, semanticIntentToolNames } = sanitizeIntentLabels({
@@ -531,8 +562,177 @@ describe('sanitizeIntentLabels', () => {
       toolOptions: undefined,
       capabilityEnabled: true,
     });
-    expect(toolDefinitions).toBe(defs);
+    expect(toolDefinitions[0].parameters?.properties?.intent?.description).toBe(
+      CONCISE_INTENT_DESCRIPTION,
+    );
+    expect(skill.parameters?.properties?.intent?.description).toBe(SDK_INTENT_DESCRIPTION);
     expect(semanticIntentToolNames).toEqual(['skill']);
+    expect(
+      sanitizeIntentLabels({
+        toolDefinitions,
+        toolRegistry: undefined,
+        toolOptions: undefined,
+        capabilityEnabled: true,
+      }).toolDefinitions,
+    ).toBe(toolDefinitions);
+  });
+
+  it('normalizes deferred registry-only labels while preserving metadata and opt-outs', () => {
+    const deferred = { ...sdkNativeDef('deferred'), defer_loading: true };
+    const optedOut = sdkNativeDef('opted_out');
+    const registry: LCToolRegistry = new Map([
+      [deferred.name, deferred],
+      [optedOut.name, optedOut],
+    ]);
+    const result = sanitizeIntentLabels({
+      toolDefinitions: undefined,
+      toolRegistry: registry,
+      toolOptions: { opted_out: { describe_intent: false } },
+      capabilityEnabled: true,
+    });
+    expect(result.semanticIntentToolNames).toEqual(['deferred']);
+    expect(result.semanticIntentBlockedToolNames).toEqual(['opted_out']);
+    expect(registry.get('deferred')).toEqual({
+      ...deferred,
+      parameters: {
+        ...deferred.parameters,
+        properties: {
+          ...deferred.parameters?.properties,
+          intent: { type: 'string', description: CONCISE_INTENT_DESCRIPTION },
+        },
+      },
+    });
+    expect(registry.get('opted_out')?.parameters?.properties).not.toHaveProperty('intent');
+    expect(deferred.parameters?.properties?.intent?.description).toBe(SDK_INTENT_DESCRIPTION);
+    const normalized = registry.get('deferred');
+    sanitizeIntentLabels({
+      toolDefinitions: [],
+      toolRegistry: registry,
+      toolOptions: undefined,
+      capabilityEnabled: true,
+    });
+    expect(registry.get('deferred')).toBe(normalized);
+  });
+
+  it.each([undefined, true, false])(
+    'preserves business intent schemas and registry entries with describe_intent=%s',
+    (describe_intent) => {
+      const business = mcpDef('create_record');
+      business.parameters = {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          intent: { type: 'string', description: 'CRM intent category', enum: ['billing'] },
+        },
+        required: ['intent'],
+      };
+      const defs = [business, mcpDef('unlabelled')];
+      const registry: LCToolRegistry = new Map(defs.map((def) => [def.name, def]));
+      const result = sanitizeIntentLabels({
+        toolDefinitions: defs,
+        toolRegistry: registry,
+        toolOptions: { create_record: { describe_intent } },
+        capabilityEnabled: true,
+      });
+      expect(result.toolDefinitions).toBe(defs);
+      expect(registry.get(business.name)).toBe(business);
+      expect(result.semanticIntentToolNames).toEqual([]);
+    },
+  );
+
+  it('carries host and real SDK schema overrides through SDK model binding and discovery', () => {
+    const nativeDefinitions: LCTool[] = [
+      {
+        name: BashExecutionToolDefinition.name,
+        description: BashExecutionToolDefinition.description,
+        parameters: BashExecutionToolDefinition.schema,
+      },
+      ReadFileToolDefinition,
+      SkillToolDefinition,
+      {
+        name: ToolSearchToolDefinition.name,
+        description: ToolSearchToolDefinition.description,
+        // The SDK publishes readonly tuples and a union absent from JsonSchemaType.
+        parameters: ToolSearchToolDefinition.schema as unknown as JsonSchemaType,
+      },
+    ].map((def) => ({
+      ...def,
+      parameters: {
+        ...def.parameters,
+        properties: {
+          ...def.parameters.properties,
+          intent: { ...def.parameters.properties!.intent },
+        },
+        required: [...(def.parameters.required ?? [])],
+      },
+    }));
+    for (const def of nativeDefinitions) {
+      Object.freeze(def.parameters?.properties?.intent);
+      Object.freeze(def.parameters?.properties);
+      Object.freeze(def.parameters);
+      Object.freeze(def);
+    }
+    const deferred = { ...sdkNativeDef('deferred'), defer_loading: true };
+    const originals = [mcpDef('web_search'), ...nativeDefinitions, deferred];
+    const registry: LCToolRegistry = new Map(originals.map((def) => [def.name, def]));
+    const applied = applyIntentLabels({
+      toolDefinitions: originals,
+      toolRegistry: registry,
+      toolOptions: undefined,
+    });
+    expect(applied.intentToolNames).toEqual(['web_search']);
+    const { toolDefinitions } = sanitizeIntentLabels({
+      ...applied,
+      toolRegistry: registry,
+      toolOptions: undefined,
+      capabilityEnabled: true,
+    });
+    for (const def of toolDefinitions) {
+      const original = originals.find((entry) => entry.name === def.name)!;
+      expect(Object.keys(def.parameters?.properties ?? {})[0]).toBe(INTENT_ARG);
+      expect(def.parameters?.required).toEqual(original.parameters?.required);
+      expect(def.parameters?.required).not.toContain(INTENT_ARG);
+      expect(def.parameters?.properties?.intent).toEqual({
+        type: 'string',
+        description: CONCISE_INTENT_DESCRIPTION,
+      });
+      expect(withoutIntent(def.parameters)).toEqual(withoutIntent(original.parameters));
+      expect(registry.get(def.name)?.parameters).toEqual(def.parameters);
+    }
+    for (const def of nativeDefinitions) {
+      expect(def.parameters?.properties?.intent?.description).toBe(SDK_INTENT_DESCRIPTION);
+    }
+
+    const graph = createGraph({
+      kind: 'standard',
+      input: {
+        agents: [
+          {
+            agentId: 'intent-test',
+            provider: Providers.OPENAI,
+            toolDefinitions,
+            toolRegistry: registry,
+          },
+        ],
+      },
+    });
+    const context = graph.agentContexts.get('intent-test')!;
+    const bind = () =>
+      initializeModel({
+        provider: Providers.OPENAI,
+        clientOptions: { apiKey: 'test-placeholder', model: 'gpt-4o-mini' },
+        tools: context.getToolsForBinding(),
+      });
+    const expectedTools = (defs: LCTool[]) =>
+      defs.map((def) => ({
+        type: 'function',
+        function: expect.objectContaining({ name: def.name, parameters: def.parameters }),
+      }));
+    expect(bind()).toMatchObject({
+      defaultOptions: { tools: expectedTools(toolDefinitions.filter((def) => !def.defer_loading)) },
+    });
+    expect(context.markToolsAsDiscovered(['deferred'])).toBe(true);
+    expect(bind()).toMatchObject({ defaultOptions: { tools: expectedTools(toolDefinitions) } });
   });
 
   it('projects only surviving marker-verified intent schemas for compaction', () => {

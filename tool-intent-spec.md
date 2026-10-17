@@ -116,6 +116,33 @@ const INTENT_PROPERTY: JsonSchemaType = Object.freeze<JsonSchemaType>({
 
 The "distinguish siblings" clause is load-bearing for the reference case. Without it, models emit identical intents for parallel calls to the same tool.
 
+#### Fork override: concise, user-language labels
+
+`packages/api/src/agents/intent.ts` overrides the SDK description above with:
+
+> ALWAYS write this field FIRST, before any other argument. Briefly describe this call in the user language: bare action and necessary object only. Chinese: at most 12 characters, e.g. 读取配置, 检查构建状态, 查找登录逻辑. Other languages: at most 6 words. No progress preambles (正在, 正在做, 我正在, or equivalents). Do not imply completion or success (已完成, 已成功, or equivalents). No explanation, tool names, or ending punctuation. Distinguish sibling calls with a short object.
+
+Host injection uses this prompt immediately. The final `sanitizeIntentLabels` pass
+also replaces the description on surviving marker-verified SDK-native labels in
+definitions and the deferred-tool registry. It preserves the imported
+`INTENT_LABEL_MARKER`, property order, optionality, capability gate, opt-outs,
+stripping and business `intent` parameters. Length targets are prompt guidance
+only: this override adds neither `maxLength` nor runtime truncation.
+
+Binding verified against `@librechat/agents@4.0.4-ricky.3`: event-driven definitions
+pass through `AgentContext.getToolsForBinding`, `createSchemaOnlyTools` and
+`initializeModel` to the provider's `bindTools`; deferred definitions use the same
+path after discovery. Regression coverage checks the bound OpenAI schemas for
+host injection, SDK bash/read-file/skill/tool-search definitions and discovery,
+without making a model request.
+
+**Coverage boundary:** SDK instance-only tools bypass these host definitions.
+In particular, `StandardGraph.createAgentNode` builds the graph-managed `subagent`
+tool later via `buildSubagentToolParams`, retaining the SDK prompt. A registry
+override cannot change that schema. `ask_user_question` remains excluded and is
+rebuilt from its own host Zod schema. This change does not alter those paths or
+the vendored SDK.
+
 ### 4.2 Outcome, and who authors it
 
 The model cannot know the outcome at call time, so `outcome` is never a model-authored arg. Two sources, in precedence order:
