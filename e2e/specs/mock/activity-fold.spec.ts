@@ -1,8 +1,16 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { expect, test } from '@playwright/test';
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { NEW_CHAT_PATH, messagesView, selectMockEndpoint, sendMessage } from './helpers';
+import {
+  deleteConversations,
+  deleteMessagesByConversation,
+  seedConversations,
+  seedMessages,
+} from './db';
+import { getE2EUser } from '../../setup/user';
 
 const PHASE_ENDPOINT = { label: 'Mock Provider F', model: 'mock-model-f' };
 const MCP_SERVER_TITLE = 'E2E Memory';
@@ -11,6 +19,224 @@ const PHASE_LABEL = 'Gathered both facts around a broken echo';
 const SHOT_DIR = process.env.E2E_FOLD_SHOTS || '';
 
 const uniqueLabel = () => `fold-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+
+const MOBILE_INTENTS = [
+  '核对十二项配置并生成报告',
+  '检查旧任务中保留的完整操作意图，核对所有配置项目，然后创建一份包含检查结果和后续处理建议的详细报告。',
+  'CheckEveryConfigurationEntryBeforeCreatingTheCompleteComparisonReportWithoutDroppingAnyOriginalIntentText',
+];
+
+function intentParts(prefix: string) {
+  return MOBILE_INTENTS.map((intent, index) => ({
+    type: 'tool_call',
+    tool_call: {
+      id: `${prefix}-${index}`,
+      name: 'lookup',
+      args: JSON.stringify({ intent, query: 'synthetic fixture' }),
+      output: 'Synthetic result',
+      type: 'tool_call',
+      progress: 1,
+      runStepStatus: 'completed',
+      ...(index === 1
+        ? { runStepDurationMs: 14_000 }
+        : { toolPreparationDurationMs: 13_000, toolExecutionDurationMs: 1000 }),
+    },
+  }));
+}
+
+/** Measure text fragments, not just the element box: an ellipsized span can
+ * have perfectly contained bounds while most of its text remains invisible. */
+async function expectIntentGeometry(row: Locator, intent: string, mobile: boolean) {
+  const button = row.getByRole('button');
+  await expect(button).toContainText(intent);
+  await button.scrollIntoViewIfNeeded();
+  const geometry = await button.evaluate((element, text) => {
+    const label = [...element.querySelectorAll('span')].find(
+      (span) => span.textContent === text && span.childElementCount === 0,
+    );
+    if (!label) throw new Error('Intent label missing');
+    const primary = label.getBoundingClientRect();
+    const buttonBox = element.getBoundingClientRect();
+    const wrapper = element.closest('.progress-text-wrapper');
+    if (!wrapper?.parentElement) throw new Error('Caller row missing');
+    const rowBox = wrapper.parentElement.getBoundingClientRect();
+    const metadata = label.nextElementSibling?.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    const fragments = [...range.getClientRects()];
+    const following = wrapper.parentElement.nextElementSibling?.getBoundingClientRect();
+    return {
+      text: label.textContent,
+      overflow: label.scrollWidth > label.clientWidth + 1,
+      clipped: fragments.some(
+        (fragment) =>
+          fragment.left < primary.left - 1 ||
+          fragment.right > primary.right + 1 ||
+          fragment.top < primary.top - 1 ||
+          fragment.bottom > primary.bottom + 1,
+      ),
+      buttonFits: buttonBox.left >= rowBox.left - 1 && buttonBox.right <= rowBox.right + 1,
+      rowContainsButton: buttonBox.bottom <= rowBox.bottom + 1,
+      followingOverlaps: following != null && following.top < buttonBox.bottom - 1,
+      metadataBelow: metadata == null || metadata.top >= primary.bottom - 1,
+      metadataFits:
+        metadata == null ||
+        (metadata.right <= buttonBox.right + 1 && metadata.bottom <= buttonBox.bottom + 1),
+      viewportFits: buttonBox.right <= document.documentElement.clientWidth + 1,
+      ellipsis: getComputedStyle(label).textOverflow === 'ellipsis',
+    };
+  }, intent);
+  expect(geometry).toMatchObject({
+    text: intent,
+    overflow: false,
+    clipped: false,
+    buttonFits: true,
+    rowContainsButton: true,
+    followingOverlaps: false,
+    metadataFits: true,
+    viewportFits: true,
+    ellipsis: false,
+    ...(mobile ? { metadataBelow: true } : {}),
+  });
+}
+
+for (const width of [320, 360, 390, 430, 1280]) {
+  test(`mobile intent geometry at ${width}px in action folds and child panels`, async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript(() => {
+      localStorage.setItem('navVisible', 'false');
+      localStorage.setItem('autoExpandTools', 'false');
+      localStorage.setItem('color-theme', sessionStorage.getItem('intent-review-theme') ?? 'dark');
+    });
+    const conversationId = randomUUID();
+    const userMessageId = randomUUID();
+    const { email } = getE2EUser();
+    await seedConversations(email, [
+      { conversationId, title: 'Synthetic mobile intent review', updatedAt: new Date() },
+    ]);
+    await seedMessages(email, conversationId, [
+      {
+        messageId: userMessageId,
+        parentMessageId: '00000000-0000-0000-0000-000000000000',
+        text: 'Review synthetic tool intents.',
+        isCreatedByUser: true,
+        sender: 'User',
+      },
+      {
+        messageId: randomUUID(),
+        parentMessageId: userMessageId,
+        text: 'Following row remains clear.',
+        isCreatedByUser: false,
+        sender: 'Assistant',
+        content: [
+          ...intentParts('intent'),
+          {
+            type: 'activity_label',
+            activity_label: 'Synthetic action group',
+            activity_start_index: 0,
+            activity_end_index: 3,
+            activity_count: 3,
+          },
+          {
+            type: 'activity_label',
+            activity_label: 'Synthetic review phase',
+            activity_label_type: 'phase',
+            activity_start_index: 0,
+            activity_end_index: 4,
+            activity_count: 3,
+          },
+          { type: 'text', text: 'Following row remains clear.' },
+          {
+            type: 'tool_call',
+            tool_call: {
+              id: 'intent-child',
+              name: 'subagent',
+              type: 'tool_call',
+              args: JSON.stringify({ subagent_type: 'general', prompt: 'Synthetic child review' }),
+              output: 'Synthetic child complete',
+              progress: 1,
+              runStepStatus: 'completed',
+              subagent_content: [
+                ...intentParts('child-intent'),
+                { type: 'text', text: 'Child following row remains clear.' },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+    try {
+      await page.goto(`/c/${conversationId}`);
+      const phase = page.getByRole('button', { name: 'Synthetic review phase', exact: true });
+      await phase.click();
+      const group = page.getByRole('button', { name: /^Synthetic action group/ });
+      await group.click();
+      for (const [index, intent] of MOBILE_INTENTS.entries()) {
+        const row = page.locator(`[data-tool-call-id="intent-${index}"]`);
+        await expectIntentGeometry(row, intent, width < 640);
+        await expect(row).toContainText(index === 1 ? 'Total elapsed 14s' : 'Preparation 13s');
+        if (index !== 1) await expect(row).toContainText('Tool call 1s');
+      }
+      const disclosure = page.locator('[data-tool-call-id="intent-0"]').getByRole('button');
+      await disclosure.focus();
+      await expect(disclosure).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+      await expect(page.locator('[data-tool-call-output-id="intent-0"]')).toContainText(
+        'Synthetic result',
+      );
+      await page.keyboard.press('Space');
+      await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+      await disclosure.click();
+      await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+      await disclosure.click();
+      await disclosure.blur();
+      await phase.scrollIntoViewIfNeeded();
+      await shot(page, `intents-${width}-dark`);
+      if (width === 390) {
+        await page.evaluate(() => {
+          sessionStorage.setItem('intent-review-theme', 'light');
+        });
+        await page.reload();
+        await expect(page.locator('html')).toHaveClass(/\blight\b/);
+        await phase.click();
+        await group.click();
+        for (const [index, intent] of MOBILE_INTENTS.entries()) {
+          await expectIntentGeometry(
+            page.locator(`[data-tool-call-id="intent-${index}"]`),
+            intent,
+            true,
+          );
+        }
+        await phase.scrollIntoViewIfNeeded();
+        await shot(page, 'intents-390-light');
+      }
+
+      await page.locator('[data-subagent-tool-call="intent-child"]').click();
+      const panel = page.getByRole(width < 768 ? 'dialog' : 'region', {
+        name: 'Child agent activity',
+      });
+      await expect(panel).toBeVisible();
+      const childGroup = panel.getByRole('button', { name: /^Ran 3 actions/ });
+      await childGroup.click();
+      for (const [index, intent] of MOBILE_INTENTS.entries()) {
+        await expectIntentGeometry(
+          panel.locator(`[data-tool-call-id="child-intent-${index}"]`),
+          intent,
+          width < 640,
+        );
+      }
+      await panel.locator('[data-tool-call-id="child-intent-0"]').scrollIntoViewIfNeeded();
+      await shot(page, `intents-child-${width}`);
+    } finally {
+      await deleteMessagesByConversation([conversationId]);
+      await deleteConversations([conversationId]);
+    }
+  });
+}
 
 async function shot(page: Page, name: string) {
   if (!SHOT_DIR) {

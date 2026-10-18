@@ -464,7 +464,7 @@ export default function RetrievalCall({
           return intent ?? localize('com_ui_retrieved_files');
         })()}
       </span>
-      <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5">
+      <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5">
         <ProgressText
           phase={phase}
           onClick={hasExpandableContent ? handleToggleOutput : undefined}
