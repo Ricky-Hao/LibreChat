@@ -225,6 +225,18 @@ describe('conversation scroll ownership', () => {
     expect(el.scrollTop).toBe(2000);
   });
 
+  it('keeps following when replacement history clamps the browser to a shorter bottom', () => {
+    const { el, update } = setup({ submitting: true });
+    expect(el.scrollTop).toBe(800);
+    // A recent-history replacement can shrink the range before the resume snapshot arrives.
+    height = 700;
+    el.scrollTop = 500;
+    fireEvent.scroll(el);
+    update({ tree: treeFor('a') });
+    resize(1400);
+    expect(el.scrollTop).toBe(1200);
+  });
+
   it('re-arms running A -> running B while isSubmitting stays true', () => {
     const { el, update } = setup({ submitting: true });
     upward(el, 'wheel');

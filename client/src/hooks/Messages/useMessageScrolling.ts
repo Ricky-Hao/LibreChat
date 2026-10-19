@@ -194,6 +194,9 @@ export default function useMessageScrolling(
     }
     const distance = distanceFromEnd();
     if (el.scrollTop < previous) {
+      // Replacing history can shrink the range and clamp the browser at its new bottom.
+      // Upward gestures already release ownership before their scroll event arrives.
+      if (isStuckRef.current && distance <= 1) return;
       detach();
     } else if (el.scrollTop > previous && distance <= attachThreshold) {
       detachedRef.current = false;
