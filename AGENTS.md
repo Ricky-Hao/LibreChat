@@ -5,6 +5,64 @@
 Shared API types and services live in `packages/data-provider`, and the React app lives in
 `client` with shared primitives in `packages/client`.
 
+## Documentation is ground truth
+
+Repository documentation is the canonical ground truth for this fork's intended behavior,
+configuration, design decisions and maintenance contracts. Every task includes a documentation
+pass without waiting for a separate request. New features, bug fixes, changes to existing features,
+refactors, dependency/tooling/CI/configuration changes, upstream merges and follow-up repairs all
+follow the same rule: a change is incomplete until its owning documentation is updated in the
+same reviewable changeset and agrees with the implementation and verification evidence.
+
+1. Before implementation, read the [documentation index](docs/README.md) and the existing documents
+   for the affected area. Identify the documents that own the contract and include their updates
+   in the task's scope and acceptance criteria. Read relevant maintainer requirements alongside
+   those documents; chat history and temporary task logs are not a substitute for repository docs.
+2. Work from the documented contract. If documentation, code, tests or observed behavior disagree,
+   investigate the current requirements, source, regression evidence and Git history. Resolve the
+   discrepancy explicitly: repair a regression or correct an established documentation error with
+   its rationale. Do not silently prefer the implementation, rewrite a contract to excuse a bug,
+   or call an unresolved discrepancy complete. An authorized change to the contract must update
+   its documentation as part of that change.
+3. Update the existing feature or maintenance guide as the work evolves, then reconcile it with
+   the actual final result. For a bug fix, record the trigger, cause, correction and regression
+   coverage in the original feature's documentation, even when intended behavior is unchanged.
+   For a refactor, test, dependency or tooling change, update the relevant mechanism, constraints,
+   verification or reproduction guidance. "Existing feature", "maintenance only" and "no
+   user-facing change" are not reasons to skip documentation.
+4. Keep one current owner for each contract. Edit its existing document instead of creating a
+   separate report for every task; add a document only for a new responsibility or a substantial
+   missing guide, and link it from the index and relevant existing guides. When modifying an older
+   undocumented area, establish the minimum verified baseline and document the change there;
+   do not invent historical intent or expand into an unrelated documentation rewrite.
+5. Before completion, review the documentation diff alongside the code and tests. Check linked
+   paths, symbols, examples, defaults and commands against the final source. Record the changed
+   document paths and relevant verification in the PR and final handoff. A read-only task that
+   produces no repository change or durable finding still checks the relevant docs and reports
+   why they remain accurate; do not manufacture an empty edit. Durable corrections or findings
+   belong in the owning guide within the task's authorized scope.
+
+Scale the detail to the change, but preserve the information needed to maintain it:
+
+- The problem or requirement, why the chosen approach is needed, and its material tradeoffs.
+- Current behavior and configuration, defaults, boundaries, failure/retry paths and compatibility
+  guarantees; the relevant entry points, state/data ownership and invariants.
+- Regression and reproduction entry points, actual verification results and unverified limits.
+  Keep local/synthetic, CI, published-artifact and deployed-runtime evidence distinct. Preserve
+  dated failures and audits as history; update current guidance rather than rewriting old results.
+- For fork changes and upstream merges, the actual known issue/PR/commit lineage, responsibilities
+  to preserve, conflict hotspots and the tests that demonstrate an upstream replacement is
+  equivalent. A clean merge or an upstream feature with the same name is not sufficient evidence.
+
+Keep durable rationale and contracts in the repository; do not make them depend on a local task
+folder, private chat, ephemeral log or a future maintainer remembering this session. Use relative
+links to source and tests, verified references for already existing commits, and no credentials,
+private conversation content or raw sensitive diagnostics. `CONTEXT.md` remains a vocabulary;
+feature guides and maintenance runbooks own detailed behavior. Public upstream documentation
+may also need a corresponding change in its documentation repository; that does not replace the
+fork's in-repository ground truth. This guidance is a contributor/agent completion requirement;
+it does not claim that CI already enforces documentation completeness.
+
 ## Branching and pull requests
 
 Normally branch off `dev` and target `dev`; `gh pr create` defaults to `main`, so pass `--base dev`

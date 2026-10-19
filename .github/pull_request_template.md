@@ -2,7 +2,7 @@
 
 > Before submitting, please review the [Contributing Guide](https://github.com/LibreChat-AI/LibreChat/blob/main/.github/CONTRIBUTING.md).
 >
-> Documentation changes belong in the [LibreChat documentation repository](https://github.com/LibreChat-AI/librechat.ai).
+> Public upstream documentation belongs in the [LibreChat documentation repository](https://github.com/LibreChat-AI/librechat.ai). This fork also requires its [in-repository documentation](../docs/README.md) to be updated with every change, including maintenance of existing features.
 
 ## Summary
 
@@ -139,6 +139,22 @@ Examples:
 Write "Not applicable" when appropriate.
 -->
 
+## Documentation
+
+<!--
+Required for every change, including bug fixes, refactors, tests, dependencies,
+tooling, configuration, CI and upstream merge adaptations. Follow AGENTS.md.
+Link the existing canonical documents and sections updated in this changeset,
+and describe the rationale, contract, mechanism or verification guidance changed.
+"No user-facing change" and "maintenance only" are not documentation exemptions.
+For a task with no repository change or durable finding, identify the documents
+reviewed and explain why they remain accurate rather than making an empty edit.
+-->
+
+**Updated canonical documents:**
+
+**Documented change and verification:**
+
 ## Screenshots / recordings
 
 <!--
@@ -209,6 +225,7 @@ Write "None" when there are no notable risks.
 * [ ] Relevant tests have been added or updated
 * [ ] Existing relevant tests pass
 * [ ] The change does not introduce new warnings or errors
-* [ ] User-facing or complex behavior is documented where necessary
+* [ ] Canonical documentation is updated in this changeset, including existing-feature maintenance
+* [ ] Documentation agrees with the implementation, regression coverage and verification limits
 * [ ] Required dependency changes have been merged/published
 * [ ] Required documentation PR: <!-- link or N/A -->
