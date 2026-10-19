@@ -1,13 +1,18 @@
 import React from 'react';
 import userEvent from '@testing-library/user-event';
-import { Constants } from 'librechat-data-provider';
 import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Constants, dataService, QueryKeys } from 'librechat-data-provider';
 import type { TMessage } from 'librechat-data-provider';
 import EditMessage from '../EditMessage';
 
 const mockMutateAsync = jest.fn();
 const mockSetMessages = jest.fn();
 const mockGetMessages = jest.fn();
+jest.mock('librechat-data-provider', () => {
+  const actual = jest.requireActual('librechat-data-provider');
+  return { ...actual, dataService: { ...actual.dataService, getConversationHistory: jest.fn() } };
+});
 
 jest.mock('recoil', () => ({
   useRecoilValue: () => 'ltr',
@@ -77,17 +82,22 @@ function renderEditor({
   ask = jest.fn(),
   setSiblingIdx = jest.fn(),
   editedMessage = message,
+  windowed = false,
 } = {}) {
+  const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0, cacheTime: 0 } } });
+  if (windowed) client.setQueryData([QueryKeys.historyWindow, 'conversation-1'], { limit: 24 });
   render(
-    <EditMessage
-      text={editedMessage.text}
-      message={editedMessage}
-      isSubmitting={false}
-      ask={ask}
-      enterEdit={enterEdit}
-      siblingIdx={0}
-      setSiblingIdx={setSiblingIdx}
-    />,
+    <QueryClientProvider client={client}>
+      <EditMessage
+        text={editedMessage.text}
+        message={editedMessage}
+        isSubmitting={false}
+        ask={ask}
+        enterEdit={enterEdit}
+        siblingIdx={0}
+        setSiblingIdx={setSiblingIdx}
+      />
+    </QueryClientProvider>,
   );
   return { ask, enterEdit, setSiblingIdx };
 }
@@ -97,6 +107,24 @@ describe('EditMessage', () => {
     jest.clearAllMocks();
     mockGetMessages.mockReturnValue([message]);
     mockMutateAsync.mockResolvedValue({});
+  });
+
+  it('loads the missing user turn when an assistant editor opens at the window boundary', async () => {
+    mockGetMessages.mockReturnValue([assistantMessage]);
+    jest
+      .mocked(dataService.getConversationHistory)
+      .mockResolvedValueOnce({ messages: [message], start: null, nextCursor: null });
+    const { ask } = renderEditor({ editedMessage: assistantMessage, windowed: true });
+    const rerun = await screen.findByRole('button', { name: 'com_ui_rerun' });
+    await userEvent.click(rerun);
+    expect(dataService.getConversationHistory).toHaveBeenCalledWith('conversation-1', {
+      messageId: 'user-1',
+      limit: 1,
+    });
+    expect(ask).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'user-1', text: message.text }),
+      expect.objectContaining({ isRegenerate: true, targetResponseMessageId: 'assistant-1' }),
+    );
   });
 
   it('sizes the editor from the configured message font rather than pinning it', () => {

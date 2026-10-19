@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
+import { Button } from '@librechat/client';
 import { Constants } from 'librechat-data-provider';
 import type { TMessage } from 'librechat-data-provider';
 import type { ScrollNavigation } from '~/hooks/Messages/useMessageScrolling';
@@ -15,6 +16,8 @@ import { MessagePartsHostProvider, appMessagePartsHost } from '~/Providers/Messa
 import { MessagesViewProvider, useChatContext, useFileMapContext } from '~/Providers';
 import { RowMountProvider, useProgressiveRowMount } from '~/hooks/Messages';
 import { useChatSurface } from '~/components/Chat/Subagents/surface';
+import useHistoryPaging from '~/hooks/Messages/useHistoryPaging';
+import { focusHistory, focusHistoryTree } from '~/utils/history';
 import useThreadRows from '~/hooks/Messages/useThreadRows';
 import PendingSteers from './Content/Parts/PendingSteers';
 import { autoScrollAtom } from '~/store/autoScroll';
@@ -49,14 +52,30 @@ function MessagesViewContent({
     handleSmoothToRef,
     debouncedHandleScroll,
     handleNearBottomChange,
+    detachFromBottom,
   } = useMessageScrolling(_messagesTree, scrollNavigation);
 
   useScrollbarGutter(scrollableRef);
 
   const { conversationId } = conversation ?? {};
   const fileMap = useFileMapContext();
-  const threadRows = useThreadRows(FLAT_THREAD ? messages : null, conversationId, fileMap);
   const { index, latestMessageId, latestMessageDepth, messagesKey } = useChatContext();
+  const treeConversationId = _messagesTree?.[0]?.conversationId ?? (messagesKey || conversationId);
+  const history = useHistoryPaging(
+    treeConversationId ?? undefined,
+    messages,
+    scrollableRef,
+    detachFromBottom,
+  );
+  const focusedBoundary = useRef('');
+  const focusId = scrollNavigation?.targetMessageId ?? history.focusId;
+  const boundary = `${treeConversationId}:${messages?.[0]?.messageId}:${scrollNavigation?.targetMessageId ?? ''}`;
+  if (messages?.length && focusId && focusedBoundary.current !== boundary) {
+    focusedBoundary.current = boundary;
+    focusHistory(messages, focusId);
+    focusHistoryTree(messages, _messagesTree ?? null);
+  }
+  const threadRows = useThreadRows(FLAT_THREAD ? messages : null, treeConversationId, fileMap);
   const isSubmitting = useRecoilValue(store.isSubmittingFamily(index));
   const { showScrollButton, maximizeChatSpace } = useChatSurface();
   const autoScroll = useAtomValue(autoScrollAtom);
@@ -113,9 +132,8 @@ function MessagesViewContent({
    *  off it would first mount the new tree unwindowed, then narrow it after
    *  the fact, visibly unmounting rows the user is already reading. An empty
    *  tree has no message to name its owner, so the route's key stands in. */
-  const treeConversationId = _messagesTree?.[0]?.conversationId ?? (messagesKey || conversationId);
   const mountWindow = useProgressiveRowMount({
-    tailDepth: latestMessageDepth,
+    tailDepth: scrollNavigation?.targetMessageId ? undefined : latestMessageDepth,
     anchorBottom: autoScroll || isSubmitting,
     isSubmitting,
     conversationId: treeConversationId,
@@ -134,13 +152,17 @@ function MessagesViewContent({
      do float (an answer popover, a tool-approval review) are handled by
      ScrollButton through `composerOverlayCountFamily`. */
   const overlayConversationId = conversationId ?? Constants.NEW_CONVO;
+  const historyLabel = history.isLoading ? 'com_ui_history_loading' : 'com_ui_history_older';
   return (
     <>
       <div className="relative flex-1 overflow-hidden overflow-y-auto">
         <div className="relative h-full">
           <div
             className="scrollbar-gutter-stable"
-            onScroll={debouncedHandleScroll}
+            onScroll={(event) => {
+              debouncedHandleScroll();
+              history.onScroll(event);
+            }}
             ref={scrollableRef}
             style={{
               height: '100%',
@@ -149,10 +171,22 @@ function MessagesViewContent({
               /** The mount hook pins the anchor row itself (document-space
                *  measurement); native scroll anchoring reacting to the same
                *  insertions would double-correct. */
-              overflowAnchor: mountWindow != null ? 'none' : undefined,
+              overflowAnchor: mountWindow != null || history.isWindowed ? 'none' : undefined,
             }}
           >
             <div ref={contentRef} className="flex flex-col pt-14 pb-9">
+              {history.hasOlder && (
+                <div className="flex justify-center p-2">
+                  <Button
+                    variant="ghost"
+                    onClick={history.load}
+                    disabled={history.isLoading}
+                    aria-busy={history.isLoading}
+                  >
+                    {localize(history.isError ? 'com_ui_history_retry' : historyLabel)}
+                  </Button>
+                </div>
+              )}
               {(_messagesTree && _messagesTree.length == 0) || _messagesTree === null ? (
                 <div
                   className={cn(
@@ -180,7 +214,7 @@ function MessagesViewContent({
                       ) : (
                         <MultiMessage
                           messagesTree={_messagesTree}
-                          messageId={conversationId ?? null}
+                          messageId={treeConversationId ?? null}
                           setCurrentEditId={setCurrentEditId}
                           currentEditId={currentEditId ?? null}
                         />

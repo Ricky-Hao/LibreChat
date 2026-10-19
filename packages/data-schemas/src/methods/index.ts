@@ -14,6 +14,10 @@ import type {
   ProjectFilesOptions,
 } from './file';
 import type { RoleMethods, RoleDeps } from './role';
+import { createHistoryMethods } from './history';
+import type { HistoryMethods } from './history';
+export { createHistoryMethods } from './history';
+export type { HistoryMethods, HistoryScope } from './history';
 import {
   createOpenIDRefreshFlightMethods,
   type OpenIDRefreshFlightMethods,
@@ -280,6 +284,7 @@ export type AllMethods = ToolApprovalGrantStorage &
   ConversationTagMethods &
   ConversationImportMethods &
   MessageMethods &
+  HistoryMethods &
   ConversationMethods &
   ChatProjectMethods &
   TxMethods &
@@ -520,6 +525,7 @@ export function createMethods(
     ...createConversationTagMethods(mongoose),
     ...createConversationImportMethods(mongoose),
     ...messageMethods,
+    ...createHistoryMethods(mongoose),
     ...conversationMethods,
     ...createChatProjectMethods(mongoose),
     /* Tier 3 */

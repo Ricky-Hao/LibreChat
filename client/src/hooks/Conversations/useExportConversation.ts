@@ -11,6 +11,7 @@ import {
   ScreenshotTargetError,
   useScreenshot,
 } from '~/hooks/ScreenshotContext';
+import { fetchConversationMessages } from '~/data-provider/Messages/queries';
 import useBuildMessageTree from '~/hooks/Messages/useBuildMessageTree';
 import { isUnacknowledgedUserMessage } from '~/utils/messages';
 import { NotificationSeverity } from '~/common';
@@ -94,6 +95,31 @@ export default function useExportConversation({
     const target = screenshotTargetRef?.current;
     let data: Blob;
     try {
+      if (queryClient.getQueryData([QueryKeys.historyWindow, screenshotConversationId])) {
+        const key = [QueryKeys.messages, screenshotConversationId];
+        const previous = queryClient.getQueryData(key);
+        const messages = await fetchConversationMessages(screenshotConversationId);
+        if (
+          queryClient.getQueryData(key) !== previous ||
+          !target?.isConnected ||
+          screenshotTargetRef?.current !== target ||
+          target.dataset.conversationId !== screenshotConversationId
+        ) {
+          throw new ScreenshotTargetError();
+        }
+        const rows = target.querySelectorAll<HTMLElement>('.message-render');
+        queryClient.setQueryData([QueryKeys.historyWindow, screenshotConversationId], {
+          start: null,
+          nextCursor: null,
+          limit: 0,
+          focusId: rows.item(rows.length - 1)?.id,
+        });
+        queryClient.setQueryData(key, messages);
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      }
+      if (refuseUnsafeScreenshot()) return;
       data = await captureScreenshot(
         (node) =>
           node === target &&

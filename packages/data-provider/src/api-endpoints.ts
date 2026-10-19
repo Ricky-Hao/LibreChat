@@ -64,17 +64,19 @@ export const messages = (params: q.MessagesListParams) => {
   const { conversationId, messageId, ...rest } = params;
 
   if (conversationId && messageId) {
-    return `${messagesRoot}/${conversationId}/${messageId}`;
+    return `${messagesRoot}/${encodeURIComponent(conversationId)}/${encodeURIComponent(messageId)}`;
   }
 
   if (conversationId) {
-    return `${messagesRoot}/${conversationId}`;
+    return `${messagesRoot}/${encodeURIComponent(conversationId)}`;
   }
 
   return `${messagesRoot}${buildQuery(rest)}`;
 };
 
 export const messagesArtifacts = (messageId: string) => `${messagesRoot}/artifact/${messageId}`;
+export const messageAttachmentBody = (ref: import('./history').AttachmentBodyRef) =>
+  `${messages(ref)}/attachments/${ref.index}${ref.revision ? `?revision=${encodeURIComponent(ref.revision)}` : ''}`;
 
 /** One tool-call part of a stored message, in full. */
 export const messageToolCallPart = ({

@@ -34,6 +34,8 @@ const {
   createToolCallPartHandler,
   rejectToolCallPreviewWrites,
   withMessageToolCallPreviews,
+  createHistoryHandler,
+  createAttachmentBodyHandler,
 } = require('@librechat/api');
 const subagentThreadTaskStore = require('~/server/services/Endpoints/agents/subagentThreadStore');
 const { getAppConfig } = require('~/server/services/Config');
@@ -45,7 +47,6 @@ const {
   sendValidationResponse,
   canReadActiveJobConversation,
   createMessageRequestValidation,
-  prepareMessageRequestValidation,
 } = require('~/server/middleware');
 const db = require('~/models');
 
@@ -67,6 +68,15 @@ const filterFeedbackContent = createContentFilter({
   extract: (req) => extractFeedbackContent(req.body),
 });
 const toolCallPreviewDeps = { getAppConfig };
+const historyDeps = {
+  getDisplayMessages: db.getDisplayMessages,
+  getHistoryAttachment: db.getHistoryAttachment,
+  validate: (req) =>
+    createMessageRequestValidation(req, { activeJobMessageRead: true, explicitTenantScope: true }),
+  sendValidationResponse,
+  previews: (req) => prepareToolCallPreviews(req, toolCallPreviewDeps),
+  logError: () => logger.error('[messages] History read failed'),
+};
 const readToolCallPart = createToolCallPartHandler({
   getMessages: db.getMessages,
   validate: (req) => createMessageRequestValidation(req, { activeJobMessageRead: true }),
@@ -534,37 +544,11 @@ router.post('/artifact/:messageId', configMiddleware, async (req, res) => {
   }
 });
 
-router.get('/:conversationId', prepareMessageRequestValidation, async (req, res) => {
-  try {
-    const { conversationId } = req.params;
-    const validation = req.messageRequestValidation;
-    const previewToolCalls = prepareToolCallPreviews(req, toolCallPreviewDeps);
-    // This intentionally starts a user-scoped read before validation resolves;
-    // the response remains gated on validation success below.
-    const messagesPromise = validation.shouldFetchMessages
-      ? db.getMessages({ conversationId, user: req.user.id }, CLIENT_MESSAGE_SELECT).then(
-          (messages) => ({ messages }),
-          (error) => ({ error }),
-        )
-      : null;
-
-    const validationResult = await validation.promise;
-    if (!validationResult.ok) {
-      return sendValidationResponse(res, validationResult);
-    }
-
-    const messagesResult = await messagesPromise;
-    if (messagesResult?.error) {
-      throw messagesResult.error;
-    }
-
-    const messages = messagesResult?.messages ?? [];
-    res.status(200).json(await previewToolCalls(messages));
-  } catch (error) {
-    logger.error('Error fetching messages:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.get('/:conversationId', createHistoryHandler(historyDeps));
+router.get(
+  '/:conversationId/:messageId/attachments/:index',
+  createAttachmentBodyHandler(historyDeps),
+);
 
 router.post('/:conversationId', storedMessageMutationMiddleware, async (req, res) => {
   try {

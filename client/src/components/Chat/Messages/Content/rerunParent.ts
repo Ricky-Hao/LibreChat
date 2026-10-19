@@ -13,9 +13,8 @@ import type { TMessage } from 'librechat-data-provider';
  *
  * Both editors resolve the parent through this call at render and again at submit,
  * so the action they offer and the submission they run cannot disagree. Unlike the
- * hover row, which also renders where no thread is loaded, an unresolved parent
- * here means absent rather than unknown: an editor only opens over the messages
- * view, where `getMessages` is the whole conversation.
+ * hover row, which also renders where no thread is loaded, an editor can explicitly
+ * load a parent outside a partial display history before resolving this relationship.
  */
 export const findRerunParent = (
   messages: (TMessage | undefined)[] | null | undefined,

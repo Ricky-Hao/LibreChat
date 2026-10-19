@@ -17,6 +17,7 @@ export type ScrollNavigation = {
   ready: boolean;
   /** Only an explicit send, never a restored resume submission. */
   explicitSendId?: string;
+  targetMessageId?: string;
 };
 
 export default function useMessageScrolling(
@@ -40,6 +41,7 @@ export default function useMessageScrolling(
   /** A visit, not a conversation id: A -> new -> A must arm again. */
   const visit = useMemo(() => ({ conversationKey }), [conversationKey]);
   const initializedVisitRef = useRef<object | null>(null);
+  const targetedVisitRef = useRef<{ visit: object; targetId: string } | null>(null);
   const activeVisitRef = useRef<object | null>(null);
   const readyRef = useRef(false);
   const isStuckRef = useRef(false);
@@ -284,6 +286,26 @@ export default function useMessageScrolling(
     return () => observer.disconnect();
   }, [detach, distanceFromEnd, followBottom, isCurrent, isSubmitting]);
 
+  useLayoutEffect(() => {
+    const targetId = navigation?.targetMessageId;
+    const container = scrollableRef.current;
+    if (
+      !ready ||
+      !targetId ||
+      !container ||
+      (targetedVisitRef.current?.visit === visit && targetedVisitRef.current.targetId === targetId)
+    )
+      return;
+    const row = document.getElementById(targetId);
+    if (!row || !contentRef.current?.contains(row)) return;
+    targetedVisitRef.current = { visit, targetId };
+    detach();
+    container.scrollTop +=
+      row.getBoundingClientRect().top -
+      container.getBoundingClientRect().top -
+      container.clientHeight / 2;
+  }, [ready, navigation?.targetMessageId, messagesTree, visit, detach]);
+
   useEffect(() => {
     const el = scrollableRef.current;
     const content = contentRef.current;
@@ -360,5 +382,6 @@ export default function useMessageScrolling(
     handleSmoothToRef,
     debouncedHandleScroll,
     handleNearBottomChange,
+    detachFromBottom: detach,
   };
 }
