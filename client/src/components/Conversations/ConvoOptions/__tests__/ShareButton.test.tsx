@@ -253,6 +253,7 @@ describe('ShareButton', () => {
     await expect(mockResolveTargetMessageId?.()).resolves.toBe('persisted-message');
     expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(ACTIVE_CONVERSATION_ID, {
       toolPreviews: true,
+      lazyAttachments: true,
     });
     expect(mockGetMessageById).toHaveBeenCalledWith(ACTIVE_CONVERSATION_ID, 'persisted-message');
   });
@@ -267,6 +268,7 @@ describe('ShareButton', () => {
     });
     expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(ACTIVE_CONVERSATION_ID, {
       toolPreviews: true,
+      lazyAttachments: true,
     });
     expect(mockGetMessageById).not.toHaveBeenCalled();
   });

@@ -3,13 +3,14 @@ import { MemoryRouter } from 'react-router-dom';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Constants, QueryKeys, dataService } from 'librechat-data-provider';
-import type { TMessage } from 'librechat-data-provider';
+import type { HistoryPage, TMessage } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import {
   getStableMessages,
   shouldPreserveMessagesOnNotFound,
   useGetMessagesByConvoId,
 } from '../queries';
+import { HistoryWindowContext } from '~/Providers/HistoryWindowContext';
 import { clearMessagesCache, logger } from '~/utils';
 
 jest.mock('librechat-data-provider', () => {
@@ -19,6 +20,7 @@ jest.mock('librechat-data-provider', () => {
     dataService: {
       ...actual.dataService,
       getMessagesByConvoId: jest.fn(),
+      getConversationHistory: jest.fn(),
     },
   };
 });
@@ -317,6 +319,62 @@ describe('shouldPreserveMessagesOnNotFound', () => {
 });
 
 describe('useGetMessagesByConvoId', () => {
+  it('merges a cold recent page underneath messages that began streaming while it loaded', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, cacheTime: Infinity } },
+    });
+    const response = deferred<HistoryPage>();
+    jest.mocked(dataService.getConversationHistory).mockReturnValueOnce(response.promise);
+    const { result, unmount } = renderHook(
+      () => useGetMessagesByConvoId('convo-id', undefined, { windowSize: 24, isStreaming: true }),
+      { wrapper: createWrapper(client, '/c/convo-id') },
+    );
+    await waitFor(() => expect(dataService.getConversationHistory).toHaveBeenCalledTimes(1));
+    const live = message({
+      messageId: 'live-reply',
+      parentMessageId: 'recent-parent',
+      createdAt: undefined,
+      updatedAt: undefined,
+      isCreatedByUser: false,
+    });
+    act(() => client.setQueryData([QueryKeys.messages, 'convo-id'], [live]));
+    response.resolve({
+      messages: [message({ messageId: 'recent-parent' })],
+      start: { createdAt: '2026-05-21T12:00:00.000Z', position: '000000000000000000000001' },
+      nextCursor: null,
+    });
+    await waitFor(() =>
+      expect(result.current.data?.map((row) => row.messageId)).toEqual([
+        'recent-parent',
+        'live-reply',
+      ]),
+    );
+    expect(result.current.data?.[1]).toBe(live);
+    unmount();
+    client.clear();
+  });
+  it('applies the host policy to peripheral observers before the main chat view mounts', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, cacheTime: Infinity } },
+    });
+    const page = { messages: [message({ messageId: 'newest' })], start: null, nextCursor: null };
+    jest.mocked(dataService.getConversationHistory).mockResolvedValueOnce(page);
+    const Base = createWrapper(client, '/c/convo-id');
+    const { result, unmount } = renderHook(() => useGetMessagesByConvoId('convo-id'), {
+      wrapper: function Wrapper({ children }: { children: ReactNode }) {
+        return createElement(
+          Base,
+          null,
+          createElement(HistoryWindowContext.Provider, { value: 24 }, children),
+        );
+      },
+    });
+    await waitFor(() => expect(result.current.data).toEqual(page.messages));
+    expect(dataService.getConversationHistory).toHaveBeenCalledWith('convo-id', { limit: 24 });
+    expect(dataService.getMessagesByConvoId).not.toHaveBeenCalled();
+    unmount();
+    client.clear();
+  });
   it('observes optimistic new-chat messages without requesting them from the API', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -372,7 +430,10 @@ describe('useGetMessagesByConvoId', () => {
       expect(result.current.data).toEqual(serverMessages);
     });
     expect(mockGetMessagesByConvoId).toHaveBeenCalledTimes(1);
-    expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(conversationId, { toolPreviews: true });
+    expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(conversationId, {
+      toolPreviews: true,
+      lazyAttachments: true,
+    });
 
     unmount();
   });
@@ -397,7 +458,10 @@ describe('useGetMessagesByConvoId', () => {
     });
 
     await waitFor(() => {
-      expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(conversationId, { toolPreviews: true });
+      expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(conversationId, {
+        toolPreviews: true,
+        lazyAttachments: true,
+      });
     });
 
     act(() => {
@@ -443,7 +507,10 @@ describe('useGetMessagesByConvoId', () => {
     const refetchPromise = result.current.refetch();
 
     await waitFor(() => {
-      expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(conversationId, { toolPreviews: true });
+      expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(conversationId, {
+        toolPreviews: true,
+        lazyAttachments: true,
+      });
     });
 
     act(() => {
@@ -520,7 +587,10 @@ describe('useGetMessagesByConvoId', () => {
     const refetchPromise = result.current.refetch();
 
     await waitFor(() => {
-      expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(conversationId, { toolPreviews: true });
+      expect(mockGetMessagesByConvoId).toHaveBeenCalledWith(conversationId, {
+        toolPreviews: true,
+        lazyAttachments: true,
+      });
     });
 
     act(() => {
@@ -581,6 +651,7 @@ describe('useGetMessagesByConvoId', () => {
     });
     expect(dataService.getMessagesByConvoId).toHaveBeenCalledWith(conversationId, {
       toolPreviews: true,
+      lazyAttachments: true,
     });
     expect(queryClient.getQueryData([QueryKeys.messages, conversationId])).toBe(currentMessages);
 
@@ -627,6 +698,7 @@ describe('useGetMessagesByConvoId', () => {
     });
     expect(dataService.getMessagesByConvoId).toHaveBeenCalledWith(conversationId, {
       toolPreviews: true,
+      lazyAttachments: true,
     });
     expect(queryClient.getQueryData([QueryKeys.messages, conversationId])).toBe(currentMessages);
     expect(logger.warn).toHaveBeenCalledWith(

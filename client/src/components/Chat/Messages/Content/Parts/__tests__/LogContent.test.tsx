@@ -1,11 +1,17 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
-import { render, screen } from '@testing-library/react';
+import { dataService } from 'librechat-data-provider';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { TAttachment } from 'librechat-data-provider';
 import type { MutableSnapshot } from 'recoil';
 import { MessageContext } from '~/Providers/MessageContext';
 import LogContent from '../LogContent';
 import store from '~/store';
+jest.mock('librechat-data-provider', () => {
+  const actual = jest.requireActual('librechat-data-provider');
+  return { ...actual, dataService: { ...actual.dataService } };
+});
 
 jest.mock('~/hooks', () => ({
   useLocalize:
@@ -88,6 +94,37 @@ const renderWith = (ui: React.ReactElement, opts: { streaming?: boolean } = {}) 
 };
 
 describe('LogContent attachment routing', () => {
+  it('keeps history cards light and opens a rich artifact only after an explicit preview', async () => {
+    const fetch = jest.spyOn(dataService, 'getFilePreview').mockResolvedValue({
+      file_id: 'lazy-html',
+      status: 'ready',
+      text: '<h1>Synthetic preview</h1>',
+      textFormat: 'html',
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { cacheTime: 0 } } });
+    const attachment = baseAttachment({
+      file_id: 'lazy-html',
+      filename: 'index.html',
+      bodyRef: {
+        conversationId: 'chat',
+        messageId: 'reply',
+        index: 0,
+        revision: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    renderWith(
+      <QueryClientProvider client={client}>
+        <LogContent attachments={[attachment]} />
+      </QueryClientProvider>,
+      { streaming: false },
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { expanded: true })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_preview' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { expanded: true })).toHaveLength(2));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    client.clear();
+  });
   it('routes HTML attachments through ToolArtifactCard (panel)', () => {
     const html = baseAttachment({
       file_id: 'a',

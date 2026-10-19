@@ -39,6 +39,7 @@ import {
   scheduledMCPResourceBindingSchema,
   scheduledMCPReadOnlyPolicySchema,
 } from './types/scheduleConsent';
+import { DEFAULT_HISTORY_WINDOW_SIZE, MAX_HISTORY_PAGE_SIZE } from './history';
 
 export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_DEFAULT = 24 * 1024;
 export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_HARD_MAX = 64 * 1024;
@@ -2897,6 +2898,14 @@ export const interfaceSchema = z
     /** How many of the most recently left conversations keep that grace; older ones are
      *  released at the next conversation switch. */
     historyCacheRecent: z.number().int().min(0).max(20).default(DEFAULT_HISTORY_CACHE_RECENT),
+    /** Recent messages requested on open when the user's auto-scroll preference is enabled.
+     *  Zero keeps full-history loading. Older pages use the same size. */
+    historyWindowSize: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_HISTORY_PAGE_SIZE)
+      .default(DEFAULT_HISTORY_WINDOW_SIZE),
   })
   .default({
     modelSelect: true,
@@ -2984,6 +2993,7 @@ export const interfaceSchema = z
     composerRecentFiles: DEFAULT_COMPOSER_RECENT_FILES,
     historyCacheTtlMs: DEFAULT_HISTORY_CACHE_TTL_MS,
     historyCacheRecent: DEFAULT_HISTORY_CACHE_RECENT,
+    historyWindowSize: DEFAULT_HISTORY_WINDOW_SIZE,
   });
 
 export type TInterfaceConfig = z.infer<typeof interfaceSchema>;

@@ -1,4 +1,8 @@
 {
+  "com_ui_history_older": "Load older messages",
+  "com_ui_history_loading": "Loading older messages…",
+  "com_ui_history_retry": "Could not load older messages. Retry",
+  "com_ui_history_parent_error": "Could not load the original message. Please try again.",
   "com_ui_pr_additions": "{{0}} lines added",
   "com_ui_pr_checks": "Checks: {{0}}",
   "com_ui_pr_checks_failing": "Failing",

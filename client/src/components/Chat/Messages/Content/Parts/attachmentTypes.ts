@@ -3,6 +3,10 @@ import type { TAttachment, TAttachmentMetadata, TFile } from 'librechat-data-pro
 import type { ToolArtifactType } from '~/utils/artifacts';
 import { detectArtifactTypeFromFile } from '~/utils/artifacts';
 
+/** A live attachment update may already carry the resolved body over a history reference. */
+export const isLazyAttachment = (attachment: TAttachment): boolean =>
+  attachment.bodyRef != null && (attachment as Partial<TFile>).text == null;
+
 /**
  * Empty-folder placeholders the bash executor drops in the stateless
  * sandbox so a `mkdir` survives across runs. The user has no reason to

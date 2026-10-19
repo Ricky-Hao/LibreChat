@@ -166,6 +166,11 @@ export function retainMessages(
   /** Full tool-call parts fetched for a conversation's previews leave with its history, so a
    *  released conversation does not keep its largest content alive under another key. */
   const releaseToolCallParts = (conversationId: string) => {
+    queryClient.removeQueries([QueryKeys.historyWindow, conversationId]);
+    queryClient.removeQueries({
+      queryKey: [QueryKeys.attachmentBody, conversationId],
+      predicate: (query) => query.getObserversCount() === 0,
+    });
     queryClient.removeQueries({
       queryKey: [QueryKeys.toolCallPart, conversationId],
       predicate: (query) => query.getObserversCount() === 0,

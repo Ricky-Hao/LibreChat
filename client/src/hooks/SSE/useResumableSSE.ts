@@ -2926,7 +2926,7 @@ export default function useResumableSSE(
           if (!isCurrentSubscription()) {
             return;
           }
-          const fetched = await fetchConversationMessages(reconciliationConvoId);
+          const fetched = await fetchConversationMessages(reconciliationConvoId, queryClient);
           if (!isCurrentSubscription()) {
             return;
           }
@@ -3219,7 +3219,7 @@ export default function useResumableSSE(
                 if (!isCurrentSubscription()) {
                   return;
                 }
-                const fetched = await fetchConversationMessages(convoId);
+                const fetched = await fetchConversationMessages(convoId, queryClient);
                 if (!isCurrentSubscription()) {
                   return;
                 }
@@ -3651,7 +3651,7 @@ export default function useResumableSSE(
             if (!isCurrentSubscription()) {
               return;
             }
-            const fetched = await fetchConversationMessages(recoveryConvoId);
+            const fetched = await fetchConversationMessages(recoveryConvoId, queryClient);
             if (!isCurrentSubscription()) {
               return;
             }

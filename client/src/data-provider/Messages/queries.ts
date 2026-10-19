@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Constants, QueryKeys, dataService } from 'librechat-data-provider';
 import type { UseQueryOptions, QueryObserverResult, QueryClient } from '@tanstack/react-query';
 import type * as t from 'librechat-data-provider';
+import type { HistoryWindow } from './window';
 import {
   beginMessagesReplyFetch,
   completeMessagesReplyFetch,
@@ -11,6 +12,8 @@ import {
   isNotFoundError,
   logger,
 } from '~/utils';
+import { HistoryWindowContext } from '~/Providers/HistoryWindowContext';
+import { readDisplayMessages, prependHistory } from './window';
 
 type StableMessagesParams = {
   pathname: string;
@@ -85,8 +88,34 @@ export function shouldPreserveMessagesOnNotFound({
  * as bounded previews. Every writer of that cache uses this, so the cache never flips between
  * preview and full payloads; a reader that needs every byte (export) asks for a full load.
  */
-export function fetchConversationMessages(conversationId: string): Promise<t.TMessage[]> {
-  return dataService.getMessagesByConvoId(conversationId, { toolPreviews: true });
+export function fetchConversationMessages(
+  conversationId: string,
+  queryClient?: QueryClient,
+  windowSize?: number,
+): Promise<t.TMessage[]> {
+  return readDisplayMessages(conversationId, queryClient, windowSize);
+}
+
+/** Mounted by an explicit edit action when its parent lies outside the display window. */
+export function useHistoryParentQuery(
+  conversationId: string,
+  messageId: string | null | undefined,
+  enabled: boolean,
+) {
+  const client = useQueryClient();
+  const hasWindow = client.getQueryData([QueryKeys.historyWindow, conversationId]) != null;
+  return useQuery<t.HistoryPage, unknown, t.TMessage | undefined>(
+    [QueryKeys.historyWindow, conversationId, 'parent', messageId],
+    () =>
+      dataService.getConversationHistory(conversationId, { messageId: messageId ?? '', limit: 1 }),
+    {
+      enabled: hasWindow && enabled && !!messageId,
+      retry: 1,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      select: (page) => page.messages[0],
+    },
+  );
 }
 
 /**
@@ -136,12 +165,22 @@ function hasActiveJob(queryClient: QueryClient, id: string) {
 export const useGetMessagesByConvoId = <TData = t.TMessage[]>(
   id: string,
   config?: UseQueryOptions<t.TMessage[], unknown, TData>,
-  options?: { isStreaming?: boolean },
+  options?: { isStreaming?: boolean; windowSize?: number },
 ): QueryObserverResult<TData> => {
   const location = useLocation();
   const queryClient = useQueryClient();
   const isStreaming = options?.isStreaming === true;
+  const policySize = useContext(HistoryWindowContext);
+  const windowSize = options?.windowSize ?? policySize;
   const isStreamingRef = useRef(isStreaming);
+  const previousSize = useRef(windowSize);
+  useEffect(() => {
+    if (previousSize.current === windowSize) return;
+    previousSize.current = windowSize;
+    if (windowSize != null && id && id !== Constants.NEW_CONVO) {
+      void queryClient.invalidateQueries([QueryKeys.messages, id]);
+    }
+  }, [windowSize, id, queryClient]);
 
   useLayoutEffect(() => {
     isStreamingRef.current = isStreaming;
@@ -164,7 +203,7 @@ export const useGetMessagesByConvoId = <TData = t.TMessage[]>(
       );
       let result: t.TMessage[];
       try {
-        result = await fetchConversationMessages(id);
+        result = await fetchConversationMessages(id, queryClient, windowSize);
       } catch (error) {
         const currentMessages = queryClient.getQueryData<t.TMessage[]>(queryKey);
         if (
@@ -200,6 +239,20 @@ export const useGetMessagesByConvoId = <TData = t.TMessage[]>(
       }
 
       const currentMessages = queryClient.getQueryData<t.TMessage[]>(queryKey);
+      const window = queryClient.getQueryData<HistoryWindow>([QueryKeys.historyWindow, id]);
+      if (
+        window &&
+        messagesAtRequestStart == null &&
+        currentMessages?.length &&
+        (isStreamingRef.current || hasActiveJob(queryClient, id))
+      ) {
+        queryClient.setQueryData<HistoryWindow>([QueryKeys.historyWindow, id], {
+          ...window,
+          focusId: currentMessages[currentMessages.length - 1].messageId,
+        });
+        completeMessagesReplyFetch(queryClient, id, request, false);
+        return prependHistory(result, currentMessages);
+      }
       if (
         messagesAtRequestStart != null &&
         currentMessages != null &&

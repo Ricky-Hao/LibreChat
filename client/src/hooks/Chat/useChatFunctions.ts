@@ -3,11 +3,13 @@ import { v4 } from 'uuid';
 import { useStore } from 'jotai';
 import { cloneDeep } from 'lodash';
 import { useNavigate } from 'react-router-dom';
+import { useToastContext } from '@librechat/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSetRecoilState, useRecoilValue, useRecoilCallback } from 'recoil';
 import {
   Constants,
   QueryKeys,
+  dataService,
   ContentTypes,
   EModelEndpoint,
   getEndpointField,
@@ -61,9 +63,10 @@ import useGetSender from '~/hooks/Conversations/useGetSender';
 import { activeUsageResponseIdFamily } from '~/store/usage';
 import { revealedQueuedTurnFamily } from '~/store/steer';
 import store, { useGetEphemeralAgent } from '~/store';
+import { useAuthContext, useLocalize } from '~/hooks';
 import { startupConfigKey } from '~/data-provider';
 import useUserKey from '~/hooks/Input/useUserKey';
-import { useAuthContext } from '~/hooks';
+import { NotificationSeverity } from '~/common';
 
 /** A revalidating cache younger than this is locally authoritative (the run
  * that just streamed wrote it) and stays sendable; older ones wait for the
@@ -249,6 +252,8 @@ export default function useChatFunctions({
   const getSender = useGetSender();
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
+  const { showToast } = useToastContext();
+  const localize = useLocalize();
   const setFilesToDelete = useSetFilesToDelete();
   const getEphemeralAgent = useGetEphemeralAgent();
   const agentsMap = useAgentsMapContext();
@@ -931,33 +936,63 @@ export default function useChatFunctions({
       message.isCreatedByUser === true ? message.messageId : message.parentMessageId;
     const targetResponseMessageId =
       message.isCreatedByUser === true ? undefined : message.messageId;
+    const submitParent = (parentMessage?: TMessage) => {
+      if (parentMessage && parentMessage.isCreatedByUser) {
+        ask(
+          { ...parentMessage },
+          {
+            isRegenerate: true,
+            addedConvo: options?.addedConvo ?? undefined,
+            targetResponseMessageId,
+            /** Carry the original user message's manual skill picks forward
+             *  so the regenerated response is primed with the same skills.
+             *  The compose-time atom was drained on the first submit; without
+             *  this the model sees an unprimed turn even though the pills
+             *  still show on the user bubble. */
+            overrideManualSkills: parentMessage.manualSkills,
+            /** Carry the original user message's quoted excerpts forward so the
+             *  regenerated response is sent the same referenced context. */
+            overrideQuotes: parentMessage.quotes,
+            /** Replay the exact request-scoped reasoning selection used by this turn. */
+            overrideReasoning: parentMessage.reasoningOverride ?? null,
+          },
+        );
+      } else {
+        console.error(
+          'Failed to regenerate the message: parentMessage not found or not created by user.',
+        );
+      }
+    };
     const parentMessage = messages?.find((element) => element.messageId == parentMessageId);
-
-    if (parentMessage && parentMessage.isCreatedByUser) {
-      ask(
-        { ...parentMessage },
-        {
-          isRegenerate: true,
-          addedConvo: options?.addedConvo ?? undefined,
-          targetResponseMessageId,
-          /** Carry the original user message's manual skill picks forward
-           *  so the regenerated response is primed with the same skills.
-           *  The compose-time atom was drained on the first submit; without
-           *  this the model sees an unprimed turn even though the pills
-           *  still show on the user bubble. */
-          overrideManualSkills: parentMessage.manualSkills,
-          /** Carry the original user message's quoted excerpts forward so the
-           *  regenerated response is sent the same referenced context. */
-          overrideQuotes: parentMessage.quotes,
-          /** Replay the exact request-scoped reasoning selection used by this turn. */
-          overrideReasoning: parentMessage.reasoningOverride ?? null,
-        },
-      );
-    } else {
-      console.error(
-        'Failed to regenerate the message: parentMessage not found or not created by user.',
-      );
+    const conversationId = getConversation()?.conversationId;
+    if (
+      !parentMessage &&
+      parentMessageId &&
+      conversationId &&
+      queryClient.getQueryData([QueryKeys.historyWindow, conversationId])
+    ) {
+      void queryClient
+        .fetchQuery([QueryKeys.historyWindow, conversationId, 'parent', parentMessageId], () =>
+          dataService.getConversationHistory(conversationId, {
+            messageId: parentMessageId,
+            limit: 1,
+          }),
+        )
+        .then(
+          (page) => {
+            if (getConversation()?.conversationId === conversationId)
+              submitParent(page.messages[0]);
+          },
+          () => {
+            showToast({
+              message: localize('com_ui_history_parent_error'),
+              severity: NotificationSeverity.ERROR,
+            });
+          },
+        );
+      return;
     }
+    submitParent(parentMessage);
   };
 
   return {

@@ -36,6 +36,7 @@ type Props = {
   ready: boolean;
   sendId?: string;
   abort?: boolean;
+  targetId?: string;
 };
 
 let latestScroll: ReturnType<typeof useMessageScrolling>;
@@ -45,8 +46,13 @@ const setAbortScroll = jest.fn();
 const bottomLabel = 'Bottom';
 const oldButtonLabel = 'Old button';
 
-function Harness({ tree, route, ready, sendId }: Props) {
-  const navigation: ScrollNavigation = { conversationKey: route, ready, explicitSendId: sendId };
+function Harness({ tree, route, ready, sendId, targetId }: Props) {
+  const navigation: ScrollNavigation = {
+    conversationKey: route,
+    ready,
+    explicitSendId: sendId,
+    targetMessageId: targetId,
+  };
   const scrolling = useMessageScrolling(tree, navigation);
   latestScroll = scrolling;
   return (
@@ -65,6 +71,21 @@ function Harness({ tree, route, ready, sendId }: Props) {
       >
         <div ref={scrolling.contentRef} data-testid="content">
           <textarea aria-label="Edit" />
+          {targetId && (
+            <div
+              id={targetId}
+              ref={(el) => {
+                if (el)
+                  el.getBoundingClientRect = () =>
+                    new DOMRect(
+                      0,
+                      500 - (scrolling.scrollableRef.current?.scrollTop ?? 0),
+                      100,
+                      100,
+                    );
+              }}
+            />
+          )}
           <div ref={scrolling.messagesEndRef} />
         </div>
       </div>
@@ -125,6 +146,15 @@ function resize(nextHeight: number) {
   height = nextHeight;
   act(() => ResizeObserverMock.instances.at(-1)?.callback());
 }
+
+it('centers an explicit target and keeps it detached from later growth', () => {
+  const { el, update } = setup({ targetId: 'target-message' });
+  expect(el.scrollTop).toBe(400);
+  resize(2000);
+  expect(el.scrollTop).toBe(400);
+  update({ targetId: 'other-message' });
+  expect(el.scrollTop).toBe(400);
+});
 
 function upward(el: HTMLElement, method: string) {
   if (method === 'wheel') fireEvent.wheel(el, { deltaY: -100 });
@@ -193,6 +223,18 @@ describe('conversation scroll ownership', () => {
     update({ submitting: true });
     resize(2200);
     expect(el.scrollTop).toBe(2000);
+  });
+
+  it('keeps following when replacement history clamps the browser to a shorter bottom', () => {
+    const { el, update } = setup({ submitting: true });
+    expect(el.scrollTop).toBe(800);
+    // A recent-history replacement can shrink the range before the resume snapshot arrives.
+    height = 700;
+    el.scrollTop = 500;
+    fireEvent.scroll(el);
+    update({ tree: treeFor('a') });
+    resize(1400);
+    expect(el.scrollTop).toBe(1200);
   });
 
   it('re-arms running A -> running B while isSubmitting stays true', () => {

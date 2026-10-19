@@ -8,6 +8,7 @@ import type {
 } from './types/traces';
 import type { TInsightsAccessResponse, TInsightsParams, TInsightsResponse } from './types/insights';
 import type { ScheduleMCPConsentView, ConfirmScheduleMCPConsent } from './types/scheduleConsent';
+import type { AttachmentBodyRef, HistoryOptions, HistoryPage } from './history';
 import type { TFileConfig } from './file-config';
 import type * as tl from './types/tools';
 import type * as t from './types';
@@ -1175,7 +1176,7 @@ export function getOwnerMessageTexts(
  */
 export function getMessagesByConvoId(
   conversationId: string,
-  options?: { toolPreviews?: boolean },
+  options?: { toolPreviews?: boolean; lazyAttachments?: boolean },
 ): Promise<s.TMessage[]> {
   if (
     conversationId === config.Constants.NEW_CONVO ||
@@ -1183,8 +1184,35 @@ export function getMessagesByConvoId(
   ) {
     return Promise.resolve([]);
   }
-  const url = endpoints.messages({ conversationId });
+  let url = endpoints.messages({ conversationId });
+  if (options?.lazyAttachments) {
+    url += '?attachmentBodies=lazy';
+  }
   return request.get(options?.toolPreviews === true ? withToolCallPreviews(url) : url);
+}
+
+export async function getConversationHistory(
+  conversationId: string,
+  options: HistoryOptions = {},
+): Promise<HistoryPage> {
+  const params = new URLSearchParams();
+  params.set('history', 'recent');
+  if (options.messageId) params.set('messageId', options.messageId);
+  if (options.limit != null) params.set('limit', String(options.limit));
+  if (options.before) params.set('before', JSON.stringify(options.before));
+  if (options.since) params.set('since', JSON.stringify(options.since));
+  const result = await request.get<HistoryPage | s.TMessage[]>(
+    withToolCallPreviews(`${endpoints.messages({ conversationId })}?${params}`),
+  );
+  // Older servers return their full array. Keep that complete cache usable during a rolling upgrade.
+  return Array.isArray(result) ? { messages: result, nextCursor: null, start: null } : result;
+}
+
+/** Embedded historical snapshots remain readable even when no separate file record exists. */
+export function getAttachmentBody(
+  ref: AttachmentBodyRef,
+): Promise<Pick<f.TFilePreview, 'text' | 'textFormat'>> {
+  return request.get(endpoints.messageAttachmentBody(ref));
 }
 
 export function getToolCallPart(params: q.ToolCallPartParams): Promise<q.ToolCallPartResponse> {

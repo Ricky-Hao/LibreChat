@@ -1,6 +1,7 @@
 import React from 'react';
-import { Constants, ContentTypes } from 'librechat-data-provider';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Constants, ContentTypes, dataService, QueryKeys } from 'librechat-data-provider';
+import { fireEvent, render as renderBase, screen, waitFor } from '@testing-library/react';
 import type { FileCitation, TMessage, TMessageContentParts } from 'librechat-data-provider';
 import EditContentParts from '../EditContentParts';
 
@@ -8,6 +9,13 @@ const mockMutateAsync = jest.fn();
 const mockSetMessages = jest.fn();
 const mockAsk = jest.fn();
 let mockChatDirection = 'LTR';
+let queryClient: QueryClient;
+const render = (element: React.ReactElement) =>
+  renderBase(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+jest.mock('librechat-data-provider', () => {
+  const actual = jest.requireActual('librechat-data-provider');
+  return { ...actual, dataService: { ...actual.dataService, getConversationHistory: jest.fn() } };
+});
 
 jest.mock('recoil', () => ({
   useRecoilValue: () => mockChatDirection,
@@ -72,6 +80,7 @@ const content = [
 
 describe('EditContentParts', () => {
   beforeEach(() => {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retryDelay: 0, cacheTime: 0 } } });
     jest.clearAllMocks();
     mockMutateAsync.mockReset();
     mockAsk.mockReset();
@@ -79,6 +88,35 @@ describe('EditContentParts', () => {
     mockChatDirection = 'LTR';
     message.content = undefined;
     mockThread = [parentMessage, message];
+  });
+  afterEach(() => queryClient.clear());
+
+  it('can rerun a structured reply whose parent is outside the loaded window', async () => {
+    mockThread = [message];
+    queryClient.setQueryData([QueryKeys.historyWindow, 'conversation-1'], { limit: 24 });
+    jest
+      .mocked(dataService.getConversationHistory)
+      .mockResolvedValueOnce({ messages: [parentMessage], start: null, nextCursor: null });
+    render(
+      <EditContentParts
+        content={content}
+        messageId={message.messageId}
+        isSubmitting={false}
+        enterEdit={jest.fn()}
+        siblingIdx={0}
+        setSiblingIdx={jest.fn()}
+        renderReadOnlyPart={() => null}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'com_ui_rerun' }));
+    expect(dataService.getConversationHistory).toHaveBeenCalledWith('conversation-1', {
+      messageId: 'user-1',
+      limit: 1,
+    });
+    expect(mockAsk).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'user-1', text: parentMessage.text }),
+      expect.objectContaining({ isRegenerate: true, targetResponseMessageId: 'assistant-1' }),
+    );
   });
 
   it('uses one editor footer and keeps non-editable parts visible', () => {

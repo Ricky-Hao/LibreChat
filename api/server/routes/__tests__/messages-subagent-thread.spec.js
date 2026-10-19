@@ -6,6 +6,7 @@ const mockIsSubagentThreadWriteBlocked = jest.fn();
 jest.mock('@librechat/agents', () => ({ sleep: jest.fn() }));
 
 jest.mock('@librechat/api', () => ({
+  ...jest.requireActual('../../../../packages/api/src/messages/history'),
   prepareToolCallPreviews: jest.fn(() => (messages) => Promise.resolve(messages)),
   createToolCallPartHandler: jest.fn(() => (_req, res) => res.status(404).end()),
   rejectToolCallPreviewWrites: (_req, _res, next) => next(),

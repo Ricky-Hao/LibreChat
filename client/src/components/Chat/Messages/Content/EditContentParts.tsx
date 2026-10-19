@@ -11,6 +11,7 @@ import type { TMessageContentParts } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import { useMessagesConversation, useMessagesOperations } from '~/Providers';
 import { getPartText, isEditablePart, withPartText } from './editableParts';
+import { useRerunParent, ParentError } from './parent';
 import { findRerunParent } from './rerunParent';
 import { useGetAddedConvo } from '~/hooks/Chat';
 import { useLocalize } from '~/hooks';
@@ -100,14 +101,17 @@ export default function EditContentParts({
     [changedParts, drafts],
   );
   const editedMessage = findMessageById(getMessages(), messageId);
+  const { parent, query: parentQuery } = useRerunParent(
+    getMessages(),
+    conversation?.conversationId,
+    editedMessage?.isCreatedByUser ? undefined : editedMessage?.parentMessageId,
+  );
   const isBusy = isSubmitting || isSaving;
   /** A rerun replays the parent as the turn's user message, so a model turn with no
    *  user turn behind it — chained onto another model turn, or left at the root by an
    *  import — has none. The action is withheld rather than offered and silently
    *  refused, the footer says why, and Save still applies. */
-  const canRerun =
-    editedMessage?.isCreatedByUser === true ||
-    findRerunParent(getMessages(), editedMessage?.parentMessageId) != null;
+  const canRerun = editedMessage?.isCreatedByUser === true || parent != null;
   /** Only meaningful while a rerun is on offer: it explains why this one is held
    *  back until the edits are saved. A save-only editor reports unsaved changes
    *  instead of an unavailable action's precondition. */
@@ -252,7 +256,7 @@ export default function EditContentParts({
     } else {
       /** The same resolution the withheld button is gated on, so a rendered Rerun and
        *  the submission it runs cannot disagree about the turn being replayed. */
-      const parentMessage = findRerunParent(messages, editedMessage.parentMessageId);
+      const parentMessage = findRerunParent(messages, editedMessage.parentMessageId) ?? parent;
       if (!parentMessage) {
         return;
       }
@@ -327,6 +331,7 @@ export default function EditContentParts({
     rerunRequiresSave,
     setSiblingIdx,
     siblingIdx,
+    parent,
   ]);
 
   const handleKeyDown = useCallback(
@@ -354,6 +359,7 @@ export default function EditContentParts({
    *  a blocked or pending save first, then why the footer offers no rerun — the
    *  question a Save-only editor otherwise leaves unanswered. */
   const getStatusMessage = () => {
+    if (parentQuery.isFetching) return localize('com_ui_loading');
     if (hasBlankEdit) {
       return localize('com_ui_message_part_empty');
     }
@@ -375,6 +381,12 @@ export default function EditContentParts({
       className="flex w-full min-w-0 flex-col gap-2"
     >
       {saveError && <Alert variant="error">{localize('com_ui_save_message_error')}</Alert>}
+      <ParentError
+        error={parentQuery.isError}
+        retry={() => {
+          void parentQuery.refetch();
+        }}
+      />
 
       <div className="flex min-w-0 flex-col gap-3">
         {content.map((part, localIndex) => {

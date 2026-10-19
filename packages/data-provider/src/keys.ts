@@ -1,4 +1,6 @@
 export enum QueryKeys {
+  historyWindow = 'historyWindow',
+  attachmentBody = 'attachmentBody',
   messages = 'messages',
   /* Full content of one tool-call part, fetched when its preview is not enough */
   toolCallPart = 'toolCallPart',

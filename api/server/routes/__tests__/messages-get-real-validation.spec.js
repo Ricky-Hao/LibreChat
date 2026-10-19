@@ -23,6 +23,8 @@ jest.mock('@librechat/agents', () => ({
 jest.mock('@librechat/api', () => ({
   createMessageReadHandler: jest.requireActual('@librechat/api').createMessageReadHandler,
   createMessageReadLimits: jest.requireActual('@librechat/api').createMessageReadLimits,
+  createHistoryHandler: jest.requireActual('@librechat/api').createHistoryHandler,
+  createAttachmentBodyHandler: jest.requireActual('@librechat/api').createAttachmentBodyHandler,
   prepareToolCallPreviews: jest.fn(() => (messages) => Promise.resolve(messages)),
   createToolCallPartHandler: jest.fn(() => (_req, res) => res.status(404).end()),
   rejectToolCallPreviewWrites: (_req, _res, next) => next(),
@@ -73,6 +75,8 @@ jest.mock('~/models', () => ({
   getMessage: jest.fn(),
   saveMessage: jest.fn(),
   getMessages: jest.fn(),
+  getDisplayMessages: jest.fn(),
+  getHistoryAttachment: jest.fn(),
   updateMessage: jest.fn(),
   deleteMessages: jest.fn(),
   getConvosQueried: jest.fn(),
@@ -114,7 +118,7 @@ jest.mock('~/db/models', () => ({
 
 describe('GET /api/messages/:conversationId with real validation middleware', () => {
   let app;
-  const { getConvoOwnership, getMessages } = require('~/models');
+  const { getConvoOwnership, getMessages, getDisplayMessages } = require('~/models');
   const authenticatedUserId = 'user-owner-123';
 
   beforeAll(() => {
@@ -132,6 +136,7 @@ describe('GET /api/messages/:conversationId with real validation middleware', ()
 
   beforeEach(() => {
     jest.clearAllMocks();
+    getDisplayMessages.mockResolvedValue({ messages: [], start: null, nextCursor: null });
   });
 
   it.each([
@@ -256,6 +261,20 @@ describe('GET /api/messages/:conversationId with real validation middleware', ()
     expect(response.body).toEqual([]);
     expect(getConvoOwnership).not.toHaveBeenCalled();
     expect(getMessages).not.toHaveBeenCalled();
+    expect(getDisplayMessages).not.toHaveBeenCalled();
+  });
+
+  it('keeps a literal history message id readable alongside the opt-in history query', async () => {
+    getConvoOwnership.mockResolvedValue({ user: authenticatedUserId });
+    getMessages.mockResolvedValue([
+      { messageId: 'history', conversationId: 'c', text: 'Legacy message' },
+    ]);
+    const single = await request(app).get('/api/messages/c/history');
+    expect(single.body).toEqual([
+      { messageId: 'history', conversationId: 'c', text: 'Legacy message' },
+    ]);
+    const recent = await request(app).get('/api/messages/c?history=recent');
+    expect(recent.body).toEqual({ messages: [], start: null, nextCursor: null });
   });
 
   it('wires content and ref-only body reads, and exposes no superseded analysis routes', async () => {
@@ -332,10 +351,14 @@ describe('GET /api/messages/:conversationId with real validation middleware', ()
     const messagesStartedPromise = new Promise((resolve) => {
       resolveMessagesStarted = resolve;
     });
-    getMessages.mockImplementation(() => {
+    getDisplayMessages.mockImplementation(() => {
       events.push('messages-started');
       resolveMessagesStarted();
-      return Promise.resolve([{ messageId: 'message-1', conversationId: 'convo-1' }]);
+      return Promise.resolve({
+        messages: [{ messageId: 'message-1', conversationId: 'convo-1' }],
+        start: null,
+        nextCursor: null,
+      });
     });
 
     const responsePromise = new Promise((resolve, reject) => {
@@ -354,11 +377,14 @@ describe('GET /api/messages/:conversationId with real validation middleware', ()
     const response = await responsePromise;
 
     expect(eventsBeforeValidation).toEqual(['convo-started', 'messages-started']);
-    expect(getConvoOwnership).toHaveBeenCalledWith(authenticatedUserId, 'convo-1');
-    expect(getMessages).toHaveBeenCalledWith(
-      { conversationId: 'convo-1', user: authenticatedUserId },
-      CLIENT_MESSAGE_SELECT,
-    );
+    expect(getConvoOwnership).toHaveBeenCalledWith(authenticatedUserId, 'convo-1', null);
+    expect(getDisplayMessages).toHaveBeenCalledWith({
+      conversationId: 'convo-1',
+      user: authenticatedUserId,
+      tenantId: undefined,
+      lazyAttachments: false,
+      page: undefined,
+    });
     expect(response.status).toBe(200);
     expect(response.body).toEqual([{ messageId: 'message-1', conversationId: 'convo-1' }]);
   });
@@ -369,7 +395,11 @@ describe('GET /api/messages/:conversationId with real validation middleware', ()
       user: authenticatedUserId,
       subagentThread: { parentConversationId: 'parent-convo' },
     });
-    getMessages.mockResolvedValue([{ messageId: 'child-message', conversationId: 'child-convo' }]);
+    getDisplayMessages.mockResolvedValue({
+      messages: [{ messageId: 'child-message', conversationId: 'child-convo' }],
+      start: null,
+      nextCursor: null,
+    });
 
     const response = await request(app).get('/api/messages/child-convo');
 

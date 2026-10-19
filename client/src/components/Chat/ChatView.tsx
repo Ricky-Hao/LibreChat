@@ -3,7 +3,7 @@ import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
 import { Spinner } from '@librechat/client';
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { Constants, buildTree } from 'librechat-data-provider';
 import type { TChatProject } from 'librechat-data-provider';
 import type { ChatFormValues } from '~/common';
@@ -97,6 +97,10 @@ function ChatView({
   });
 
   const fileMap = useFileMapContext();
+  const location = useLocation();
+  // A target navigation must retain access to the full tree, including search links.
+  const targetMessageId =
+    new URLSearchParams(location.search).get('messageId') || location.hash.slice(1) || undefined;
 
   const {
     data: messages = null,
@@ -170,6 +174,7 @@ function ChatView({
         messages={messages}
         scrollNavigation={{
           conversationKey: conversationId,
+          targetMessageId,
           ready: !routePending,
           explicitSendId:
             rootSubmission &&

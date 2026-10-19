@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
-import { renderHook, act } from '@testing-library/react';
 import { Provider as JotaiProvider, createStore } from 'jotai';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   Constants,
@@ -85,6 +85,7 @@ jest.mock('librechat-data-provider', () => {
     dataService: {
       ...actual.dataService,
       getMessagesByConvoId: jest.fn(),
+      getConversationHistory: jest.fn(),
     },
   };
 });
@@ -116,6 +117,7 @@ jest.mock('~/hooks/Conversations/useGetConversation', () => () => mockGetLatestC
 jest.mock('~/hooks/Conversations/useGetSender', () => () => mockGetSender);
 jest.mock('~/hooks/Input/useUserKey', () => () => ({ getExpiry: mockGetExpiry }));
 jest.mock('~/hooks', () => ({
+  useLocalize: () => (key: string) => key,
   useAuthContext: () => ({ user: null }),
 }));
 jest.mock('~/Providers/AgentsMapContext', () => ({
@@ -872,6 +874,36 @@ describe('useChatFunctions regenerate', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockAgentQueryData.current = undefined;
+  });
+
+  it('loads one missing parent on request when the window starts at the selected reply', async () => {
+    const parent = userMessage('parent-outside-window');
+    const response = assistantMessage('visible-reply', parent.messageId);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, cacheTime: Infinity } },
+    });
+    client.setQueryData([QueryKeys.historyWindow, 'conversation-1'], { limit: 24 });
+    mockQueryClient = client;
+    mockGetLatestConversation.mockReturnValue(conversation('conversation-1'));
+    jest
+      .mocked(dataService.getConversationHistory)
+      .mockResolvedValueOnce({ messages: [parent], start: null, nextCursor: null });
+    try {
+      const { result, setSubmission } = renderAsk([response]);
+      act(() => result.current.regenerate(response));
+      await waitFor(() => expect(setSubmission).toHaveBeenCalled());
+      expect(dataService.getConversationHistory).toHaveBeenCalledWith('conversation-1', {
+        messageId: parent.messageId,
+        limit: 1,
+      });
+      const submission = setSubmission.mock.calls.at(-1)?.[0] as TSubmission;
+      expect(submission.initialResponse?.parentMessageId).toBe(parent.messageId);
+      expect(submission.userMessage.overrideParentMessageId).toBe(parent.messageId);
+    } finally {
+      client.clear();
+      mockQueryClient = undefined;
+      mockGetLatestConversation.mockReturnValue(null);
+    }
   });
 
   it('keys a non-tail regenerate to the selected assistant response', () => {

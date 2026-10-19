@@ -198,46 +198,62 @@ export function createBoundedMessageMethods(
         const field = input.field;
         const value =
           field === 'text'
-            ? '$text'
+            ? { value: '$text' }
             : {
                 $let: {
                   vars: { part: raw },
                   in:
                     field === 'entry'
-                      ? publicEntryProjection('$$part')
+                      ? {
+                          $cond: [
+                            { $eq: [{ $type: '$$part' }, 'object'] },
+                            { value: publicEntryProjection('$$part') },
+                            {},
+                          ],
+                        }
                       : {
-                          $switch: {
-                            branches: [
-                              {
-                                case: exists(`$$part.tool_call.${field}`),
-                                then: `$$part.tool_call.${field}`,
-                              },
-                              {
-                                case: exists(
-                                  `$$part.tool_call.function.${field === 'args' ? 'arguments' : 'output'}`,
-                                ),
-                                then: `$$part.tool_call.function.${field === 'args' ? 'arguments' : 'output'}`,
-                              },
-                            ],
-                            default: `$$part.tool_call.code_interpreter.${field === 'args' ? 'input' : 'outputs'}`,
+                          value: {
+                            $switch: {
+                              branches: [
+                                {
+                                  case: exists(`$$part.tool_call.${field}`),
+                                  then: `$$part.tool_call.${field}`,
+                                },
+                                {
+                                  case: exists(
+                                    `$$part.tool_call.function.${field === 'args' ? 'arguments' : 'output'}`,
+                                  ),
+                                  then: `$$part.tool_call.function.${field === 'args' ? 'arguments' : 'output'}`,
+                                },
+                              ],
+                              default: `$$part.tool_call.code_interpreter.${field === 'args' ? 'input' : 'outputs'}`,
+                            },
                           },
                         },
                 },
               };
-        stages.push({ $project: { ...identity, validScope, value } });
         stages.push({
-          $project: {
-            ...identity,
-            validScope: 1,
-            recorded: exists('$value'),
-            stringWindow: {
-              $cond: [
-                { $eq: [{ $type: '$value' }, 'string'] },
-                { $substrCP: ['$value', input.position, input.limit + 1] },
-                '$$REMOVE',
+          $replaceRoot: {
+            newRoot: {
+              $mergeObjects: [pick('$$ROOT', Object.keys(identity)), { validScope }, value],
+            },
+          },
+        });
+        stages.push({
+          $replaceRoot: {
+            newRoot: {
+              $mergeObjects: [
+                pick('$$ROOT', [...Object.keys(identity), 'validScope']),
+                { recorded: exists('$value') },
+                {
+                  $cond: [
+                    { $eq: [{ $type: '$value' }, 'string'] },
+                    { stringWindow: { $substrCP: ['$value', input.position, input.limit + 1] } },
+                    pick('$$ROOT', ['value']),
+                  ],
+                },
               ],
             },
-            value: { $cond: [{ $eq: [{ $type: '$value' }, 'string'] }, '$$REMOVE', '$value'] },
           },
         });
       } else {
@@ -419,7 +435,6 @@ function descriptor(part: string, index: string): unknown {
             })),
           ],
         },
-        children: { $cond: [{ $isArray: `${tool}.subagent_content` }, true, '$$REMOVE'] },
         // Explicitly indicate invalid/oversized summary leaves without returning them.
         omittedFields: {
           $let: {
@@ -440,6 +455,7 @@ function descriptor(part: string, index: string): unknown {
           },
         },
       },
+      { $cond: [{ $isArray: `${tool}.subagent_content` }, { children: true }, {}] },
     ],
   };
 }
@@ -555,7 +571,7 @@ function publicEntryProjection(part: string): unknown {
           },
         ],
       },
-      '$$REMOVE',
+      {},
     ],
   };
 }

@@ -10,6 +10,7 @@ import {
   byEntrySalience,
   displayFilename,
   isImageAttachment,
+  isLazyAttachment,
   isInternalSandboxArtifact,
   isTextAttachment,
   renderAttachmentKey,
@@ -22,6 +23,7 @@ import { ROW_GLYPH_SLOT, TOOL_ROW_CLASSES } from '../rows';
 import ToolMermaidArtifact from './ToolMermaidArtifact';
 import ToolArtifactCard from './ToolArtifactCard';
 import { useAttachmentLink } from './LogLink';
+import LazyAttachment from './LazyAttachment';
 import { cn } from '~/utils';
 
 const COLLAPSED_MAX_HEIGHT = 320;
@@ -435,12 +437,13 @@ const ImageAttachment = memo(({ attachment }: { attachment: TAttachment }) => {
 
 interface PanelArtifactProps {
   attachment: TAttachment;
+  openOnMount?: boolean;
   /** Pre-classified type from the routing decision tree, threaded down so
    * `fileToArtifact` doesn't re-run `detectArtifactTypeFromFile`. */
   type: ToolArtifactType;
 }
 
-const PanelArtifact = memo(({ attachment, type }: PanelArtifactProps) => {
+const PanelArtifact = memo(({ attachment, type, openOnMount }: PanelArtifactProps) => {
   const localize = useLocalize();
   const placeholder = localize('com_ui_artifact_preview_pending');
   const artifact = useMemo(
@@ -454,7 +457,7 @@ const PanelArtifact = memo(({ attachment, type }: PanelArtifactProps) => {
   if (!artifact) {
     return null;
   }
-  return <ToolArtifactCard attachment={attachment} artifact={artifact} />;
+  return <ToolArtifactCard attachment={attachment} artifact={artifact} openOnMount={openOnMount} />;
 });
 PanelArtifact.displayName = 'PanelArtifact';
 
@@ -467,7 +470,13 @@ const MermaidArtifact = memo(({ attachment }: { attachment: TAttachment }) => {
 });
 MermaidArtifact.displayName = 'MermaidArtifact';
 
-export default function Attachment({ attachment }: { attachment?: TAttachment }) {
+export default function Attachment({
+  attachment,
+  openOnMount,
+}: {
+  attachment?: TAttachment;
+  openOnMount?: boolean;
+}) {
   if (!attachment) {
     return null;
   }
@@ -484,6 +493,13 @@ export default function Attachment({ attachment }: { attachment?: TAttachment })
   if (isImageAttachment(attachment)) {
     return <ImageAttachment attachment={attachment} />;
   }
+  if (isLazyAttachment(attachment)) {
+    return (
+      <LazyAttachment attachment={attachment}>
+        {(resolved) => <Attachment attachment={resolved} openOnMount />}
+      </LazyAttachment>
+    );
+  }
   // Single classification call. The result is threaded into
   // `PanelArtifact` -> `fileToArtifact` so the panel path doesn't
   // re-run `detectArtifactTypeFromFile` a second time.
@@ -492,7 +508,7 @@ export default function Attachment({ attachment }: { attachment?: TAttachment })
     return <MermaidArtifact attachment={attachment} />;
   }
   if (artType != null) {
-    return <PanelArtifact attachment={attachment} type={artType} />;
+    return <PanelArtifact attachment={attachment} type={artType} openOnMount={openOnMount} />;
   }
   if (isTextAttachment(attachment)) {
     return <TextAttachment attachment={attachment} />;
@@ -517,6 +533,7 @@ export function AttachmentGroup({ attachments }: { attachments?: TAttachment[] }
    * to PanelArtifact in place. */
   const panelRow: Array<{ attachment: TAttachment; type: ToolArtifactType | null }> = [];
   const mermaidArtifacts: TAttachment[] = [];
+  const deferredAttachments: TAttachment[] = [];
 
   attachments.forEach((attachment) => {
     if (attachment.type === Tools.web_search) {
@@ -527,6 +544,10 @@ export function AttachmentGroup({ attachments }: { attachments?: TAttachment[] }
     }
     if (isImageAttachment(attachment)) {
       imageAttachments.push(attachment);
+      return;
+    }
+    if (isLazyAttachment(attachment)) {
+      deferredAttachments.push(attachment);
       return;
     }
     if ((attachment as Partial<TFile>).status === 'pending') {
@@ -578,6 +599,9 @@ export function AttachmentGroup({ attachments }: { attachments?: TAttachment[] }
 
   return (
     <>
+      {deferredAttachments.map((attachment, index) => (
+        <Attachment attachment={attachment} key={renderAttachmentKey('lazy', attachment, index)} />
+      ))}
       {groupedFileAttachments.length > 0 && (
         <FileAttachmentGroup attachments={groupedFileAttachments} />
       )}

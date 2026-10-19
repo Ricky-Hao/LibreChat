@@ -14,6 +14,7 @@ import {
   siblingKey,
   useSiblingIndexes,
 } from '~/components/Chat/Messages/Thread/state';
+import { historyFocusIndexes } from '~/utils/history';
 
 const EMPTY_KEYS: string[] = [];
 
@@ -46,6 +47,15 @@ export default function useThreadRows(
     [index, rootSiblingKey],
   );
   const siblingIndexes = useSiblingIndexes(branchKeys);
+  const previousIndexRef = useRef<{
+    rootKey: string;
+    index: ThreadIndex;
+    messages: typeof messages;
+  } | null>(null);
+  const focus = useMemo(
+    () => (messages ? historyFocusIndexes(messages, rootSiblingKey) : new Map<string, number>()),
+    [messages, rootSiblingKey],
+  );
 
   const previousRowsRef = useRef<ThreadRow[] | null>(null);
   const rows = useMemo(() => {
@@ -55,22 +65,28 @@ export default function useThreadRows(
     const next = resolveThreadRows(
       index,
       rootSiblingKey,
-      (key) => siblingIndexes[key] ?? 0,
+      (key) =>
+        (previousIndexRef.current?.messages !== messages ? focus.get(key) : undefined) ??
+        siblingIndexes[key] ??
+        0,
       previousRowsRef.current,
     );
     previousRowsRef.current = next;
     return next;
-  }, [index, rootSiblingKey, siblingIndexes]);
+  }, [index, rootSiblingKey, siblingIndexes, focus, messages]);
 
-  const previousIndexRef = useRef<{ rootKey: string; index: ThreadIndex } | null>(null);
   useEffect(() => {
     if (!index) {
       previousIndexRef.current = null;
       return;
     }
     const previous = previousIndexRef.current;
-    previousIndexRef.current = { rootKey: rootSiblingKey, index };
+    previousIndexRef.current = { rootKey: rootSiblingKey, index, messages };
     const previousIndex = previous && previous.rootKey === rootSiblingKey ? previous.index : null;
+    if (focus.size && previous?.messages !== messages) {
+      for (const [key, value] of focus) jotaiStore.set(siblingIdxFamily(key), value);
+      return;
+    }
     for (const key of changedParentKeys(previousIndex, index)) {
       const atom = siblingIdxFamily(key === ROOT_KEY ? rootSiblingKey : key);
       const nextIdx = reconcileSiblingIdx(
@@ -82,7 +98,7 @@ export default function useThreadRows(
         jotaiStore.set(atom, nextIdx);
       }
     }
-  }, [index, rootSiblingKey, jotaiStore]);
+  }, [index, rootSiblingKey, jotaiStore, focus, messages]);
 
   return rows;
 }

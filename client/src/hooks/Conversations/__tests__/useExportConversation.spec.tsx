@@ -170,6 +170,60 @@ it('does not download a screenshot when a protected row arrives during capture',
   );
 });
 
+it('loads full display history before capturing a screenshot of a partial window', async () => {
+  const first = { ...canonical, privacyRevision: undefined, createdAt: '2026-09-28T15:00:01' };
+  const last = {
+    ...first,
+    messageId: 'reply',
+    parentMessageId: first.messageId,
+    isCreatedByUser: false,
+  };
+  const full = [first, last];
+  mockGetMessages.mockResolvedValueOnce(full);
+  const { result, queryClient } = setup('screenshot', [last]);
+  queryClient.setQueryData([QueryKeys.historyWindow, conversationId], {
+    limit: 24,
+    nextCursor: { createdAt: '2026-09-28T15:00:01.000Z', position: '000000000000000000000001' },
+  });
+  mockCaptureScreenshot.mockImplementationOnce(async () => {
+    expect(queryClient.getQueryData([QueryKeys.messages, conversationId])).toEqual(full);
+    return new Blob(['complete screenshot'], { type: 'image/png' });
+  });
+  await act(async () => {
+    await result.current.exportConversation();
+  });
+  expect(mockGetMessages).toHaveBeenCalledWith(conversationId, {
+    toolPreviews: true,
+    lazyAttachments: true,
+  });
+  expect(mockCaptureScreenshot).toHaveBeenCalledTimes(1);
+  expect(download).toHaveBeenCalledTimes(1);
+  queryClient.clear();
+});
+
+it('preserves a live cache write while loading full history for a screenshot', async () => {
+  const clean = { ...canonical, privacyRevision: undefined, createdAt: '2026-09-28T15:00:01' };
+  let finish!: (messages: TMessage[]) => void;
+  mockGetMessages.mockReturnValueOnce(
+    new Promise<TMessage[]>((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const { result, queryClient } = setup('screenshot', [clean]);
+  queryClient.setQueryData([QueryKeys.historyWindow, conversationId], { limit: 24 });
+  const pending = result.current.exportConversation();
+  const live = [{ ...clean, text: 'New streaming text' }];
+  act(() => queryClient.setQueryData([QueryKeys.messages, conversationId], live));
+  finish([clean]);
+  await act(async () => {
+    await pending;
+  });
+  expect(queryClient.getQueryData([QueryKeys.messages, conversationId])).toEqual(live);
+  expect(mockCaptureScreenshot).not.toHaveBeenCalled();
+  expect(download).not.toHaveBeenCalled();
+  queryClient.clear();
+});
+
 it.each([
   { kind: 'unsent', message: submitted },
   { kind: 'protected', message: canonical },
