@@ -1,5 +1,8 @@
 # Conversation display history
 
+For the rationale, implementation map, commit history, regression evidence, and upstream
+merge checklist, see [历史窗口与附件按需读取：补丁维护指南](history-window-patch.md).
+
 With **Auto-Scroll to latest message on chat open** enabled, the chat requests the newest
 24 messages. Scroll upward near the beginning of the loaded messages, or select **Load older
 messages**, to request another page. Loading preserves the visible message and its viewport
