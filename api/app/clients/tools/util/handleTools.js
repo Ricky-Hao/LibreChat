@@ -23,8 +23,10 @@ const {
   SET_MEMORY_TOOL_NAME,
   buildWebSearchContext,
   DELETE_MEMORY_TOOL_NAME,
-  createAskUserQuestionTool,
-  ASK_USER_QUESTION_TOOL_NAME,
+  createNativeAgentTool,
+  nativeAgentToolCapability,
+  encryptV2,
+  decryptV2,
   resolveWebSearchSSRFAgents,
   buildWebSearchDynamicContext,
   codeExecutionAuthHeaders,
@@ -491,8 +493,15 @@ const loadTools = async ({
         });
       };
       continue;
-    } else if (tool === ASK_USER_QUESTION_TOOL_NAME) {
-      requestedTools[tool] = async () => createAskUserQuestionTool();
+    } else if (nativeAgentToolCapability(tool)) {
+      requestedTools[tool] = async () =>
+        createNativeAgentTool(tool, {
+          req: options.req,
+          agentId: agent?.id,
+          methods: require('~/models'),
+          encrypt: encryptV2,
+          decrypt: decryptV2,
+        });
       continue;
     } else if (tool === SET_MEMORY_TOOL_NAME || tool === DELETE_MEMORY_TOOL_NAME) {
       requestedTools[tool] = () =>

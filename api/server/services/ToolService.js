@@ -42,7 +42,7 @@ const {
   isContentFilterError,
   isFileAuthoringToolDefinition,
   normalizeActionToolName,
-  ASK_USER_QUESTION_TOOL_NAME,
+  nativeAgentToolCapability,
   splitMCPToolKey,
   buildServerNameAliases,
   findShadowedServerNames,
@@ -924,8 +924,8 @@ async function loadToolDefinitionsWrapper({
     if (tool === Tools.memory) {
       return checkCapability(AgentCapabilities.memory);
     }
-    if (tool === ASK_USER_QUESTION_TOOL_NAME) {
-      return checkCapability(AgentCapabilities.ask_user_question);
+    if (nativeAgentToolCapability(tool)) {
+      return checkCapability(nativeAgentToolCapability(tool));
     }
     if (isActionTool(tool)) {
       return actionsEnabled;
@@ -1756,8 +1756,8 @@ async function loadAgentTools({
       return includesWebSearch;
     } else if (tool === Tools.memory) {
       return checkCapability(AgentCapabilities.memory);
-    } else if (tool === ASK_USER_QUESTION_TOOL_NAME) {
-      return checkCapability(AgentCapabilities.ask_user_question);
+    } else if (nativeAgentToolCapability(tool)) {
+      return checkCapability(nativeAgentToolCapability(tool));
     } else if (isActionTool(tool)) {
       return actionsEnabled;
     } else if (tool?.includes(Constants.mcp_delimiter)) {

@@ -151,6 +151,10 @@ router.use('/v1/skills', skills);
  */
 router.use('/v1', openai);
 
+router.post('/task-callbacks', (req, res, next) =>
+  require('~/server/services/Agents/triggers').taskCallbackHandler(req, res, next),
+);
+
 router.use(requireJwtAuth);
 // Capture the short-lived trigger identity immediately after authentication. Downstream
 // middleware reads this stable decision instead of re-verifying an expired token.

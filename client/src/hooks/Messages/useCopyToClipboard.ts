@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import copy from 'copy-to-clipboard';
 import { useRecoilValue } from 'recoil';
-import { ContentTypes, SearchResultData } from 'librechat-data-provider';
+import { ContentTypes, SearchResultData, redactTaskCallbackIds } from 'librechat-data-provider';
 import type { TMessage, TMessageContentParts } from 'librechat-data-provider';
 import type { MarkdownVariant, RichTextMode } from '~/utils/richtext';
 import {
@@ -54,13 +54,13 @@ function getPartText(part: TMessageContentParts): string {
 
 function getMessageParts({ text, content }: Partial<Pick<TMessage, 'text' | 'content'>>): string[] {
   if (!Array.isArray(content) || content.length === 0) {
-    const messageText = text ?? '';
+    const messageText = redactTaskCallbackIds(text ?? '');
     return messageText.length > 0 ? [messageText] : [];
   }
 
   const parts: string[] = [];
   for (const part of content) {
-    const partText = getPartText(part);
+    const partText = redactTaskCallbackIds(getPartText(part));
     if (partText.length > 0) {
       parts.push(partText);
     }

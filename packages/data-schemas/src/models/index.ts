@@ -8,6 +8,7 @@ import { createAgentTriggerUserPurgeModel } from './triggerUserPurge';
 import { createRefreshTokenBridgeModel } from './refreshTokenBridge';
 import { createAgentTriggerDeliveryModel } from './triggerDelivery';
 import { createToolApprovalGrantModel } from './toolApprovalGrant';
+import { createTaskCallbackModel } from '../methods/taskCallback';
 import { createSkillSyncStatusModel } from './skillSyncStatus';
 import { createConversationTagModel } from './conversationTag';
 import { createCodeEnvironmentModel } from './codeEnvironment';
@@ -147,6 +148,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
     AgentTriggerLaneSequence: createAgentTriggerLaneSequenceModel(mongoose),
     AgentTriggerUserPurge: createAgentTriggerUserPurgeModel(mongoose),
     AgentQueuedTurn: createAgentQueuedTurnModel(mongoose),
+    TaskCallback: createTaskCallbackModel(mongoose),
     AgentQueuedTurnSequence: createAgentQueuedTurnSequenceModel(mongoose),
     Schedule: createScheduleModel(mongoose),
     ScheduleRun: createScheduleRunModel(mongoose),

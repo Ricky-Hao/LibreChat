@@ -923,6 +923,19 @@ endpoints:
   #   # uses its own bound listener; override only for an internal TLS/front-door route.
   #   eventDriven:
   #     # selfUrl: 'https://librechat.internal'
+  #   # External executor results can resume the original Agent conversation.
+  #   # Also opt in to "task_callbacks" in capabilities and attach create_task_callback.
+  #   # See docs/task-callbacks.md. The callback ID goes only in the POST body.
+  #   taskCallbacks:
+  #     enabled: false
+  #     publicUrl: 'https://chat.example/api/agents/task-callbacks'
+  #     ttlMs: 86400000
+  #     receiptRetentionMs: 604800000
+  #     maxOutputBytes: 32768
+  #     requestsPerMinute: 60
+  #     recoveryIntervalMs: 30000
+  #     recoveryBatchSize: 25
+  #     branchMessageLimit: 2000
   #   # (optional) Automatic conversational delivery for supported completed background tasks.
   #   # Enabled by default; set false to keep background tools and subagents poll-only.
   #   backgroundTasks:

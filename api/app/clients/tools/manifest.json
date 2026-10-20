@@ -105,6 +105,13 @@
     "authConfig": []
   },
   {
+    "name": "External Task Callback",
+    "pluginKey": "create_task_callback",
+    "description": "Resume this conversation automatically when an external task finishes.",
+    "agentsOnly": true,
+    "authConfig": []
+  },
+  {
     "name": "Stable Diffusion",
     "pluginKey": "stable-diffusion",
     "description": "Generate photo-realistic images given any text input.",

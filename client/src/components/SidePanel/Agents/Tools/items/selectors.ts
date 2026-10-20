@@ -60,6 +60,8 @@ function isBuiltinSelected(item: AgentItem, form: FormSelection): boolean {
     case 'ask_user_question':
       // Native tool presented as a builtin — selection lives in agent.tools.
       return form.tools.includes('ask_user_question');
+    case 'create_task_callback':
+      return form.tools.includes('create_task_callback');
     default:
       return false;
   }

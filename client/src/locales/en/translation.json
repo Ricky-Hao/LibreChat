@@ -1,4 +1,6 @@
 {
+  "com_ui_task_callback": "External Task Callback",
+  "com_agents_task_callback_info": "Resume this conversation automatically when an external executor delivers its task result.",
   "com_ui_history_older": "Load older messages",
   "com_ui_history_loading": "Loading older messages…",
   "com_ui_history_retry": "Could not load older messages. Retry",

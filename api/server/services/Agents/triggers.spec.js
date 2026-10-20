@@ -16,6 +16,12 @@ const mockQueuedTurnLifecycle = {
   schedule: jest.fn(),
   cancel: jest.fn(),
 };
+const mockTaskCallbacks = {
+  prepareContinue: jest.fn(),
+  handler: jest.fn(),
+  initialize: jest.fn(),
+  stop: jest.fn(),
+};
 
 jest.mock('@librechat/api', () => ({
   createCheckpointDeletionReclaimer: jest.fn((getJobs) => () => getJobs('owner', 'tenant')),
@@ -27,6 +33,8 @@ jest.mock('@librechat/api', () => ({
     mockCreateBackgroundToolCompletionWakeupResolver(...args),
   createSubagentCompletionWakeupResolver: jest.fn(() => jest.fn()),
   createAgentQueuedTurnLifecycle: jest.fn(() => mockQueuedTurnLifecycle),
+  createTaskCallbackLifecycle: jest.fn(() => mockTaskCallbacks),
+  TASK_CALLBACK_SOURCE: 'external-task-callback',
   BACKGROUND_TOOL_COMPLETION_SOURCE: 'background-tool-completion',
   SUBAGENT_COMPLETION_SOURCE: 'subagent-completion',
   AGENT_QUEUED_TURN_SOURCE: 'agent-queued-turn',
@@ -36,6 +44,7 @@ jest.mock('@librechat/api', () => ({
 jest.mock('~/models', () => ({
   isAgentTriggerPrincipalActive: jest.fn(),
 }));
+jest.mock('~/server/services/Config/app', () => ({ getAppConfig: jest.fn() }));
 
 describe('agent trigger service composition', () => {
   beforeEach(() => {
@@ -96,6 +105,7 @@ describe('agent trigger service composition', () => {
       options,
     );
     expect(mockQueuedTurnLifecycle.initialize).toHaveBeenCalledWith({ maxIdleIntervalMs: 60_000 });
+    expect(mockTaskCallbacks.initialize).toHaveBeenCalledTimes(1);
   });
 
   it('injects the configured background completion batch size', async () => {

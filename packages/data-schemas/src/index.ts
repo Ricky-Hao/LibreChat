@@ -87,6 +87,7 @@ export {
   AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
 } from './types/triggerDelivery';
 export type * from './types';
 export type * from './methods';
@@ -122,3 +123,9 @@ export {
   dropSupersededPromptGroupIndexes,
   backfillMCPServerNormalizedNames,
 } from './migrations';
+export { createTaskCallbackMethods } from './methods/taskCallback';
+export type {
+  TaskCallbackMethods,
+  TaskCallbackRecord,
+  SealTaskCallbackResult,
+} from './methods/taskCallback';

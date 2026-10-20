@@ -272,6 +272,9 @@ export function buildLangfuseConfig({
 
   const langfuse: LangfuseRunConfigWithTraceAttributes = {
     deterministicTraceId: true,
+    ...(appConfig?.endpoints?.agents?.taskCallbacks?.enabled === true && {
+      toolOutputTracing: { redactedToolNames: ['create_task_callback'] },
+    }),
   };
   const traceUserId = resolveLangfuseTraceUserId(config?.trace, user);
   if (traceUserId != null) {

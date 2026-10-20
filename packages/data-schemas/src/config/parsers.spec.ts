@@ -44,6 +44,9 @@ function buildInfo(level: string, meta: Record<string, unknown>): FormatterInfo 
 }
 
 describe('redactMessage', () => {
+  it('redacts external task bearers in incidental messages', () => {
+    expect(redactMessage(`callback tcb_${'x'.repeat(43)}`)).toBe('callback tcb_[REDACTED]');
+  });
   it('redacts sensitive token patterns anywhere in a message', () => {
     expect(redactMessage('token: sk-abc123def')).toBe('token: sk-[REDACTED]');
     expect(redactMessage('auth Bearer secretvalue')).toBe('auth Bearer [REDACTED]');

@@ -5,6 +5,7 @@ import {
 } from '@librechat/agents';
 import type { ExtendedJsonSchema } from './schema';
 import { AskUserQuestionToolDefinition } from '~/agents/hitl/askUserQuestionTool';
+import { TaskCallbackToolDefinition } from '~/agents/callbackDefinition';
 import { geminiToolkit } from '~/tools/toolkits/gemini';
 import { oaiToolkit } from '~/tools/toolkits/oai';
 
@@ -465,6 +466,12 @@ const agentToolDefinitions: Record<string, ToolRegistryDefinition> = {
     name: AskUserQuestionToolDefinition.name,
     description: AskUserQuestionToolDefinition.description,
     schema: AskUserQuestionToolDefinition.schema as ExtendedJsonSchema,
+    toolType: 'builtin',
+  },
+  [TaskCallbackToolDefinition.name]: {
+    name: TaskCallbackToolDefinition.name,
+    description: TaskCallbackToolDefinition.description,
+    schema: TaskCallbackToolDefinition.schema as ExtendedJsonSchema,
     toolType: 'builtin',
   },
 };

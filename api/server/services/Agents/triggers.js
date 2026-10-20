@@ -11,8 +11,11 @@ const {
   createAgentQueuedTurnLifecycle,
   AGENT_QUEUED_TURN_SOURCE,
   GenerationJobManager,
+  createTaskCallbackLifecycle,
+  TASK_CALLBACK_SOURCE,
 } = require('@librechat/api');
 const methods = require('~/models');
+const { getAppConfig } = require('~/server/services/Config/app');
 
 const getGenerationAdmissionEvidence = (userId, clientRequestId, streamId, conversationId) =>
   GenerationJobManager.getGenerationAdmissionEvidence(
@@ -56,6 +59,12 @@ const eventActorAdapter = createAgentEventContinueResolver({
   getGenerationJob: (conversationId) => GenerationJobManager.getJob(conversationId),
 });
 let service;
+const taskCallbacks = createTaskCallbackLifecycle({
+  methods,
+  getConfig: getAppConfig,
+  getGenerationJob: (conversationId) => GenerationJobManager.getJob(conversationId),
+  enqueue: (...args) => service.enqueue(...args),
+});
 const queuedTurnLifecycle = createAgentQueuedTurnLifecycle({
   methods,
   getGenerationJob: (conversationId) => GenerationJobManager.getJob(conversationId),
@@ -80,18 +89,21 @@ service = createAgentTriggerService({
       [SUBAGENT_COMPLETION_SOURCE, subagentCompletionAdapter],
       [BACKGROUND_TOOL_COMPLETION_SOURCE, backgroundToolCompletionAdapter],
       [AGENT_QUEUED_TURN_SOURCE, queuedTurnLifecycle.prepareContinue],
+      [TASK_CALLBACK_SOURCE, taskCallbacks.prepareContinue],
     ]),
   }),
 });
 
 const initializeAgentTriggerService = async (options) => {
   await service.initialize(options);
+  await taskCallbacks.initialize();
   await queuedTurnLifecycle.initialize({
     maxIdleIntervalMs: options?.idlePolling?.queuedTurnMaxIntervalMs,
   });
 };
 
 const stopAgentTriggerService = async () => {
+  await taskCallbacks.stop();
   await queuedTurnLifecycle.stop();
   await service.stop();
 };
@@ -101,6 +113,7 @@ const purgeAgentTriggerDeliveriesForUser = async (userId) => {
 };
 
 module.exports = {
+  taskCallbackHandler: taskCallbacks.handler,
   initializeAgentTriggerService,
   stopAgentTriggerService,
   dispatchAgentTrigger: service.dispatch,

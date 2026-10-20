@@ -40,6 +40,7 @@ import {
   scheduledMCPReadOnlyPolicySchema,
 } from './types/scheduleConsent';
 import { DEFAULT_HISTORY_WINDOW_SIZE, MAX_HISTORY_PAGE_SIZE } from './history';
+import { taskCallbackConfigSchema } from './taskCallbacks';
 
 export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_DEFAULT = 24 * 1024;
 export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_HARD_MAX = 64 * 1024;
@@ -730,6 +731,7 @@ export enum AgentCapabilities {
   skills = 'skills',
   memory = 'memory',
   ask_user_question = 'ask_user_question',
+  task_callbacks = 'task_callbacks',
   tools = 'tools',
   /** @deprecated Retained for legacy configuration. Chain authoring is retired. */
   chain = 'chain',
@@ -1908,6 +1910,7 @@ export const agentsEndpointSchema = baseEndpointSchema
         .optional(),
       /** Conversational background-task delivery policy. Automatic completion wakeups are
        * enabled unless an administrator explicitly restores poll-only behavior. */
+      taskCallbacks: taskCallbackConfigSchema.optional(),
       backgroundTasks: z
         .object({
           completionWakeups: z.boolean().optional().default(true),

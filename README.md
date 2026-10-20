@@ -85,6 +85,7 @@ Read the [full v0.8.8 changelog](https://www.librechat.ai/changelog/v0.8.8).
   - Open-Source & Self-Hostable: powered by [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter)
 
 - 🔦 **Agents & Tools Integration**:  
+  - [External task callbacks](docs/task-callbacks.md): optionally resume an Agent conversation when an external executor delivers its terminal result.
   - **[LibreChat Agents](https://www.librechat.ai/docs/features/agents)**:
     - No-Code Custom Assistants: Build specialized, AI-driven helpers
     - Agent Marketplace: Discover and deploy community-built agents

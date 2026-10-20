@@ -1,5 +1,6 @@
 import React, { memo, useRef, useEffect } from 'react';
 import { useRecoilValue } from 'recoil';
+import { redactTaskCallbackIds } from 'librechat-data-provider';
 import { getRemarkPlugins, getRehypePlugins, getMarkdownComponents } from './markdownConfig';
 import useSmoothStreaming from '~/hooks/Messages/useSmoothStreaming';
 import MarkdownErrorBoundary from './MarkdownErrorBoundary';
@@ -13,7 +14,11 @@ type TContentProps = {
   isLatestMessage: boolean;
 };
 
-const Markdown = memo(function Markdown({ content = '', isLatestMessage }: TContentProps) {
+const Markdown = memo(function Markdown({
+  content: rawContent = '',
+  isLatestMessage,
+}: TContentProps) {
+  const content = redactTaskCallbackIds(rawContent);
   const { isSubmitting = false } = useMessageContext() ?? {};
   const smoothStreaming = useSmoothStreaming();
   const LaTeXParsing = useRecoilValue<boolean>(store.LaTeXParsing);

@@ -264,3 +264,4 @@ export interface AgentTriggerOrderingBlock {
   leaseUntil?: Date;
   reason?: 'active_handling';
 }
+export const AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1 = 'task_callback_v1';

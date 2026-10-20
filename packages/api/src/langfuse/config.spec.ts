@@ -32,6 +32,15 @@ function clearEnv() {
 }
 
 describe('buildLangfuseConfig', () => {
+  it('redacts callback registration tool output when external callbacks are enabled', async () => {
+    const { buildLangfuseConfig } = await import('./config');
+    const config = buildLangfuseConfig({
+      appConfig: {
+        endpoints: { agents: { taskCallbacks: { enabled: true } } },
+      } as unknown as AppConfig,
+    });
+    expect(config.toolOutputTracing?.redactedToolNames).toContain('create_task_callback');
+  });
   beforeEach(() => {
     clearEnv();
     process.env.TENANT_ISOLATION_STRICT = 'true';
