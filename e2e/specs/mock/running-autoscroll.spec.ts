@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { seedConversations, seedMessages } from './db';
 import { getE2EUser } from '../../setup/user';
 import { MOCK_ENDPOINTS, selectMockEndpoint, sendMessage } from './helpers';
@@ -63,7 +63,7 @@ test.describe('running conversation navigation scrolling', () => {
       // Exercise the existing control and persistence, including the default false.
       await setAutoScroll(page, !enabled);
       await setAutoScroll(page, enabled);
-      await sendMessage(page, `E2E_SLOW_REPLY:scroll-${enabled}`);
+      await sendMessage(page, `E2E_RUNNING_REPLY:scroll-${enabled}`);
       await expect(output(page)).toContainText('chunk-005', { timeout: 30_000 });
       await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
       // Cold running load reads the stored preference before restoring submission.
@@ -115,21 +115,21 @@ test.describe('running conversation navigation scrolling', () => {
       if (otherId) {
         await row(page, otherId).click();
         await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
-        await sendMessage(page, 'E2E_SLOW_REPLY:scroll-other');
+        await sendMessage(page, 'E2E_RUNNING_REPLY:scroll-other');
         await expect(output(page)).toContainText('chunk-005', { timeout: 30_000 });
         let release!: () => void;
         const historyGate = new Promise<void>((resolve) => {
           release = resolve;
         });
-        let requested!: () => void;
-        const historyRequested = new Promise<void>((resolve) => {
+        let requested!: (route: Route) => void;
+        const historyRequested = new Promise<Route>((resolve) => {
           requested = resolve;
         });
         await page.route(
           (url) => url.pathname === `/api/messages/${id}`,
           async (route) => {
             const response = await route.fetch();
-            requested();
+            requested(route);
             await historyGate;
             await route.fulfill({ response });
           },
@@ -137,13 +137,17 @@ test.describe('running conversation navigation scrolling', () => {
         );
         try {
           await row(page, id).click();
-          await historyRequested;
+          const historyRoute = await historyRequested;
           await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
           await scroller(page).hover();
           await page.mouse.wheel(0, -600);
           await expect.poll(() => gap(page)).toBeGreaterThan(200);
           const top = await scroller(page).evaluate((el) => el.scrollTop);
+          const historyReturned = page.waitForResponse(
+            (response) => response.request() === historyRoute.request(),
+          );
           release();
+          expect(await (await historyReturned).finished()).toBeNull();
           await expect(output(page)).toContainText('chunk-130', { timeout: 30_000 });
           expect(await scroller(page).evaluate((el) => el.scrollTop)).toBeLessThanOrEqual(top + 2);
           await expect.poll(() => gap(page)).toBeGreaterThan(200);
