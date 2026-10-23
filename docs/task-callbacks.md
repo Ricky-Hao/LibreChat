@@ -103,6 +103,13 @@ same bearer; it does not mint another task. Encryption uses the deployment's
 existing credentials encryption adapter/key. Do not rotate it without the usual
 retained-data key plan.
 
+启用 callback 后，索引初始化通过
+[`createIndexesWithRetry`](../packages/data-schemas/src/utils/retry.ts)
+等待 Mongoose 自动构建结束，再显式创建 schema 声明的全部索引。
+该 helper 会等待 DocumentDB 同集合的并发索引构建，并对暂时性错误退避重试，
+避免副本并发初始化使唯一性或 TTL 索引缺失。
+非暂时性错误或重试耗尽仍向调用方抛出，不将索引缺失当作初始化成功。
+
 Every replica periodically scans pending publications, and local acceptance wakes
 the scanner. Publication uses a stable delivery identity and the existing Mongo
 trigger queue. A crash before publication or after publication but before saving
@@ -173,6 +180,8 @@ Run the owning fixtures without paid model calls:
 npx jest src/agents/callbacks.integration.spec.ts --runInBand
 # From packages/data-provider
 npx jest src/taskCallbacks.spec.ts --runInBand
+# From packages/data-schemas; index-build compatibility and retry behavior.
+npx jest src/methods/documentdb.spec.ts src/utils/retry.spec.ts --runInBand
 ```
 
 The integration fixture exercises the actual tool, HTTP handler, Mongo callback
