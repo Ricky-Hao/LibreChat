@@ -12,8 +12,11 @@ const { artifact, version, consumers, sha256 } = metadata;
 const archive = readFileSync(resolve(root, artifact));
 assert.equal(createHash('sha256').update(archive).digest('hex'), sha256);
 const { source } = metadata;
-assert.equal(source.dirty, true, 'This artifact records an uncommitted source patch');
+assert.equal(source.dirty, false, 'This artifact was built from a clean source commit');
+assert.equal(source.buildState, 'clean-commit');
 assert.match(source.baseCommit, /^[a-f0-9]{40}$/);
+assert.match(source.committedSource.commit, /^[a-f0-9]{40}$/);
+assert.match(source.committedSource.tree, /^[a-f0-9]{40}$/);
 assert.equal(
   createHash('sha256')
     .update(readFileSync(resolve(root, source.patch)))
@@ -31,6 +34,54 @@ assert.equal(
   entries[0][1].integrity,
   `sha512-${createHash('sha512').update(archive).digest('base64')}`,
 );
+
+/** Self-contained so the identical summary smoke also runs in the ESM subprocess. */
+function verifySummaryReasoning(sdk) {
+  for (const provider of [
+    sdk.Providers.OPENAI,
+    sdk.Providers.AZURE,
+    sdk.Providers.OPENROUTER,
+    sdk.Providers.DEEPSEEK,
+    undefined,
+  ]) {
+    const emptyReasoning = { reasoning: { type: 'reasoning', summary: [] } };
+    const content = [
+      { type: 'text', text: 'First ' },
+      { type: 'text', text: 'second' },
+    ];
+    for (const body of ['', 'Body', content]) {
+      assert.equal(
+        sdk.getChunkContent({
+          chunk: { content: body, additional_kwargs: emptyReasoning },
+          provider,
+          reasoningKey: 'reasoning',
+        }),
+        body,
+      );
+    }
+    assert.equal(
+      sdk.getChunkContent({
+        chunk: {
+          content: '',
+          additional_kwargs: {
+            reasoning: {
+              type: 'reasoning',
+              encrypted_content: 'not-visible',
+              summary: [
+                { type: 'summary_text', text: '' },
+                { type: 'summary_text', text: 'First ' },
+                { type: 'summary_text', text: 'second' },
+              ],
+            },
+          },
+        },
+        provider,
+        reasoningKey: 'reasoning',
+      }),
+      'First second',
+    );
+  }
+}
 
 /** Self-contained so the identical behavioral smoke also runs in the ESM subprocess. */
 async function verifyIntent(sdk, DynamicStructuredTool, ToolMessage) {
@@ -168,6 +219,14 @@ for (const consumer of consumers) {
   assert.equal(manifest.types, manifest.exports['.'].types);
   assert.match(
     readFileSync(resolve(packageRoot, manifest.types), 'utf8'),
+    /export \* from ['"]\.\/stream['"]/,
+  );
+  assert.match(
+    readFileSync(resolve(packageRoot, 'dist/types/stream.d.ts'), 'utf8'),
+    /export declare function getChunkContent\(/,
+  );
+  assert.match(
+    readFileSync(resolve(packageRoot, manifest.types), 'utf8'),
     /export \* from ['"]\.\/tools\/intentArg['"]/,
   );
   const declarations = readFileSync(
@@ -188,6 +247,7 @@ for (const consumer of consumers) {
   const sdk = require('@librechat/agents');
   const { DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
   const { ToolMessage } = require('@librechat/agents/langchain/messages');
+  verifySummaryReasoning(sdk);
   await verifyIntent(sdk, DynamicStructuredTool, ToolMessage);
   for (const subpath of Object.keys(manifest.exports)) {
     const specifier = `@librechat/agents${subpath === '.' ? '' : subpath.slice(1)}`;
@@ -208,6 +268,7 @@ for (const consumer of consumers) {
     const sdk = await import('@librechat/agents');
     const { DynamicStructuredTool } = await import('@librechat/agents/langchain/tools');
     const { ToolMessage } = await import('@librechat/agents/langchain/messages');
+    (${verifySummaryReasoning.toString()})(sdk);
     await (${verifyIntent.toString()})(sdk, DynamicStructuredTool, ToolMessage);
     assert.match(sdk.buildSkillCarrierText('fixture', { skillName: 'fixture' }), /Skill source/);
   `;
@@ -217,7 +278,7 @@ for (const consumer of consumers) {
   });
   assert.equal(imported.status, 0, imported.stderr);
   console.log(
-    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths, CJS/ESM intent/result status and declaration exports verified`,
+    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths, CJS/ESM summary reasoning/intent/result status and declaration exports verified`,
   );
 }
 console.log('Tarball integrity and single SDK lock resolution verified');

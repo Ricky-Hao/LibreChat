@@ -1,0 +1,655 @@
+diff --git a/docs/summarization-behavior.md b/docs/summarization-behavior.md
+index 4b84589b378e63d5b6e588fc9fd0e952c731f17c..478ccc6bde2d1ef13381a04c2824c402855ced6e 100644
+--- a/docs/summarization-behavior.md
++++ b/docs/summarization-behavior.md
+@@ -98,6 +98,12 @@ Raw conversation messages are sent to the LLM via `attemptInvoke` with the summa
+
+ If the primary call fails, configured fallback providers are attempted (via `tryFallbackProviders`). If all providers fail, the diagnostic metadata stub is never committed as a summary, for any trigger. Existing summary state and history remain intact; the failure guard bounds subsequent attempts. Empty output and interrupted attempts likewise cannot advance the compaction boundary. Summary carriers identify generated context without claiming the current model authored it; prompts preserve uncertainty about tool results and truncation.
+
++### 摘要流内容契约
++
++`on_summarize_delta` 的 `summary.content` 始终是内容块数组。字符串转成 text 块，合法内容块保持原顺序。结构化 reasoning 只提取 `summary` 中的文本，不输出对象或其他元数据。空 reasoning 不发送空 delta，也不能遮蔽同一 chunk 或后续 chunk 的正文。
++
++流中的 reasoning 只用于临时显示。完成事件用最终摘要替换临时内容；保存的摘要只取正文。只有 reasoning、空输出或失败的尝试不能推进摘要边界。
++
+ ### Summarization Prompt
+
+ The prompt is written in the tone of a user directing the assistant — assertive, first-person, active voice:
+diff --git a/package-lock.json b/package-lock.json
+index e923b8cb871d4e50798c820498724b99fc6f9373..1414d8f4acde8db23838c3a03648b98459b5d455 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "@librechat/agents",
+-  "version": "4.0.4-ricky.3",
++  "version": "4.0.4-ricky.4",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "@librechat/agents",
+-      "version": "4.0.4-ricky.3",
++      "version": "4.0.4-ricky.4",
+       "license": "MIT",
+       "dependencies": {
+         "@anthropic-ai/sdk": "^0.115.0",
+diff --git a/package.json b/package.json
+index a69a1cf6fc49bd8b7c6722e109dd6e02f712b958..b227827173893898f74695baa6e9ef42c6bbbefb 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@librechat/agents",
+-  "version": "4.0.4-ricky.3",
++  "version": "4.0.4-ricky.4",
+   "reova": {
+     "enabled": true,
+     "endpoint": "https://telemetry.reo.dev/data"
+diff --git a/src/stream.test.ts b/src/stream.test.ts
+index c7ad9053a5496bf2c167ac5e54d36d1cde3e048d..283409cca13cc50f370dd95aec2ac51410cd2cc3 100644
+--- a/src/stream.test.ts
++++ b/src/stream.test.ts
+@@ -1,9 +1,156 @@
+ import type { ChatOpenAIReasoningSummary } from '@langchain/openai';
+ import type { AIMessageChunk } from '@langchain/core/messages';
+-import { getChunkContent } from './stream';
+-import { Providers } from '@/common';
++import type { MessageContentComplex } from '@/types';
++import { getChunkContent, ChatModelStreamHandler } from './stream';
++import { AgentContext } from '@/agents/AgentContext';
++import { Providers, ContentTypes } from '@/common';
+
+ describe('getChunkContent', () => {
++  describe.each([
++    Providers.OPENAI,
++    Providers.AZURE,
++    Providers.OPENROUTER,
++    Providers.DEEPSEEK,
++    undefined,
++  ])('structured reasoning for %s', (provider) => {
++    it.each(['', 'Visible text'])(
++      'ignores an empty summary beside %j',
++      (content) => {
++        expect(
++          getChunkContent({
++            chunk: {
++              content,
++              additional_kwargs: {
++                reasoning: { type: 'reasoning', summary: [] },
++              },
++            },
++            provider,
++            reasoningKey: 'reasoning',
++          })
++        ).toBe(content);
++      }
++    );
++
++    it('keeps content blocks when reasoning has no text', () => {
++      const content: AIMessageChunk['content'] = [
++        { type: 'text', text: 'First ' },
++        { type: 'text', text: 'second' },
++      ];
++      expect(
++        getChunkContent({
++          chunk: {
++            content,
++            additional_kwargs: {
++              reasoning: { type: 'reasoning', summary: [] },
++            },
++          },
++          provider,
++          reasoningKey: 'reasoning',
++        })
++      ).toBe(content);
++    });
++
++    it('extracts all summary text in order without metadata', () => {
++      expect(
++        getChunkContent({
++          chunk: {
++            content: '',
++            additional_kwargs: {
++              reasoning: {
++                type: 'reasoning',
++                encrypted_content: 'not-visible',
++                summary: [
++                  { type: 'summary_text', text: '' },
++                  { type: 'summary_text', text: 'First ' },
++                  { type: 'summary_text', text: 'second' },
++                ],
++              },
++            },
++          },
++          provider,
++          reasoningKey: 'reasoning',
++        })
++      ).toBe('First second');
++    });
++  });
++
++  it('preserves reasoning content blocks and ignores an empty block array', () => {
++    const reasoning: MessageContentComplex[] = [
++      { type: 'thinking', thinking: 'First' },
++      { type: 'thinking', thinking: 'second' },
++    ];
++    expect(
++      getChunkContent({
++        chunk: { content: '', additional_kwargs: { reasoning } },
++        reasoningKey: 'reasoning',
++      })
++    ).toBe(reasoning);
++    const content: AIMessageChunk['content'] = [{ type: 'text', text: 'Body' }];
++    expect(
++      getChunkContent({
++        chunk: { content, additional_kwargs: { reasoning: [] } },
++        reasoningKey: 'reasoning',
++      })
++    ).toBe(content);
++  });
++
++  it('does not expose an object without supported reasoning text', () => {
++    expect(
++      getChunkContent({
++        chunk: {
++          content: '',
++          additional_kwargs: {
++            reasoning: { type: 'reasoning', id: 'metadata' },
++          },
++        },
++        reasoningKey: 'reasoning',
++      })
++    ).toBe('');
++  });
++
++  it('falls back to OpenRouter reasoning_content after an empty structured reasoning', () => {
++    expect(
++      getChunkContent({
++        chunk: {
++          content: '',
++          additional_kwargs: {
++            reasoning: { type: 'reasoning', summary: [] },
++            reasoning_content: 'Reasoning fallback',
++          },
++        },
++        provider: Providers.OPENROUTER,
++        reasoningKey: 'reasoning',
++      })
++    ).toBe('Reasoning fallback');
++  });
++
++  it.each([Providers.OPENAI, Providers.AZURE])(
++    'keeps later summary segments in the reasoning channel for %s',
++    (provider) => {
++      const chunk: Partial<AIMessageChunk> = {
++        content: 'Visible text',
++        additional_kwargs: {
++          reasoning: {
++            summary: [
++              { type: 'summary_text', text: '' },
++              { type: 'summary_text', text: 'Reasoning text' },
++            ],
++          },
++        },
++      };
++      const context = AgentContext.fromConfig({
++        agentId: 'reasoning-fixture',
++        provider,
++        reasoningKey: 'reasoning',
++      });
++      new ChatModelStreamHandler().handleReasoning(chunk, context);
++      expect(context.currentTokenType).toBe(ContentTypes.THINK);
++      expect(
++        getChunkContent({ chunk, provider, reasoningKey: 'reasoning' })
++      ).toBe('Reasoning text');
++    }
++  );
++
+   it('should handle reasoning content for OpenAI/Azure providers', () => {
+     const chunk: Partial<AIMessageChunk> = {
+       content: 'Regular content',
+diff --git a/src/stream.ts b/src/stream.ts
+index 8267d9e0b31c013891d0faa7f4f591ee8037d755..866d070ebd8fb42a51abfa3484aff647aab97fbe 100644
+--- a/src/stream.ts
++++ b/src/stream.ts
+@@ -1426,6 +1426,30 @@ function startPreparedSubagents(
+   }
+ }
+
++function getReasoningSummaryText(
++  reasoning: ReasoningSummaryLike | undefined
++): string | undefined {
++  const summary = reasoning?.summary;
++  if (!Array.isArray(summary)) return undefined;
++  let text = '';
++  for (const part of summary) {
++    if (typeof part.text === 'string') text += part.text;
++  }
++  return text || undefined;
++}
++
++/** additional_kwargs 是 provider 边界上的未定型数据。 */
++function getReasoningContent(
++  reasoning: unknown
++): string | t.MessageContentComplex[] | undefined {
++  if (typeof reasoning === 'string' || Array.isArray(reasoning)) {
++    return reasoning.length > 0 ? reasoning : undefined;
++  }
++  if (reasoning == null || typeof reasoning !== 'object') return undefined;
++  // Responses 的 reasoning 对象只公开 summary 文本，不公开其他元数据。
++  return getReasoningSummaryText(reasoning as ReasoningSummaryLike);
++}
++
+ export function getChunkContent({
+   chunk,
+   provider,
+@@ -1443,55 +1467,29 @@ export function getChunkContent({
+     return chunk.content;
+   }
+
+-  if (
+-    (provider === Providers.OPENAI || provider === Providers.AZURE) &&
+-    (
+-      chunk?.additional_kwargs?.reasoning as
+-        | Partial<ChatOpenAIReasoningSummary>
+-        | undefined
+-    )?.summary?.[0]?.text != null &&
+-    ((
+-      chunk?.additional_kwargs?.reasoning as
+-        | Partial<ChatOpenAIReasoningSummary>
+-        | undefined
+-    )?.summary?.[0]?.text?.length ?? 0) > 0
+-  ) {
+-    return (
+-      chunk?.additional_kwargs?.reasoning as
+-        | Partial<ChatOpenAIReasoningSummary>
+-        | undefined
+-    )?.summary?.[0]?.text;
+-  }
+-  if (provider === Providers.OPENROUTER) {
+-    // Content presence signals end of reasoning phase - prefer content over reasoning
+-    // This handles transitional chunks that may have both reasoning and content
+-    if (typeof chunk?.content === 'string' && chunk.content !== '') {
+-      return chunk.content;
+-    }
+-    const reasoning = chunk?.additional_kwargs?.reasoning as string | undefined;
+-    if (reasoning != null && reasoning !== '') {
+-      return reasoning;
+-    }
+-    const reasoningContent = chunk?.additional_kwargs?.reasoning_content as
+-      | string
+-      | undefined;
+-    if (reasoningContent != null && reasoningContent !== '') {
+-      return reasoningContent;
+-    }
+-    return chunk?.content;
++  if (provider === Providers.OPENAI || provider === Providers.AZURE) {
++    const summaryText = getReasoningSummaryText(
++      chunk?.additional_kwargs?.reasoning as ReasoningSummaryLike | undefined
++    );
++    if (summaryText != null) return summaryText;
+   }
+-  const keyedReasoning = chunk?.additional_kwargs?.[reasoningKey] as
+-    | string
+-    | undefined;
+-  if (
+-    typeof chunk?.content === 'string' &&
+-    chunk.content !== '' &&
+-    keyedReasoning != null &&
+-    keyedReasoning !== ''
+-  ) {
++
++  // 正文出现时沿用原优先级；空 reasoning 不能遮蔽同一 chunk 的正文。
++  if (typeof chunk?.content === 'string' && chunk.content !== '') {
+     return chunk.content;
+   }
+-  return ((keyedReasoning as string | undefined) ?? '') || chunk?.content;
++
++  if (provider === Providers.OPENROUTER) {
++    return (
++      getReasoningContent(chunk?.additional_kwargs?.reasoning) ??
++      getReasoningContent(chunk?.additional_kwargs?.reasoning_content) ??
++      chunk?.content
++    );
++  }
++  return (
++    getReasoningContent(chunk?.additional_kwargs?.[reasoningKey]) ??
++    chunk?.content
++  );
+ }
+
+ function isDisableStreamingEnabled(
+@@ -2219,8 +2217,7 @@ hasToolCallChunks: ${hasToolCallChunks}
+         agentContext.provider === Providers.AZURE) &&
+       reasoning_content != null &&
+       typeof reasoning_content !== 'string' &&
+-      reasoning_content.summary?.[0]?.text != null &&
+-      reasoning_content.summary[0].text
++      hasReasoningContent(reasoning_content)
+     ) {
+       reasoning_content = 'valid';
+     } else if (
+diff --git a/src/summarization/__tests__/reasoningStream.test.ts b/src/summarization/__tests__/reasoningStream.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..de5b1851a5b058f51a2b4a829057050486ac4435
+--- /dev/null
++++ b/src/summarization/__tests__/reasoningStream.test.ts
+@@ -0,0 +1,287 @@
++import { RunnableLambda } from '@langchain/core/runnables';
++import { ChatGenerationChunk } from '@langchain/core/outputs';
++import { awaitAllCallbacks } from '@langchain/core/callbacks/promises';
++import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
++import type { RunnableConfig } from '@langchain/core/runnables';
++import type * as t from '@/types';
++import {
++  createSummarizationChunkHandler,
++  createSummarizeNode,
++} from '@/summarization/node';
++import { ContentTypes, GraphEvents, Providers, StepTypes } from '@/common';
++import { registerProvider } from '@/llm/providerRegistry';
++import { AgentContext } from '@/agents/AgentContext';
++import { createContentAggregator } from '@/stream';
++import { FakeChatModel } from '@/llm/fake';
++
++const stepId = 'summary-reasoning-step';
++const summaryStep: t.RunStep = {
++  id: stepId,
++  index: 0,
++  stepIndex: 0,
++  type: StepTypes.MESSAGE_CREATION,
++  stepDetails: {
++    type: StepTypes.MESSAGE_CREATION,
++    message_creation: { message_id: stepId },
++  },
++  summary: { type: ContentTypes.SUMMARY, content: [] },
++  usage: null,
++};
++
++async function collectDeltas(
++  chunks: AIMessageChunk[]
++): Promise<t.SummarizeDeltaEvent[]> {
++  const deltas: t.SummarizeDeltaEvent[] = [];
++  await RunnableLambda.from(async (_input: string, config: RunnableConfig) => {
++    const onChunk = createSummarizationChunkHandler({
++      stepId,
++      config,
++      provider: Providers.OPENAI,
++      reasoningKey: 'reasoning',
++    });
++    expect(onChunk).toBeDefined();
++    for (const chunk of chunks) {
++      await onChunk!(chunk);
++    }
++  }).invoke('fixture', {
++    callbacks: [
++      {
++        handleCustomEvent(event: string, data: t.SummarizeDeltaEvent): void {
++          if (event === GraphEvents.ON_SUMMARIZE_DELTA) deltas.push(data);
++        },
++      },
++    ],
++  });
++  await awaitAllCallbacks();
++  return deltas;
++}
++
++describe('摘要 reasoning 流', () => {
++  it.each([
++    {
++      name: '空 reasoning summary 后继续正文',
++      chunks: [
++        new AIMessageChunk({
++          content: '',
++          additional_kwargs: { reasoning: { type: 'reasoning', summary: [] } },
++        }),
++        new AIMessageChunk({ content: 'Body' }),
++      ],
++      expected: [{ type: 'text', text: 'Body' }],
++      expectedDeltaCount: 1,
++    },
++    {
++      name: '普通文本顺序',
++      chunks: [
++        new AIMessageChunk({ content: 'First ' }),
++        new AIMessageChunk({ content: 'second' }),
++      ],
++      expected: [
++        { type: 'text', text: 'First ' },
++        { type: 'text', text: 'second' },
++      ],
++      expectedDeltaCount: 2,
++    },
++    {
++      name: '内容块数组及其顺序',
++      chunks: [
++        new AIMessageChunk({
++          content: [
++            { type: 'thinking', thinking: 'Thinking' },
++            { type: 'text', text: 'First ' },
++            { type: 'text', text: 'second' },
++          ],
++          additional_kwargs: { reasoning: { type: 'reasoning', summary: [] } },
++        }),
++      ],
++      expected: [
++        { type: 'thinking', thinking: 'Thinking' },
++        { type: 'text', text: 'First ' },
++        { type: 'text', text: 'second' },
++      ],
++      expectedDeltaCount: 1,
++    },
++    {
++      name: '结构化 reasoning 只提取 summary 文本',
++      chunks: [
++        new AIMessageChunk({
++          content: '',
++          additional_kwargs: {
++            reasoning: {
++              type: 'reasoning',
++              encrypted_content: 'not-visible',
++              summary: [
++                { type: 'summary_text', text: 'First ' },
++                { type: 'summary_text', text: 'second' },
++              ],
++            },
++          },
++        }),
++      ],
++      expected: [{ type: 'text', text: 'First second' }],
++      expectedDeltaCount: 1,
++    },
++    {
++      name: '空内容不产生 delta',
++      chunks: [
++        new AIMessageChunk({
++          content: [],
++          additional_kwargs: { reasoning: { type: 'reasoning', summary: [] } },
++        }),
++      ],
++      expected: [],
++      expectedDeltaCount: 0,
++    },
++  ])('$name', async ({ chunks, expected, expectedDeltaCount }) => {
++    const deltas = await collectDeltas(chunks);
++    const { aggregateContent, contentParts } = createContentAggregator();
++    aggregateContent({ event: GraphEvents.ON_RUN_STEP, data: summaryStep });
++    for (const data of deltas) {
++      aggregateContent({ event: GraphEvents.ON_SUMMARIZE_DELTA, data });
++      expect(Array.isArray(data.delta.summary.content)).toBe(true);
++      expect(data.delta.summary.content?.length).toBeGreaterThan(0);
++    }
++    expect(contentParts[0]).toMatchObject({
++      type: ContentTypes.SUMMARY,
++      content: expected,
++    });
++    expect(deltas).toHaveLength(expectedDeltaCount);
++  });
++
++  it('complete 替换临时 reasoning，保存调用和最终状态只含摘要正文', async () => {
++    class SummaryModel extends FakeChatModel {
++      constructor() {
++        super({ responses: ['unused'] });
++      }
++
++      async *_streamResponseChunks(): AsyncGenerator<ChatGenerationChunk> {
++        for (const chunk of [
++          new AIMessageChunk({
++            content: '',
++            additional_kwargs: {
++              reasoning: { type: 'reasoning', summary: [] },
++            },
++          }),
++          new AIMessageChunk({
++            content: '',
++            additional_kwargs: {
++              reasoning: {
++                summary: [
++                  { type: 'summary_text', text: 'Temporary reasoning' },
++                ],
++              },
++            },
++          }),
++          new AIMessageChunk({ content: 'Final ' }),
++          new AIMessageChunk({
++            content: [{ type: 'text', text: 'checkpoint' }],
++          }),
++        ]) {
++          yield new ChatGenerationChunk({ text: '', message: chunk });
++        }
++      }
++    }
++    const provider = 'summary-reasoning-fixture' as t.RuntimeProviderName;
++    const unregister = registerProvider({ provider, model: SummaryModel });
++    const agentContext = AgentContext.fromConfig(
++      {
++        agentId: 'summary-fixture',
++        provider,
++        clientOptions: {},
++        reasoningKey: 'reasoning',
++        summarizationEnabled: true,
++        summarizationConfig: { retainRecent: { turns: 0 } },
++      },
++      () => 10
++    );
++    const saved = jest.spyOn(agentContext, 'setSummary');
++    const { aggregateContent, contentParts } = createContentAggregator();
++    const deltas: t.SummarizeDeltaEvent[] = [];
++    const completions: t.SummarizeCompleteEvent[] = [];
++    const eventOrder: string[] = [];
++    const node = createSummarizeNode({
++      agentContext,
++      generateStepId: () => [stepId, 0],
++      graph: {
++        contentData: [],
++        contentIndexMap: new Map(),
++        isMultiAgent: false,
++        async dispatchRunStep(data): Promise<void> {
++          aggregateContent({ event: GraphEvents.ON_RUN_STEP, data });
++        },
++        async dispatchRunStepCompleted(): Promise<void> {},
++      },
++    });
++
++    try {
++      const result = await RunnableLambda.from(
++        async (_input: string, config: RunnableConfig) =>
++          node(
++            {
++              messages: [new HumanMessage('History')],
++              summarizationRequest: {
++                agentId: agentContext.agentId,
++                remainingContextTokens: 1000,
++              },
++            },
++            config
++          )
++      ).invoke('fixture', {
++        callbacks: [
++          {
++            handleCustomEvent(
++              event: string,
++              data: t.SummarizeDeltaEvent | t.SummarizeCompleteEvent
++            ): void {
++              if (event === GraphEvents.ON_SUMMARIZE_DELTA) {
++                eventOrder.push(event);
++                deltas.push(data as t.SummarizeDeltaEvent);
++              }
++              if (event === GraphEvents.ON_SUMMARIZE_COMPLETE) {
++                eventOrder.push(event);
++                completions.push(data as t.SummarizeCompleteEvent);
++              }
++            },
++          },
++        ],
++      });
++      await awaitAllCallbacks();
++      expect(eventOrder).toEqual([
++        GraphEvents.ON_SUMMARIZE_DELTA,
++        GraphEvents.ON_SUMMARIZE_DELTA,
++        GraphEvents.ON_SUMMARIZE_DELTA,
++        GraphEvents.ON_SUMMARIZE_COMPLETE,
++      ]);
++      for (const data of deltas) {
++        aggregateContent({ event: GraphEvents.ON_SUMMARIZE_DELTA, data });
++      }
++      expect(contentParts[0]).toMatchObject({
++        content: [
++          { type: 'text', text: 'Temporary reasoning' },
++          { type: 'text', text: 'Final ' },
++          { type: 'text', text: 'checkpoint' },
++        ],
++      });
++      expect(completions).toHaveLength(1);
++      aggregateContent({
++        event: GraphEvents.ON_SUMMARIZE_COMPLETE,
++        data: completions[0],
++      });
++      expect(contentParts[0]).toMatchObject({
++        type: ContentTypes.SUMMARY,
++        content: [{ type: 'text', text: 'Final checkpoint' }],
++        summaryVersion: 1,
++      });
++      expect(saved).toHaveBeenCalledTimes(1);
++      expect(saved).toHaveBeenCalledWith('Final checkpoint', 10);
++      expect(agentContext.getSummaryText()).toBe('Final checkpoint');
++      expect(agentContext.summaryVersion).toBe(1);
++      expect(result.messages).toHaveLength(1);
++      expect(result.messages?.[0]._getType()).toBe('remove');
++      expect(result.summarizationRequest).toBeUndefined();
++    } finally {
++      saved.mockRestore();
++      unregister();
++    }
++  });
++});
+diff --git a/src/summarization/node.ts b/src/summarization/node.ts
+index 76df55a2c88e019ba1c3591fe6bebc249cbb5e11..21e9c2415c03630fe7cbbf8e7ebff68d8af8e319 100644
+--- a/src/summarization/node.ts
++++ b/src/summarization/node.ts
+@@ -1744,15 +1744,19 @@ export function createSummarizationChunkHandler({
+       config.signal
+     );
+     if (protectionTrip != null) throw protectionTrip;
+-    const chunkAny = chunk as Parameters<typeof getChunkContent>[0]['chunk'];
+-    const raw = getChunkContent({ chunk: chunkAny, provider, reasoningKey });
+-    if (raw == null || (typeof raw === 'string' && !raw)) {
++    const messageChunk = chunk as Parameters<
++      typeof getChunkContent
++    >[0]['chunk'];
++    const raw = getChunkContent({
++      chunk: messageChunk,
++      provider,
++      reasoningKey,
++    });
++    if (raw == null || raw.length === 0) {
+       return;
+     }
+     const contentBlocks: t.MessageContentComplex[] =
+-      typeof raw === 'string'
+-        ? [{ type: ContentTypes.TEXT, text: raw } as t.MessageContentComplex]
+-        : raw;
++      typeof raw === 'string' ? [{ type: ContentTypes.TEXT, text: raw }] : raw;
+
+     void safeDispatchCustomEvent(
+       GraphEvents.ON_SUMMARIZE_DELTA,
