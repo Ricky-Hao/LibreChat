@@ -78,8 +78,12 @@ jest.mock('~/server/services/Skills/sync', () => ({
 
 jest.mock('~/models', () => {
   const mongoose = require('mongoose');
+  const { createMessageBudgetReader } = require('@librechat/api');
   const { createMethods } = require('@librechat/data-schemas');
+  // createMethods 不导出宿主初始化接口；复用真实 reader，保留 Config/app 的组合契约。
+  const messageBudget = createMessageBudgetReader();
   const methods = createMethods(mongoose, {
+    getMCPAppMessageBudget: messageBudget.getBudget,
     removeAllPermissions: async ({ resourceType, resourceId }) => {
       const AclEntry = mongoose.models.AclEntry;
       if (AclEntry) {
@@ -92,6 +96,7 @@ jest.mock('~/models', () => {
   // suite intentionally skips to keep setup minimal.
   return {
     ...methods,
+    initializeMessageBudget: messageBudget.initialize,
     getRoleByName: jest.fn(),
   };
 });

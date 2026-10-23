@@ -5,8 +5,18 @@ import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { AgentCapabilities } from 'librechat-data-provider';
+import { AIMessage } from '@librechat/agents/langchain/messages';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { createModels, createMethods, runAsSystem } from '@librechat/data-schemas';
+import {
+  FakeChatModel,
+  GraphEvents,
+  HandlerRegistry,
+  Providers,
+  StandardGraph,
+  SubagentExecutor,
+  ToolNode,
+} from '@librechat/agents';
 import type { TaskCallbackRecord } from '@librechat/data-schemas';
 import type { Server } from 'node:http';
 import type { AgentTriggerService, AgentTriggerDeliveryPersistence } from './triggers/service';
@@ -16,11 +26,14 @@ import {
   createTaskCallbackTool,
   createTaskCallbackLifecycle,
   TASK_CALLBACK_SOURCE,
+  TASK_CALLBACK_TOOL,
 } from './callbacks';
+import { buildSubagentThreadTaskConfig, createSubagentThreadTaskStore } from './subagentThreads';
 import { createAgentContinuationResolver } from './triggers/continuation';
 import { createAgentTriggerExecutionHost } from './triggers/host';
 import { createAgentTriggerService } from './triggers/service';
 import { __resetShutdownStateForTests } from '../app/shutdown';
+import { createToolExecuteHandler } from './handlers';
 
 let mongo: MongoMemoryServer;
 let service: AgentTriggerService;
@@ -128,28 +141,136 @@ async function message(id: string, parent: string, extra = {}) {
     ...extra,
   });
 }
-async function registration() {
-  const tool = createTaskCallbackTool({
-    agentId: 'agent-1',
+function callbackTool(
+  agentId = 'agent-1',
+  resolvedConversation?: ServerRequest['resolvedConversation'],
+) {
+  return createTaskCallbackTool({
+    agentId,
     methods,
     encrypt,
     decrypt,
     req: {
       user: { id: user },
+      resolvedConversation,
       config: {
         endpoints: {
           agents: { taskCallbacks: settings, capabilities: [AgentCapabilities.task_callbacks] },
         },
       },
-    } as Pick<ServerRequest, 'user' | 'config'>,
+    } as Pick<ServerRequest, 'user' | 'config' | 'resolvedConversation'>,
   });
+}
+async function registration({
+  agentId = 'agent-1',
+  conversationId = 'original',
+  messageId = 'anchor',
+} = {}) {
+  const tool = callbackTool(agentId);
   const result = await tool.invoke(
     { type: 'tool_call', name: 'create_task_callback', id: 'call-1', args: {} },
-    { configurable: { requestBody: { messageId: 'anchor', conversationId: 'original' } } },
+    { configurable: { requestBody: { messageId, conversationId } } },
   );
   const value = JSON.parse(typeof result === 'string' ? result : (result.content as string));
   expect(value.callback_id).toMatch(/^tcb_[A-Za-z0-9_-]{43}$/);
   return { tool, value };
+}
+
+async function childRegistration(
+  agentId: string,
+  { eventDriven = false, background = false } = {},
+) {
+  const tool = callbackTool(agentId);
+  const invoke = jest.spyOn(tool, 'invoke');
+  const registry = new HandlerRegistry();
+  registry.register(
+    GraphEvents.ON_TOOL_EXECUTE,
+    createToolExecuteHandler({ loadTools: async () => ({ loadedTools: [tool] }) }),
+  );
+  const store = background ? createSubagentThreadTaskStore(methods) : undefined;
+  const taskConfig = store
+    ? buildSubagentThreadTaskConfig(store, { userId: user, parentConversationId: 'original' })
+    : undefined;
+  const executor = new SubagentExecutor({
+    parentRunId: 'anchor',
+    parentAgentId: 'agent-1',
+    parentHandlerRegistry: registry,
+    taskConfig,
+    configs: new Map([
+      [
+        agentId,
+        {
+          type: agentId,
+          name: 'Callback fixture child',
+          description: 'Register a callback from an isolated child execution.',
+          maxTurns: 2,
+          agentInputs: {
+            agentId,
+            provider: Providers.OPENAI,
+            clientOptions: {
+              model: 'gpt-4o-mini',
+              apiKey: 'fixture-key',
+              streaming: true,
+              streamUsage: false,
+            },
+            tools: eventDriven ? [] : [tool],
+            ...(eventDriven
+              ? {
+                  toolDefinitions: [
+                    { name: TASK_CALLBACK_TOOL, parameters: { type: 'object', properties: {} } },
+                  ],
+                }
+              : {}),
+          },
+        },
+      ],
+    ]),
+    tokenCounter: (text) => String(text ?? '').length,
+    createChildGraph: (input) => {
+      const graph = new StandardGraph(input);
+      graph.overrideModel = new FakeChatModel({
+        responses: ['Callback fixture.'],
+        toolCalls: [{ name: TASK_CALLBACK_TOOL, args: {}, id: 'call-1', type: 'tool_call' }],
+      });
+      return graph;
+    },
+  });
+  const params = {
+    description: 'Register an external task callback.',
+    subagentType: agentId,
+    parentToolCallId: 'spawn-call',
+    threadId: 'original',
+    parentConfigurable: {
+      thread_id: 'original',
+      user_id: user,
+      requestBody: { messageId: 'anchor', conversationId: 'original' },
+    },
+  };
+  try {
+    if (store && taskConfig) {
+      const handle: { background_task_id: string; subagent_thread_id: string } = JSON.parse(
+        executor.executeInBackground(params),
+      );
+      await eventually(
+        async () =>
+          store.get(taskConfig.scopeId, handle.background_task_id)?.status === 'completed',
+      );
+      const conversation = await methods.getConvo(user, handle.subagent_thread_id);
+      expect(conversation?.subagentThread?.parentConversationId).toBe('original');
+      expect(conversation?.agent_id).toBe(agentId);
+    } else {
+      const result = await executor.execute(params);
+      expect(result.error).toBeUndefined();
+    }
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const result: Awaited<ReturnType<typeof tool.invoke>> = await invoke.mock.results[0].value;
+    const output = typeof result === 'string' ? result : result.content;
+    if (typeof output !== 'string') throw new Error('Missing callback fixture tool output');
+    return { value: JSON.parse(output), config: invoke.mock.calls[0][1] };
+  } finally {
+    await store?.destroyTaskControlTransport();
+    store?.destroyActivityStream();
+  }
 }
 function app() {
   const api = express();
@@ -183,6 +304,136 @@ it('real tool has no routing inputs, encrypts replay, and binds trusted Agent/tu
   expect(stored?.messageId).toBe('anchor');
   expect(JSON.stringify(stored)).not.toContain(value.callback_id);
   await expect(tool.invoke({ target: 'other' })).rejects.toThrow();
+});
+
+it.each([
+  { agentId: 'agent-1', eventDriven: false, background: false },
+  { agentId: 'agent-2', eventDriven: false, background: false },
+  { agentId: 'agent-1', eventDriven: true, background: false },
+  { agentId: 'agent-2', eventDriven: true, background: false },
+  { agentId: 'agent-1', eventDriven: false, background: true },
+  { agentId: 'agent-2', eventDriven: true, background: true },
+])(
+  'rejects SDK child $agentId (event-driven: $eventDriven, detached: $background)',
+  async ({ agentId, eventDriven, background }) => {
+    const register = jest.spyOn(methods, 'registerTaskCallback');
+    const { value, config } = await childRegistration(agentId, { eventDriven, background });
+    expect(config?.metadata?.executionContext).toMatchObject({ depth: 1 });
+    expect(config?.configurable?.requestBody).toMatchObject({
+      conversationId: 'original',
+      messageId: 'anchor',
+    });
+    expect(value.error).toBe('CALLBACK_UNSUPPORTED_CONTEXT');
+    expect(value.callback_id).toBeUndefined();
+    expect(value.guidance).toContain('cannot resume child Agent executions');
+    expect(register).not.toHaveBeenCalled();
+    expect(await mongoose.models.TaskCallback.countDocuments()).toBe(0);
+    await callbacks.recover();
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
+it('registers an ordinary SDK tool execution after SDK clears inherited child metadata', async () => {
+  const tool = callbackTool();
+  const node = new ToolNode({ tools: [tool], executingAgentId: 'agent-1' });
+  await node.invoke(
+    {
+      messages: [
+        new AIMessage({
+          content: '',
+          tool_calls: [{ id: 'call-1', name: TASK_CALLBACK_TOOL, args: {} }],
+        }),
+      ],
+    },
+    {
+      configurable: {
+        requestBody: { conversationId: 'original', messageId: 'anchor' },
+        executionContext: { depth: 1 },
+      },
+      metadata: { executionContext: { depth: 1 } },
+    },
+  );
+  expect(await mongoose.models.TaskCallback.countDocuments()).toBe(1);
+  const stored = await mongoose.models.TaskCallback.findOne().lean<TaskCallbackRecord>();
+  expect(stored).toMatchObject({
+    user,
+    agentId: 'agent-1',
+    conversationId: 'original',
+    messageId: 'anchor',
+  });
+});
+
+it.each(['original', 'child'])(
+  'rejects a resolved persistent child even when runtime conversation is %s',
+  async (conversationId) => {
+    await mongoose.models.Conversation.create({
+      user,
+      conversationId: 'child',
+      agent_id: 'agent-1',
+      endpoint: 'agents',
+      subagentThread: {
+        rootConversationId: 'original',
+        parentConversationId: 'original',
+        parentMessageId: 'anchor',
+        parentToolCallId: 'spawn-call',
+        parentAgentId: 'agent-1',
+        subagentType: 'agent-1',
+        subagentKind: 'agent',
+        depth: 1,
+      },
+    });
+    const tool = callbackTool('agent-1', await methods.getConvo(user, 'child'));
+    const result = await tool.invoke(
+      { type: 'tool_call', name: TASK_CALLBACK_TOOL, id: 'call-1', args: {} },
+      { configurable: { requestBody: { conversationId, messageId: 'anchor' } } },
+    );
+    const output = typeof result === 'string' ? result : result.content;
+    if (typeof output !== 'string') throw new Error('Missing callback fixture tool output');
+    expect(JSON.parse(output).error).toBe('CALLBACK_UNSUPPORTED_CONTEXT');
+    expect(await mongoose.models.TaskCallback.countDocuments()).toBe(0);
+    await callbacks.recover();
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
+it('keeps reused tool-call IDs isolated across ordinary turns, branches, and Agents', async () => {
+  await message('alternate-anchor', 'alternate-user');
+  await mongoose.models.Conversation.create({
+    user,
+    conversationId: 'other',
+    agent_id: 'agent-2',
+    endpoint: 'agents',
+  });
+  await message('other-anchor', 'other-user', { conversationId: 'other' });
+  const contexts = [
+    { agentId: 'agent-1', conversationId: 'original', messageId: 'anchor' },
+    { agentId: 'agent-1', conversationId: 'original', messageId: 'alternate-anchor' },
+    { agentId: 'agent-2', conversationId: 'other', messageId: 'other-anchor' },
+  ];
+  const registrations = await Promise.all(contexts.map((context) => registration(context)));
+  expect(new Set(registrations.map(({ value }) => value.callback_id)).size).toBe(3);
+  const replays = await Promise.all(contexts.map((context) => registration(context)));
+  expect(replays.map(({ value }) => value.callback_id)).toEqual(
+    registrations.map(({ value }) => value.callback_id),
+  );
+  expect(await mongoose.models.TaskCallback.countDocuments()).toBe(3);
+  const responses = await Promise.all(
+    registrations.map(({ value }) =>
+      request(app()).post('/api/agents/task-callbacks').send(body(value.callback_id)),
+    ),
+  );
+  expect(responses.map((response) => response.status)).toEqual([202, 202, 202]);
+  await callbacks.recover();
+  await eventually(async () => fetcher.mock.calls.length === 3);
+  const targets = fetcher.mock.calls.map((call) => {
+    const sent = JSON.parse(call[1].body);
+    return {
+      agentId: sent.agent_id,
+      conversationId: sent.conversationId,
+      messageId: sent.parentMessageId,
+    };
+  });
+  expect(targets).toEqual(expect.arrayContaining(contexts));
 });
 
 it('concurrent duplicates and lost receipt return one durable 202; conflict cannot replace result', async () => {

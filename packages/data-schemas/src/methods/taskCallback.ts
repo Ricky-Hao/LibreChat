@@ -2,6 +2,7 @@ import { Schema } from 'mongoose';
 import type { TaskCallbackBody, TaskCallbackReceipt } from 'librechat-data-provider';
 import type { Model } from 'mongoose';
 import { applyTenantIsolation } from '~/models/plugins/tenantIsolation';
+import { createIndexesWithRetry } from '~/utils/retry';
 import { runAsSystem } from '~/config/tenantContext';
 
 export interface TaskCallbackRecord {
@@ -84,7 +85,7 @@ export function createTaskCallbackMethods(mongoose: typeof import('mongoose')) {
   const model = createTaskCallbackModel(mongoose);
   return {
     ensureTaskCallbackIndexes: async (): Promise<void> => {
-      await model.createIndexes();
+      await createIndexesWithRetry(model);
     },
     registerTaskCallback: async (input: TaskCallbackRecord): Promise<TaskCallbackRecord> => {
       try {

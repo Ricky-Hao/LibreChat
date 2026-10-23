@@ -6,6 +6,18 @@
 
 先确定用户结果和必要检查。“看看”“审阅”“建议”默认只读，“出一版”默认草案。已授权的普通必要步骤不重复询问；新增对象、扩大影响或需独立批准的动作先授权。不顺带修无关问题或增加优化目标。简单任务直接做，不额外建计划、台账或清单。结果完成且必要检查通过后交付并停止。
 
+### 开发与交付流程
+
+整个开发流程按 **设计 → 开发 → 测试 → 发布 → 部署** 执行，不跳过或颠倒阶段。
+
+1. **设计**：明确目标、范围、接口、约束和验收标准。
+2. **开发**：按设计实现，并同步必要文档。
+3. **测试**：完成适用的测试、类型检查和项目要求的检查。失败时返回开发阶段修正；未通过时不进入发布。
+4. **发布**：测试通过后，先将改动合并到项目主分支，再从主分支合并后的提交发布。发布前确认准确的提交 SHA；合并改变了已测代码时，补做受影响检查。功能分支测试通过或构建成功，不等于已满足发布条件。
+5. **部署**：发布完成后，部署对应的已发布产物，并完成目标环境所需验收。不从未合并的功能分支或未发布的临时产物直接部署。
+
+合并是测试与发布之间的必要门槛。合并、发布和部署仍按当前任务的授权与职责执行；流程说明不增加这些操作的授权。区分测试通过、合并完成、发布完成和部署验收通过，不用前一阶段的结果代替后一阶段的结果。
+
 ## 2. 写作要求
 
 借鉴 ASD-STE100，中文以接近其原则的 80%～90% 为目标，不声称正式合规或算分，不套英语词典或词数。回复、指令、注释、文档、步骤和交接用常用词、短句、主动句。一句一主意，一条指令一要求，同概念同名称。条件在前，动作在后；用具体动作，删重复、空泛修饰和无关背景，保留关键条件、例外和安全限制。简单内容不强制标题、表格或流程。说明以简体中文为主；通用英文术语、生硬译名和项目概念可保留英文。代码、命令、路径、参数、专名和引用须准确，项目明确语言规范优先。
@@ -44,7 +56,9 @@
 
 ## 项目补充：LibreChat
 
-以下 TS 模块边界、配置、错误脱敏、Jotai 所有权、主题、i18n 和真实 SDK 测试契约继续适用。默认开发/PR 约定不覆盖用户明确指定的 fork 目标分支。仅维护指引文档时审内容、引用、适用格式及 `git diff --check`，不启动应用、不跑全仓业务检查、不新增 review 轮次。推送 `rickyhao/dev` 会触发现有 `rickyhao-dev-image.yml` → GHCR；已授权 push 包含这一既有影响，不等于额外 tag、Release、dispatch 或部署授权。
+以下 TS 模块边界、配置、错误脱敏、Jotai 所有权、主题、i18n 和真实 SDK 测试契约继续适用。默认开发/PR 约定不覆盖用户明确指定的 fork 目标分支。仅维护指引文档时审内容、引用、适用格式及 `git diff --check`，不启动应用、不跑全仓业务检查、不新增 review 轮次。
+
+本 fork 的项目主分支为 `rickyhao/dev`，不是下文 upstream 约定中的 `main`。改动须先通过测试并合并到 `rickyhao/dev`，再沿现有 `rickyhao-dev-image.yml` → GHCR 流程发布，之后才能部署对应产物。推送该分支会触发现有镜像发布；已授权 push 包含这一既有影响，不等于额外 tag、Release、dispatch 或部署授权。
 
 `AGENTS.md` is the repository's contributor guidance. Backend code lives in `packages/api`
 (TypeScript) and `packages/data-schemas` (database methods); `api` is legacy Express wiring.
@@ -52,6 +66,8 @@ Shared API types and services live in `packages/data-provider`, and the React ap
 `client` with shared primitives in `packages/client`.
 
 ## Branching and pull requests
+
+以下分支约定适用于 upstream；本 fork 优先采用上文明确的项目主分支与发布流程，不将 upstream 的 `dev`、`main` 或 `canary` 自动用作本 fork 的合并和发布目标。
 
 Normally branch off `dev` and target `dev`; `gh pr create` defaults to `main`, so pass `--base dev`
 explicitly. `main` is the released branch, kept as a fast-forward of `dev` and synced as-is — never

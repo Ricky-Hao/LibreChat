@@ -33,6 +33,20 @@ submit the task, confirm acceptance, then give a brief final response if no
 independent work remains. Do not poll. Registration alone does not end the turn;
 a terminal callback starts a later generation in the original conversation.
 
+### 子 Agent 上下文限制
+
+此工具只支持普通 Agent 会话。SDK 子执行会继承父执行的 `requestBody`；
+其中的 conversation 和 assistant anchor 不是子线程的续聊地址。
+注册边界检查 SDK 或 host 执行边界写入的 `metadata.executionContext`，
+并复用请求已解析的 `resolvedConversation.subagentThread`。不新增数据库读取。
+
+子执行或持久子线程调用工具时，工具返回 `CALLBACK_UNSUPPORTED_CONTEXT`
+和固定的限制说明。它不返回 `callback_id`，也不写注册记录。
+这同样适用于同 Agent 自派生、独立 Agent、前台或后台子执行及子 Agent 团队。
+子 Agent 应向父 Agent 报告限制；此错误不会把任务改绑到父会话。
+普通 callback 不能替代子线程的执行租约或 Event Actor binding 授权。
+现有父 Agent 发起的子线程 continuation 契约不变。
+
 The model intentionally receives the random 256-bit `tcb_…` bearer and forwards
 it to the executor through Coder as private callback input. Do not place it in
 the executor's OpenCode prompt, argv, environment, URLs, status, logs, or normal
@@ -88,6 +102,13 @@ and receipt indexes. Replaying the same trusted tool-call identity returns the
 same bearer; it does not mint another task. Encryption uses the deployment's
 existing credentials encryption adapter/key. Do not rotate it without the usual
 retained-data key plan.
+
+启用 callback 后，索引初始化通过
+[`createIndexesWithRetry`](../packages/data-schemas/src/utils/retry.ts)
+等待 Mongoose 自动构建结束，再显式创建 schema 声明的全部索引。
+该 helper 会等待 DocumentDB 同集合的并发索引构建，并对暂时性错误退避重试，
+避免副本并发初始化使唯一性或 TTL 索引缺失。
+非暂时性错误或重试耗尽仍向调用方抛出，不将索引缺失当作初始化成功。
 
 Every replica periodically scans pending publications, and local acceptance wakes
 the scanner. Publication uses a stable delivery identity and the existing Mongo
@@ -155,17 +176,25 @@ authorization: explicit time checks apply even before the TTL monitor deletes a 
 Run the owning fixtures without paid model calls:
 
 ```sh
-# From packages/api; companion module checkout is required for the cross-repo case.
-CODER_MODULES_CHECKOUT=/workspaces/coder-modules npx jest src/agents/callbacks.integration.spec.ts --runInBand
+# From packages/api; no companion checkout or paid model calls are needed.
+npx jest src/agents/callbacks.integration.spec.ts --runInBand
 # From packages/data-provider
 npx jest src/taskCallbacks.spec.ts --runInBand
+# From packages/data-schemas; index-build compatibility and retry behavior.
+npx jest src/methods/documentdb.spec.ts src/utils/retry.spec.ts --runInBand
 ```
 
 The integration fixture exercises the actual tool, HTTP handler, Mongo callback
 and trigger records, continuation resolver and host admission transport. It
 covers concurrent duplicates/conflict, lost receipts, fast/busy/approval parents,
 branch isolation, deletion/retention/expiry, bounded bodies and crash recovery.
-The companion module's actual `TaskRunner` posts into that handler. Its model and
+它还使用真实 SDK 的 `SubagentExecutor`、`ToolNode` 和本地模型 fixture，
+验证前台、后台及 event-driven 子执行在注册前被拒绝；
+后台用例通过真实 `SubagentThreadTaskStore` 保存子线程并结算任务。
+相同 tool-call ID 在普通会话的不同 turn、分支及 Agent 之间保持隔离。
+
+Set `CODER_MODULES_CHECKOUT` only for the optional cross-repository fixture.
+The companion module's actual `TaskRunner` then posts into that handler. Its model and
 the host's inference response are local fixtures; a mocked `403` verifies the
 queue's ACL-denial handling, while existing chat admission suites cover the live
 authorization middleware. This is source/local validation, not deployment evidence.
