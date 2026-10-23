@@ -20,6 +20,11 @@ The MCP message-read release candidate/source implementation is documented in
 [MCP 消息有界读取：补丁维护与上游移植指南](mcp-message-reads-patch.md).
 Publication status is verified separately. This guide does not change the 2026-10-07 audit results.
 
+The browser display-history patch merged on 2026-10-19 in [PR #6](https://github.com/Ricky-Hao/LibreChat/pull/6)
+is covered by the [history-window maintenance guide](history-window-patch.md). It maps rationale,
+implementation commits, current responsibilities, regression entry points and upstream replacement
+criteria. This later maintenance is separate from the 2026-10-07 audit and is not deployment evidence.
+
 ## Evidence key
 
 Private local records (not required to build or run the project) live under

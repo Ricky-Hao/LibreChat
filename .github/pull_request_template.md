@@ -2,7 +2,7 @@
 
 > Before submitting, please review the [Contributing Guide](https://github.com/LibreChat-AI/LibreChat/blob/main/.github/CONTRIBUTING.md).
 >
-> Documentation changes belong in the [LibreChat documentation repository](https://github.com/LibreChat-AI/librechat.ai).
+> Public upstream documentation belongs in the [LibreChat documentation repository](https://github.com/LibreChat-AI/librechat.ai). For this fork, use the [in-repository documentation index](../docs/README.md) and [AGENTS.md §7](../AGENTS.md#7-文档要求).
 
 ## Summary
 
@@ -138,6 +138,24 @@ Examples:
 
 Write "Not applicable" when appropriate.
 -->
+
+**Verification limits:**
+
+<!--
+List relevant checks not run and why. Separate this revision's local checks from
+dated earlier results, CI, published artifacts and deployment acceptance.
+-->
+
+## Documentation
+
+<!--
+Link the relevant owning documents and sections. Update them as needed under
+AGENTS.md §7, especially for public interfaces, configuration, user-visible behavior
+and durable maintenance guidance. Keep local explanations near the code.
+If no documentation update is needed, briefly say why; do not make an empty edit.
+-->
+
+**Related documents (updated, or why unchanged):**
 
 ## Screenshots / recordings
 
