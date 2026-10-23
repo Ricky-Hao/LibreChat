@@ -10,6 +10,7 @@
  * from the conversation and the agents' advertised tools.
  */
 const { FakeChatModel } = require('@librechat/agents');
+const { setTimeout: delay } = require('node:timers/promises');
 const { ChatGenerationChunk } = require('@langchain/core/outputs');
 const { AIMessageChunk } = require('@langchain/core/messages');
 const { tryBindReplay } = require('./model-replay');
@@ -45,6 +46,7 @@ const RETAINED_PREFIX_MARKER = 'E2E_RETAINED_PREFIX:';
 const COUNTED_REPLY_MARKER = 'E2E_COUNTED_REPLY:';
 const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
 const SLOW_REPLY_MARKER = 'E2E_SLOW_REPLY:';
+const RUNNING_REPLY_MARKER = 'E2E_RUNNING_REPLY:';
 const EMPTY_SLOW_REPLY_MARKER = 'E2E_EMPTY_SLOW_REPLY:';
 const PRE_TOKEN_REPLY_MARKER = 'E2E_PRE_TOKEN_REPLY:';
 /** A run that completes having produced no content at all: the shape a
@@ -752,6 +754,15 @@ function replyResponses(text) {
     };
   }
 
+  const runningName = getMarkerValue(text, RUNNING_REPLY_MARKER);
+  if (runningName) {
+    return {
+      responses: [''],
+      sleep: SLOW_CHUNK_DELAY_MS,
+      resolveInvocation: async () => ({ runningReply: runningName }),
+    };
+  }
+
   const slowName = getMarkerValue(text, SLOW_REPLY_MARKER);
   if (slowName) {
     return slowReplyResponses(slowName);
@@ -830,6 +841,20 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
     this.resolveInvocation = resolveInvocation;
     this.resolveOnStream = resolveOnStream;
     this.streamSleep = sleep ?? CHUNK_DELAY_MS;
+  }
+
+  /** Navigation tests need a live run until Stop, not a finite timing window. */
+  async *streamRunningResponseChunks(label, signal, runManager) {
+    yield* this.streamScriptedResponseChunks({
+      response: `E2E running reply ${label}`,
+      runManager,
+    });
+    for (let index = 0; ; index++) {
+      await delay(this.streamSleep, undefined, { signal });
+      const text = index % 2 === 0 ? ' ' : `chunk-${String((index - 1) / 2).padStart(3, '0')}`;
+      yield this._createResponseChunk(text);
+      void runManager?.handleLLMNewToken(text);
+    }
   }
 
   async *streamScriptedResponseChunks({
@@ -928,7 +953,13 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
       ? null
       : await this.resolveOnStream?.(messages, options, runManager);
     let chunkStream;
-    if (scriptedResponse) {
+    if (scriptedResponse?.runningReply) {
+      chunkStream = this.streamRunningResponseChunks(
+        scriptedResponse.runningReply,
+        options.signal,
+        runManager,
+      );
+    } else if (scriptedResponse) {
       chunkStream = this.streamScriptedResponseChunks({
         response: scriptedResponse.response ?? '',
         toolCalls: scriptedResponse.toolCalls,

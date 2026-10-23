@@ -1,6 +1,23 @@
 # Repaired agent SDK
 
-`librechat-agents-4.0.4-ricky.3.tgz` is built from the sibling
+`librechat-agents-4.0.4-ricky.4.tgz` is built from clean commit
+`4f396f5b420d3d23fee673b6ee20420dfc902dae` (tree
+`666a2ea72e11edb8a198cd7cb793ba7fc0f1b669`) in the sibling
+`https://github.com/Ricky-Hao/agents` fork, branch `fix/summary-reasoning-content`.
+`agents.json` records its artifact and patch SHA-256. Applying
+`agents-4.0.4-ricky.4.patch` to base
+`24ca27d4c9acac3b332822569a12bd13e24a941a` reproduces that committed tree,
+including the regression tests. Packaged source files match the commit.
+`source.dirty: false` and `source.buildState: clean-commit` describe this build.
+This is a local review artifact, not a registry release or a deployed fix.
+
+Version ricky.4 normalizes structured reasoning at the SDK chunk boundary.
+Summary deltas contain ordered content-block arrays, never raw reasoning objects.
+Empty reasoning does not hide body text or create an empty delta. Structured
+reasoning exposes only its summary text; the completion event replaces temporary
+reasoning with the final summary body. The persisted summary excludes that reasoning.
+
+The artifact retains the prior repairs from the sibling
 `Ricky-Hao/agents` fork, baseline `97b2db3a` (upstream 4.0.4; release tag
 `v4.0.4` at `0a3ae2e`). The baseline includes the invoke empty-stream fix.
 The local repair adds skill provenance carriers, fail-safe compaction,
@@ -12,19 +29,19 @@ error before invocation. Unresolved references preserve business `intent`;
 the execution validator still enforces the schema. Local references are not fetched
 or resolved by the cleanup helper.
 
-The artifact was **built from uncommitted source**, based on
+The retained ricky.3 artifact was **built from uncommitted source**, based on
 `6e92e46793e2b2d5fb424d78e42dc71a83c3a5c7` in
 `https://github.com/Ricky-Hao/agents`, branch `fix/ptc-intent-init-diagnostics`,
 plus `agents-4.0.4-ricky.3.patch` (including new regression source).
-`agents.json` records the patch and artifact SHA-256. That exact source tree is
-now committed as `b45b8a8ebcb8e47219201bf7660c8527d0f9be67` (tree
-`cc5d36ee6e468e2738e78081e92e3561ad0aa7c6`), recorded in
-`source.committedSource`. Applying the recorded patch to the base reproduces
-the committed tree, and all packaged source files match that commit.
-`source.dirty` and `source.buildState` describe the historical uncommitted build,
-not the current clean SDK worktree. The artifact has **not been rebuilt**; its
-reviewed bytes and checksum are unchanged. The ricky.1 and ricky.2 artifacts and
-prior patch are retained. The ricky.2 source is committed at the ricky.3 base above.
+That exact source tree is committed as
+`b45b8a8ebcb8e47219201bf7660c8527d0f9be67` (tree
+`cc5d36ee6e468e2738e78081e92e3561ad0aa7c6`). Applying the ricky.3 patch to its
+base reproduces that tree. Its historical build provenance remains uncommitted;
+the later source commit does not change how its artifact was built. Its reviewed
+bytes are unchanged (SHA-256
+`80991f03d885d6cdd76b176afd77c94747ce28bb1df3efcc2eb37ece2ae71913`).
+The ricky.1 and ricky.2 artifacts and prior patches are also retained.
+The ricky.2 source is committed at the ricky.3 base above.
 
 Version ricky.3 maps known ToolMessage and MCP protocol errors to PTC `is_error`
 before Python/Bash continuation submission. It preserves failure payloads, mixed
@@ -50,27 +67,26 @@ npm run build
 npm pack --ignore-scripts --pack-destination /workspaces/LibreChat/vendor
 cd /workspaces/LibreChat
 npm install --ignore-scripts --no-audit --no-fund
-sha256sum vendor/librechat-agents-4.0.4-ricky.3.tgz
+sha256sum vendor/librechat-agents-4.0.4-ricky.4.tgz
 node vendor/verify-agents.mjs
 ```
 
-If replacing an artifact with the same version during review, refresh the SDK
-lock entry's integrity from the new npm pack result and reinstall that package;
-npm may otherwise reuse the prior tarball integrity. Prefer a new fork version
-for subsequent reviewed releases.
+Use a new fork version for each subsequent reviewed artifact. Do not overwrite a
+used tarball or patch. Update both API manifests and the lock resolution/integrity
+for the new artifact before reinstalling it.
 
 The artifact includes ESM, CJS and declarations, plus public source, license and
 README. The package allowlist excludes tests, fixtures, environment files and
 node_modules. `verify-agents.mjs [isolated-install-root]` checks tarball integrity,
 absence of nested stock SDK lock entries, and all require/import subpaths from
-both API consumers, including intent/result-status behavior in CJS/ESM and
+both API consumers, including summary-reasoning/intent/result-status behavior in CJS/ESM and
 declaration exports.
 It makes no provider or database calls. `agents.json` records
 the reviewed artifact identity and checksum for both this verifier and the E2E
 locked-origin policy; update it when intentionally replacing the artifact.
 
-Regeneration must also refresh the source patch (tracked and untracked changes),
-its digest, the artifact digest and lock integrity. To reproduce this snapshot,
+Regeneration must also refresh the source patch, its digest, the artifact digest
+and lock integrity. Build from the committed source after all SDK edits. To reproduce this snapshot,
 apply the patch to the recorded base in a clean checkout before building with
 Node 24, or check out the matching `source.committedSource.commit`. Retain the
 historical build provenance when recording a later matching source commit;
@@ -78,4 +94,4 @@ do not relabel an artifact built from uncommitted source as a clean-commit build
 Space-only empty context lines in the stored patch are normalized to blank
 lines (accepted by `git apply`) so the provenance file passes whitespace checks.
 
-SHA-256: `80991f03d885d6cdd76b176afd77c94747ce28bb1df3efcc2eb37ece2ae71913`.
+SHA-256: `d848eeda3754f3b8277c9c78838071a1502f445ff47ab4377589590f712660eb`.
