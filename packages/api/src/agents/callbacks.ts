@@ -65,7 +65,7 @@ function callbackUrl(value: string | undefined): string {
 }
 
 export interface TaskCallbackToolDeps {
-  req?: Pick<ServerRequest, 'user' | 'config'>;
+  req?: Pick<ServerRequest, 'user' | 'config' | 'resolvedConversation'>;
   agentId?: string;
   methods?: Pick<TaskCallbackMethods, 'registerTaskCallback'>;
   encrypt?: (value: string) => Promise<string>;
@@ -113,6 +113,18 @@ export function createTaskCallbackTool(deps: TaskCallbackToolDeps = {}): Dynamic
           !decrypt
         ) {
           return JSON.stringify({ error: 'CALLBACK_UNAVAILABLE' });
+        }
+        // SDK 子执行继承父 requestBody，不能据此注册父会话的续聊。
+        // metadata.executionContext 由 SDK ToolNode 或 host 执行边界写入。
+        if (
+          config?.metadata?.executionContext != null ||
+          req.resolvedConversation?.subagentThread != null
+        ) {
+          return JSON.stringify({
+            error: 'CALLBACK_UNSUPPORTED_CONTEXT',
+            guidance:
+              'External task callbacks cannot resume child Agent executions. No callback was registered. Report this limitation to the parent Agent.',
+          });
         }
         const callback_url = callbackUrl(settings.publicUrl);
         const callback_id = `tcb_${randomBytes(32).toString('base64url')}`;

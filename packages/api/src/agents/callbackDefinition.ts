@@ -8,6 +8,6 @@ export const TaskCallbackToolDefinition: {
   schema: { type: 'object'; properties: Record<string, never>; additionalProperties: false };
 } = {
   name: TASK_CALLBACK_TOOL,
-  description: `Register one terminal external-task callback bound to this conversation and Agent. ${TASK_CALLBACK_GUIDANCE}`,
+  description: `Register one terminal external-task callback bound to this ordinary conversation and Agent. Not supported in child Agent executions or subagent threads. ${TASK_CALLBACK_GUIDANCE}`,
   schema: { type: 'object', properties: {}, additionalProperties: false },
 };
