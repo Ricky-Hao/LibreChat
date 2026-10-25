@@ -211,6 +211,128 @@ async function verifyIntent(sdk, DynamicStructuredTool, ToolMessage) {
   );
 }
 
+/** Exercises installed public factories and prompt construction without executing a model or tool. */
+async function verifyArtifactGuidance(sdk) {
+  const includesAll = (text, phrases) => {
+    for (const phrase of phrases) {
+      assert.ok(text.includes(phrase), `Missing artifact guidance: ${phrase}`);
+    }
+  };
+  const internal = [
+    'Prefer memory for single-call reads',
+    'unique /tmp scratch (mktemp)',
+    'consume it and clean it up in that call',
+    'prompts, receipts, bridge scripts or report copies',
+    'A callback completion notice is not a request for attachments',
+    'authorized original workspace',
+    'rather than defaulting to base64 round-trips',
+    'Requested files and necessary deliverables are allowed',
+    'Never hide files or change extensions to evade collection',
+  ];
+  const managed = [
+    'automatically collected/displayed, not private scratch',
+    'requested files, necessary deliverables, or unavoidable cross-call storage',
+    '`/tmp` and other sandbox directories are not durable',
+  ];
+  const attached = [
+    '${LIBRECHAT_CODE_DATA_DIR:-/mnt/data}',
+    'automatically collected/displayed',
+    'execution-scoped, not cross-call storage',
+    'authorized selected project/workspace',
+  ];
+  const python = sdk.createProgrammaticToolCallingTool();
+  const bash = sdk.createBashProgrammaticToolCallingTool();
+  const workspace = sdk.createBashProgrammaticToolCallingTool({
+    workspaceId: 'artifact-guidance-fixture',
+  });
+  for (const runner of [python, bash, workspace]) {
+    for (const text of [runner.description, runner.schema.properties.code.description]) {
+      includesAll(text, internal);
+      assert.ok(!text.includes('Anything a later call needs'));
+      assert.ok(!/\/mnt\/data\/(sf|ny)\.json/.test(text));
+    }
+  }
+  for (const runner of [python, bash]) {
+    for (const text of [runner.description, runner.schema.properties.code.description]) {
+      includesAll(text, managed);
+    }
+  }
+  for (const runner of [bash, workspace]) {
+    for (const text of [runner.description, runner.schema.properties.code.description]) {
+      includesAll(text, [
+        "raw=$(tool '{}')",
+        'direct tool > file may be empty',
+        'mktemp -d /tmp/ptc.XXXXXXXXXX',
+        'trap \'rm -rf -- "$tmp_dir"\' EXIT',
+        '> "$tmp_dir/sf.json"',
+        '> "$tmp_dir/ny.json"',
+        'Only when an HTML preview is requested',
+      ]);
+    }
+  }
+  for (const text of [bash.description, bash.schema.properties.code.description]) {
+    assert.ok(text.includes('> /mnt/data/report.html'));
+  }
+  for (const text of [workspace.description, workspace.schema.properties.code.description]) {
+    includesAll(text, attached);
+    assert.ok(text.includes('project file changes persist between calls'));
+    assert.ok(text.includes('> "${LIBRECHAT_CODE_DATA_DIR:-/mnt/data}"/report.html'));
+    assert.ok(!text.includes('Managed sandbox:'));
+    assert.ok(!text.includes('unavoidable cross-call storage'));
+    assert.ok(!text.includes('/mnt/data/report.html'));
+  }
+  for (const statefulSessions of [false, true]) {
+    const options = { statefulSessions };
+    const parameters = [
+      sdk.buildCodeExecutionToolSchema(options).properties.code.description,
+      sdk.buildBashExecutionToolSchema(options).properties.command.description,
+    ];
+    for (const text of [
+      ...parameters,
+      sdk.buildCodeExecutionToolDescription(options),
+      sdk.buildBashExecutionToolDescription(options),
+    ]) {
+      includesAll(text, managed);
+      assert.ok(!text.includes('Anything a later call needs'));
+      assert.ok(!text.includes('write anything that must survive there'));
+    }
+    for (const text of parameters) {
+      includesAll(text, internal);
+    }
+  }
+  for (const text of [
+    sdk.buildBashExecutionToolDescription({ attachedWorkspace: true }),
+    sdk.buildBashExecutionToolSchema({ attachedWorkspace: true }).properties.command.description,
+  ]) {
+    includesAll(text, attached);
+    assert.ok(!text.includes('Managed sandbox:'));
+    assert.ok(!text.includes('Prior /mnt/data files'));
+    assert.ok(!text.includes('unavoidable cross-call storage'));
+  }
+  const graph = sdk.createGraph({
+    kind: 'standard',
+    input: {
+      agents: [
+        {
+          agentId: 'artifact-guidance-fixture',
+          provider: sdk.Providers.OPENAI,
+          instructions: 'Local prompt verification',
+          toolDefinitions: [python, bash].map(({ name }) => ({ name })),
+        },
+      ],
+    },
+  });
+  const context = graph.agentContexts.get('artifact-guidance-fixture');
+  const messages = await context.systemRunnable.invoke([]);
+  const content = String(messages[0].content);
+  includesAll(content, internal);
+  assert.equal(
+    content.match(/A callback completion notice is not a request for attachments/g)?.length,
+    1,
+  );
+  assert.ok(!content.includes('/mnt/data'));
+}
+
 for (const consumer of consumers) {
   const require = createRequire(resolve(root, consumer, 'package.json'));
   const packageRoot = resolve(dirname(require.resolve('@librechat/agents')), '../..');
@@ -249,6 +371,7 @@ for (const consumer of consumers) {
   const { ToolMessage } = require('@librechat/agents/langchain/messages');
   verifySummaryReasoning(sdk);
   await verifyIntent(sdk, DynamicStructuredTool, ToolMessage);
+  await verifyArtifactGuidance(sdk);
   for (const subpath of Object.keys(manifest.exports)) {
     const specifier = `@librechat/agents${subpath === '.' ? '' : subpath.slice(1)}`;
     assert.ok(require(specifier));
@@ -270,6 +393,7 @@ for (const consumer of consumers) {
     const { ToolMessage } = await import('@librechat/agents/langchain/messages');
     (${verifySummaryReasoning.toString()})(sdk);
     await (${verifyIntent.toString()})(sdk, DynamicStructuredTool, ToolMessage);
+    await (${verifyArtifactGuidance.toString()})(sdk);
     assert.match(sdk.buildSkillCarrierText('fixture', { skillName: 'fixture' }), /Skill source/);
   `;
   const imported = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
@@ -278,7 +402,7 @@ for (const consumer of consumers) {
   });
   assert.equal(imported.status, 0, imported.stderr);
   console.log(
-    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths, CJS/ESM summary reasoning/intent/result status and declaration exports verified`,
+    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths, CJS/ESM summary reasoning/intent/result status/artifact guidance, public PTC system prompt and declaration exports verified`,
   );
 }
 console.log('Tarball integrity and single SDK lock resolution verified');

@@ -1,0 +1,1421 @@
+diff --git a/docs/summarization-behavior.md b/docs/summarization-behavior.md
+index 4b84589b378e63d5b6e588fc9fd0e952c731f17c..478ccc6bde2d1ef13381a04c2824c402855ced6e 100644
+--- a/docs/summarization-behavior.md
++++ b/docs/summarization-behavior.md
+@@ -98,6 +98,12 @@ Raw conversation messages are sent to the LLM via `attemptInvoke` with the summa
+
+ If the primary call fails, configured fallback providers are attempted (via `tryFallbackProviders`). If all providers fail, the diagnostic metadata stub is never committed as a summary, for any trigger. Existing summary state and history remain intact; the failure guard bounds subsequent attempts. Empty output and interrupted attempts likewise cannot advance the compaction boundary. Summary carriers identify generated context without claiming the current model authored it; prompts preserve uncertainty about tool results and truncation.
+
++### 摘要流内容契约
++
++`on_summarize_delta` 的 `summary.content` 始终是内容块数组。字符串转成 text 块，合法内容块保持原顺序。结构化 reasoning 只提取 `summary` 中的文本，不输出对象或其他元数据。空 reasoning 不发送空 delta，也不能遮蔽同一 chunk 或后续 chunk 的正文。
++
++流中的 reasoning 只用于临时显示。完成事件用最终摘要替换临时内容；保存的摘要只取正文。只有 reasoning、空输出或失败的尝试不能推进摘要边界。
++
+ ### Summarization Prompt
+
+ The prompt is written in the tone of a user directing the assistant — assertive, first-person, active voice:
+diff --git a/package-lock.json b/package-lock.json
+index e923b8cb871d4e50798c820498724b99fc6f9373..b5c0062022c00b014d21263e1b0d9e3a47d06c3e 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "@librechat/agents",
+-  "version": "4.0.4-ricky.3",
++  "version": "4.0.4-ricky.5",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "@librechat/agents",
+-      "version": "4.0.4-ricky.3",
++      "version": "4.0.4-ricky.5",
+       "license": "MIT",
+       "dependencies": {
+         "@anthropic-ai/sdk": "^0.115.0",
+diff --git a/package.json b/package.json
+index a69a1cf6fc49bd8b7c6722e109dd6e02f712b958..4b6729139b12f6144b17d3f7bb7c9017312e94cf 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@librechat/agents",
+-  "version": "4.0.4-ricky.3",
++  "version": "4.0.4-ricky.5",
+   "reova": {
+     "enabled": true,
+     "endpoint": "https://telemetry.reo.dev/data"
+diff --git a/src/agents/AgentContext.ts b/src/agents/AgentContext.ts
+index 1443546c428e8f023496561074d9713b4ac0f990..6d27ea40419e5f26dc77fc15a7701587eeab9fe1 100644
+--- a/src/agents/AgentContext.ts
++++ b/src/agents/AgentContext.ts
+@@ -59,6 +59,7 @@ import { isTokenCounterCacheCompatible } from '@/llm/tokenCounterCacheCompatibil
+ import { snapshotCompactionSemanticIndex } from '@/summarization/semanticIndex';
+ import { createExactTokenCountCache } from '@/llm/contextPressureMeter';
+ import { markProviderTextInput } from '@/protection/providerTextInput';
++import { CODE_INTERNAL_FILE_GUIDANCE } from '@/tools/codeGuidance';
+ import { buildSummaryCarrierText } from '@/summarization/shared';
+ import { createSchemaOnlyTools } from '@/tools/schema';
+ import { apportionTokenCounts } from '@/utils/tokens';
+@@ -611,6 +612,7 @@ export class AgentContext {
+     const showGroupLabels = groups.length > 1;
+     return (
+       '\n\n## Programmatic Tool Calling' +
++      `\n\n${CODE_INTERNAL_FILE_GUIDANCE}` +
+       groups
+         .map(
+           ({ tools, capabilities, label }) =>
+diff --git a/src/agents/__tests__/AgentContext.test.ts b/src/agents/__tests__/AgentContext.test.ts
+index 072e000b9698bc8ae57739ca8b174f0d4ea6c9fc..da49aa6443a93a370cf73927ef5b41743a1d713a 100644
+--- a/src/agents/__tests__/AgentContext.test.ts
++++ b/src/agents/__tests__/AgentContext.test.ts
+@@ -1126,6 +1126,42 @@ describe('AgentContext', () => {
+       expect(result[0].content).toBe('Base');
+     });
+
++    it('adds environment-neutral internal-file guidance once for both runners', async () => {
++      const ctx = createBasicContext({
++        agentConfig: {
++          instructions: 'Base',
++          toolDefinitions: [
++            { name: Constants.BASH_PROGRAMMATIC_TOOL_CALLING },
++            { name: Constants.PROGRAMMATIC_TOOL_CALLING },
++          ],
++        },
++      });
++
++      const content = String((await ctx.systemRunnable!.invoke([]))[0].content);
++      expect(content).toContain('Prefer memory for single-call reads');
++      expect(content).toContain('unique /tmp scratch (mktemp)');
++      expect(content).toContain('consume it and clean it up in that call');
++      expect(content).toContain(
++        'prompts, receipts, bridge scripts or report copies'
++      );
++      expect(content).toContain('authorized original workspace');
++      expect(content).toContain('rather than defaulting to base64 round-trips');
++      expect(content).toContain(
++        'Requested files and necessary deliverables are allowed'
++      );
++      expect(content).toContain('follow the tool/environment storage rules');
++      expect(content).toContain(
++        'Never hide files or change extensions to evade collection'
++      );
++      expect(
++        content.match(
++          /A callback completion notice is not a request for attachments/g
++        )
++      ).toHaveLength(1);
++      expect(content).not.toContain('/mnt/data');
++      expect(content).not.toContain('Only /mnt/data is durable');
++    });
++
+     it('includes code_execution-only tools in system message', async () => {
+       const toolRegistry: t.LCToolRegistry = new Map([
+         [
+diff --git a/src/graphs/__tests__/Graph.reasoning.test.ts b/src/graphs/__tests__/Graph.reasoning.test.ts
+index acf0618102695121db812add83f9b284f60417d7..7ec2740e517fd2da60e25d1c1062db78c07b8153 100644
+--- a/src/graphs/__tests__/Graph.reasoning.test.ts
++++ b/src/graphs/__tests__/Graph.reasoning.test.ts
+@@ -306,7 +306,11 @@ describe('StandardGraph final response reasoning fallback', () => {
+       }),
+       new AIMessageChunk({
+         content: [
+-          { type: 'text', text: 'The session is fixed.', phase: 'final_answer' },
++          {
++            type: 'text',
++            text: 'The session is fixed.',
++            phase: 'final_answer',
++          },
+         ] as never,
+       }),
+     ]);
+@@ -318,8 +322,8 @@ describe('StandardGraph final response reasoning fallback', () => {
+
+     expect(new Set(messageDeltas.map((delta) => delta.id)).size).toBe(2);
+     expect(contentParts).toEqual([
+-      { type: 'text', text: 'Checking the session.' },
+-      { type: 'text', text: 'The session is fixed.' },
++      { type: 'text', text: 'Checking the session.', phase: 'commentary' },
++      { type: 'text', text: 'The session is fixed.', phase: 'final_answer' },
+     ]);
+     expect(
+       run.Graph.getRunSteps()
+diff --git a/src/stream.test.ts b/src/stream.test.ts
+index c7ad9053a5496bf2c167ac5e54d36d1cde3e048d..283409cca13cc50f370dd95aec2ac51410cd2cc3 100644
+--- a/src/stream.test.ts
++++ b/src/stream.test.ts
+@@ -1,9 +1,156 @@
+ import type { ChatOpenAIReasoningSummary } from '@langchain/openai';
+ import type { AIMessageChunk } from '@langchain/core/messages';
+-import { getChunkContent } from './stream';
+-import { Providers } from '@/common';
++import type { MessageContentComplex } from '@/types';
++import { getChunkContent, ChatModelStreamHandler } from './stream';
++import { AgentContext } from '@/agents/AgentContext';
++import { Providers, ContentTypes } from '@/common';
+
+ describe('getChunkContent', () => {
++  describe.each([
++    Providers.OPENAI,
++    Providers.AZURE,
++    Providers.OPENROUTER,
++    Providers.DEEPSEEK,
++    undefined,
++  ])('structured reasoning for %s', (provider) => {
++    it.each(['', 'Visible text'])(
++      'ignores an empty summary beside %j',
++      (content) => {
++        expect(
++          getChunkContent({
++            chunk: {
++              content,
++              additional_kwargs: {
++                reasoning: { type: 'reasoning', summary: [] },
++              },
++            },
++            provider,
++            reasoningKey: 'reasoning',
++          })
++        ).toBe(content);
++      }
++    );
++
++    it('keeps content blocks when reasoning has no text', () => {
++      const content: AIMessageChunk['content'] = [
++        { type: 'text', text: 'First ' },
++        { type: 'text', text: 'second' },
++      ];
++      expect(
++        getChunkContent({
++          chunk: {
++            content,
++            additional_kwargs: {
++              reasoning: { type: 'reasoning', summary: [] },
++            },
++          },
++          provider,
++          reasoningKey: 'reasoning',
++        })
++      ).toBe(content);
++    });
++
++    it('extracts all summary text in order without metadata', () => {
++      expect(
++        getChunkContent({
++          chunk: {
++            content: '',
++            additional_kwargs: {
++              reasoning: {
++                type: 'reasoning',
++                encrypted_content: 'not-visible',
++                summary: [
++                  { type: 'summary_text', text: '' },
++                  { type: 'summary_text', text: 'First ' },
++                  { type: 'summary_text', text: 'second' },
++                ],
++              },
++            },
++          },
++          provider,
++          reasoningKey: 'reasoning',
++        })
++      ).toBe('First second');
++    });
++  });
++
++  it('preserves reasoning content blocks and ignores an empty block array', () => {
++    const reasoning: MessageContentComplex[] = [
++      { type: 'thinking', thinking: 'First' },
++      { type: 'thinking', thinking: 'second' },
++    ];
++    expect(
++      getChunkContent({
++        chunk: { content: '', additional_kwargs: { reasoning } },
++        reasoningKey: 'reasoning',
++      })
++    ).toBe(reasoning);
++    const content: AIMessageChunk['content'] = [{ type: 'text', text: 'Body' }];
++    expect(
++      getChunkContent({
++        chunk: { content, additional_kwargs: { reasoning: [] } },
++        reasoningKey: 'reasoning',
++      })
++    ).toBe(content);
++  });
++
++  it('does not expose an object without supported reasoning text', () => {
++    expect(
++      getChunkContent({
++        chunk: {
++          content: '',
++          additional_kwargs: {
++            reasoning: { type: 'reasoning', id: 'metadata' },
++          },
++        },
++        reasoningKey: 'reasoning',
++      })
++    ).toBe('');
++  });
++
++  it('falls back to OpenRouter reasoning_content after an empty structured reasoning', () => {
++    expect(
++      getChunkContent({
++        chunk: {
++          content: '',
++          additional_kwargs: {
++            reasoning: { type: 'reasoning', summary: [] },
++            reasoning_content: 'Reasoning fallback',
++          },
++        },
++        provider: Providers.OPENROUTER,
++        reasoningKey: 'reasoning',
++      })
++    ).toBe('Reasoning fallback');
++  });
++
++  it.each([Providers.OPENAI, Providers.AZURE])(
++    'keeps later summary segments in the reasoning channel for %s',
++    (provider) => {
++      const chunk: Partial<AIMessageChunk> = {
++        content: 'Visible text',
++        additional_kwargs: {
++          reasoning: {
++            summary: [
++              { type: 'summary_text', text: '' },
++              { type: 'summary_text', text: 'Reasoning text' },
++            ],
++          },
++        },
++      };
++      const context = AgentContext.fromConfig({
++        agentId: 'reasoning-fixture',
++        provider,
++        reasoningKey: 'reasoning',
++      });
++      new ChatModelStreamHandler().handleReasoning(chunk, context);
++      expect(context.currentTokenType).toBe(ContentTypes.THINK);
++      expect(
++        getChunkContent({ chunk, provider, reasoningKey: 'reasoning' })
++      ).toBe('Reasoning text');
++    }
++  );
++
+   it('should handle reasoning content for OpenAI/Azure providers', () => {
+     const chunk: Partial<AIMessageChunk> = {
+       content: 'Regular content',
+diff --git a/src/stream.ts b/src/stream.ts
+index 8267d9e0b31c013891d0faa7f4f591ee8037d755..866d070ebd8fb42a51abfa3484aff647aab97fbe 100644
+--- a/src/stream.ts
++++ b/src/stream.ts
+@@ -1426,6 +1426,30 @@ function startPreparedSubagents(
+   }
+ }
+
++function getReasoningSummaryText(
++  reasoning: ReasoningSummaryLike | undefined
++): string | undefined {
++  const summary = reasoning?.summary;
++  if (!Array.isArray(summary)) return undefined;
++  let text = '';
++  for (const part of summary) {
++    if (typeof part.text === 'string') text += part.text;
++  }
++  return text || undefined;
++}
++
++/** additional_kwargs 是 provider 边界上的未定型数据。 */
++function getReasoningContent(
++  reasoning: unknown
++): string | t.MessageContentComplex[] | undefined {
++  if (typeof reasoning === 'string' || Array.isArray(reasoning)) {
++    return reasoning.length > 0 ? reasoning : undefined;
++  }
++  if (reasoning == null || typeof reasoning !== 'object') return undefined;
++  // Responses 的 reasoning 对象只公开 summary 文本，不公开其他元数据。
++  return getReasoningSummaryText(reasoning as ReasoningSummaryLike);
++}
++
+ export function getChunkContent({
+   chunk,
+   provider,
+@@ -1443,55 +1467,29 @@ export function getChunkContent({
+     return chunk.content;
+   }
+
+-  if (
+-    (provider === Providers.OPENAI || provider === Providers.AZURE) &&
+-    (
+-      chunk?.additional_kwargs?.reasoning as
+-        | Partial<ChatOpenAIReasoningSummary>
+-        | undefined
+-    )?.summary?.[0]?.text != null &&
+-    ((
+-      chunk?.additional_kwargs?.reasoning as
+-        | Partial<ChatOpenAIReasoningSummary>
+-        | undefined
+-    )?.summary?.[0]?.text?.length ?? 0) > 0
+-  ) {
+-    return (
+-      chunk?.additional_kwargs?.reasoning as
+-        | Partial<ChatOpenAIReasoningSummary>
+-        | undefined
+-    )?.summary?.[0]?.text;
+-  }
+-  if (provider === Providers.OPENROUTER) {
+-    // Content presence signals end of reasoning phase - prefer content over reasoning
+-    // This handles transitional chunks that may have both reasoning and content
+-    if (typeof chunk?.content === 'string' && chunk.content !== '') {
+-      return chunk.content;
+-    }
+-    const reasoning = chunk?.additional_kwargs?.reasoning as string | undefined;
+-    if (reasoning != null && reasoning !== '') {
+-      return reasoning;
+-    }
+-    const reasoningContent = chunk?.additional_kwargs?.reasoning_content as
+-      | string
+-      | undefined;
+-    if (reasoningContent != null && reasoningContent !== '') {
+-      return reasoningContent;
+-    }
+-    return chunk?.content;
++  if (provider === Providers.OPENAI || provider === Providers.AZURE) {
++    const summaryText = getReasoningSummaryText(
++      chunk?.additional_kwargs?.reasoning as ReasoningSummaryLike | undefined
++    );
++    if (summaryText != null) return summaryText;
+   }
+-  const keyedReasoning = chunk?.additional_kwargs?.[reasoningKey] as
+-    | string
+-    | undefined;
+-  if (
+-    typeof chunk?.content === 'string' &&
+-    chunk.content !== '' &&
+-    keyedReasoning != null &&
+-    keyedReasoning !== ''
+-  ) {
++
++  // 正文出现时沿用原优先级；空 reasoning 不能遮蔽同一 chunk 的正文。
++  if (typeof chunk?.content === 'string' && chunk.content !== '') {
+     return chunk.content;
+   }
+-  return ((keyedReasoning as string | undefined) ?? '') || chunk?.content;
++
++  if (provider === Providers.OPENROUTER) {
++    return (
++      getReasoningContent(chunk?.additional_kwargs?.reasoning) ??
++      getReasoningContent(chunk?.additional_kwargs?.reasoning_content) ??
++      chunk?.content
++    );
++  }
++  return (
++    getReasoningContent(chunk?.additional_kwargs?.[reasoningKey]) ??
++    chunk?.content
++  );
+ }
+
+ function isDisableStreamingEnabled(
+@@ -2219,8 +2217,7 @@ hasToolCallChunks: ${hasToolCallChunks}
+         agentContext.provider === Providers.AZURE) &&
+       reasoning_content != null &&
+       typeof reasoning_content !== 'string' &&
+-      reasoning_content.summary?.[0]?.text != null &&
+-      reasoning_content.summary[0].text
++      hasReasoningContent(reasoning_content)
+     ) {
+       reasoning_content = 'valid';
+     } else if (
+diff --git a/src/summarization/__tests__/reasoningStream.test.ts b/src/summarization/__tests__/reasoningStream.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..de5b1851a5b058f51a2b4a829057050486ac4435
+--- /dev/null
++++ b/src/summarization/__tests__/reasoningStream.test.ts
+@@ -0,0 +1,287 @@
++import { RunnableLambda } from '@langchain/core/runnables';
++import { ChatGenerationChunk } from '@langchain/core/outputs';
++import { awaitAllCallbacks } from '@langchain/core/callbacks/promises';
++import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
++import type { RunnableConfig } from '@langchain/core/runnables';
++import type * as t from '@/types';
++import {
++  createSummarizationChunkHandler,
++  createSummarizeNode,
++} from '@/summarization/node';
++import { ContentTypes, GraphEvents, Providers, StepTypes } from '@/common';
++import { registerProvider } from '@/llm/providerRegistry';
++import { AgentContext } from '@/agents/AgentContext';
++import { createContentAggregator } from '@/stream';
++import { FakeChatModel } from '@/llm/fake';
++
++const stepId = 'summary-reasoning-step';
++const summaryStep: t.RunStep = {
++  id: stepId,
++  index: 0,
++  stepIndex: 0,
++  type: StepTypes.MESSAGE_CREATION,
++  stepDetails: {
++    type: StepTypes.MESSAGE_CREATION,
++    message_creation: { message_id: stepId },
++  },
++  summary: { type: ContentTypes.SUMMARY, content: [] },
++  usage: null,
++};
++
++async function collectDeltas(
++  chunks: AIMessageChunk[]
++): Promise<t.SummarizeDeltaEvent[]> {
++  const deltas: t.SummarizeDeltaEvent[] = [];
++  await RunnableLambda.from(async (_input: string, config: RunnableConfig) => {
++    const onChunk = createSummarizationChunkHandler({
++      stepId,
++      config,
++      provider: Providers.OPENAI,
++      reasoningKey: 'reasoning',
++    });
++    expect(onChunk).toBeDefined();
++    for (const chunk of chunks) {
++      await onChunk!(chunk);
++    }
++  }).invoke('fixture', {
++    callbacks: [
++      {
++        handleCustomEvent(event: string, data: t.SummarizeDeltaEvent): void {
++          if (event === GraphEvents.ON_SUMMARIZE_DELTA) deltas.push(data);
++        },
++      },
++    ],
++  });
++  await awaitAllCallbacks();
++  return deltas;
++}
++
++describe('摘要 reasoning 流', () => {
++  it.each([
++    {
++      name: '空 reasoning summary 后继续正文',
++      chunks: [
++        new AIMessageChunk({
++          content: '',
++          additional_kwargs: { reasoning: { type: 'reasoning', summary: [] } },
++        }),
++        new AIMessageChunk({ content: 'Body' }),
++      ],
++      expected: [{ type: 'text', text: 'Body' }],
++      expectedDeltaCount: 1,
++    },
++    {
++      name: '普通文本顺序',
++      chunks: [
++        new AIMessageChunk({ content: 'First ' }),
++        new AIMessageChunk({ content: 'second' }),
++      ],
++      expected: [
++        { type: 'text', text: 'First ' },
++        { type: 'text', text: 'second' },
++      ],
++      expectedDeltaCount: 2,
++    },
++    {
++      name: '内容块数组及其顺序',
++      chunks: [
++        new AIMessageChunk({
++          content: [
++            { type: 'thinking', thinking: 'Thinking' },
++            { type: 'text', text: 'First ' },
++            { type: 'text', text: 'second' },
++          ],
++          additional_kwargs: { reasoning: { type: 'reasoning', summary: [] } },
++        }),
++      ],
++      expected: [
++        { type: 'thinking', thinking: 'Thinking' },
++        { type: 'text', text: 'First ' },
++        { type: 'text', text: 'second' },
++      ],
++      expectedDeltaCount: 1,
++    },
++    {
++      name: '结构化 reasoning 只提取 summary 文本',
++      chunks: [
++        new AIMessageChunk({
++          content: '',
++          additional_kwargs: {
++            reasoning: {
++              type: 'reasoning',
++              encrypted_content: 'not-visible',
++              summary: [
++                { type: 'summary_text', text: 'First ' },
++                { type: 'summary_text', text: 'second' },
++              ],
++            },
++          },
++        }),
++      ],
++      expected: [{ type: 'text', text: 'First second' }],
++      expectedDeltaCount: 1,
++    },
++    {
++      name: '空内容不产生 delta',
++      chunks: [
++        new AIMessageChunk({
++          content: [],
++          additional_kwargs: { reasoning: { type: 'reasoning', summary: [] } },
++        }),
++      ],
++      expected: [],
++      expectedDeltaCount: 0,
++    },
++  ])('$name', async ({ chunks, expected, expectedDeltaCount }) => {
++    const deltas = await collectDeltas(chunks);
++    const { aggregateContent, contentParts } = createContentAggregator();
++    aggregateContent({ event: GraphEvents.ON_RUN_STEP, data: summaryStep });
++    for (const data of deltas) {
++      aggregateContent({ event: GraphEvents.ON_SUMMARIZE_DELTA, data });
++      expect(Array.isArray(data.delta.summary.content)).toBe(true);
++      expect(data.delta.summary.content?.length).toBeGreaterThan(0);
++    }
++    expect(contentParts[0]).toMatchObject({
++      type: ContentTypes.SUMMARY,
++      content: expected,
++    });
++    expect(deltas).toHaveLength(expectedDeltaCount);
++  });
++
++  it('complete 替换临时 reasoning，保存调用和最终状态只含摘要正文', async () => {
++    class SummaryModel extends FakeChatModel {
++      constructor() {
++        super({ responses: ['unused'] });
++      }
++
++      async *_streamResponseChunks(): AsyncGenerator<ChatGenerationChunk> {
++        for (const chunk of [
++          new AIMessageChunk({
++            content: '',
++            additional_kwargs: {
++              reasoning: { type: 'reasoning', summary: [] },
++            },
++          }),
++          new AIMessageChunk({
++            content: '',
++            additional_kwargs: {
++              reasoning: {
++                summary: [
++                  { type: 'summary_text', text: 'Temporary reasoning' },
++                ],
++              },
++            },
++          }),
++          new AIMessageChunk({ content: 'Final ' }),
++          new AIMessageChunk({
++            content: [{ type: 'text', text: 'checkpoint' }],
++          }),
++        ]) {
++          yield new ChatGenerationChunk({ text: '', message: chunk });
++        }
++      }
++    }
++    const provider = 'summary-reasoning-fixture' as t.RuntimeProviderName;
++    const unregister = registerProvider({ provider, model: SummaryModel });
++    const agentContext = AgentContext.fromConfig(
++      {
++        agentId: 'summary-fixture',
++        provider,
++        clientOptions: {},
++        reasoningKey: 'reasoning',
++        summarizationEnabled: true,
++        summarizationConfig: { retainRecent: { turns: 0 } },
++      },
++      () => 10
++    );
++    const saved = jest.spyOn(agentContext, 'setSummary');
++    const { aggregateContent, contentParts } = createContentAggregator();
++    const deltas: t.SummarizeDeltaEvent[] = [];
++    const completions: t.SummarizeCompleteEvent[] = [];
++    const eventOrder: string[] = [];
++    const node = createSummarizeNode({
++      agentContext,
++      generateStepId: () => [stepId, 0],
++      graph: {
++        contentData: [],
++        contentIndexMap: new Map(),
++        isMultiAgent: false,
++        async dispatchRunStep(data): Promise<void> {
++          aggregateContent({ event: GraphEvents.ON_RUN_STEP, data });
++        },
++        async dispatchRunStepCompleted(): Promise<void> {},
++      },
++    });
++
++    try {
++      const result = await RunnableLambda.from(
++        async (_input: string, config: RunnableConfig) =>
++          node(
++            {
++              messages: [new HumanMessage('History')],
++              summarizationRequest: {
++                agentId: agentContext.agentId,
++                remainingContextTokens: 1000,
++              },
++            },
++            config
++          )
++      ).invoke('fixture', {
++        callbacks: [
++          {
++            handleCustomEvent(
++              event: string,
++              data: t.SummarizeDeltaEvent | t.SummarizeCompleteEvent
++            ): void {
++              if (event === GraphEvents.ON_SUMMARIZE_DELTA) {
++                eventOrder.push(event);
++                deltas.push(data as t.SummarizeDeltaEvent);
++              }
++              if (event === GraphEvents.ON_SUMMARIZE_COMPLETE) {
++                eventOrder.push(event);
++                completions.push(data as t.SummarizeCompleteEvent);
++              }
++            },
++          },
++        ],
++      });
++      await awaitAllCallbacks();
++      expect(eventOrder).toEqual([
++        GraphEvents.ON_SUMMARIZE_DELTA,
++        GraphEvents.ON_SUMMARIZE_DELTA,
++        GraphEvents.ON_SUMMARIZE_DELTA,
++        GraphEvents.ON_SUMMARIZE_COMPLETE,
++      ]);
++      for (const data of deltas) {
++        aggregateContent({ event: GraphEvents.ON_SUMMARIZE_DELTA, data });
++      }
++      expect(contentParts[0]).toMatchObject({
++        content: [
++          { type: 'text', text: 'Temporary reasoning' },
++          { type: 'text', text: 'Final ' },
++          { type: 'text', text: 'checkpoint' },
++        ],
++      });
++      expect(completions).toHaveLength(1);
++      aggregateContent({
++        event: GraphEvents.ON_SUMMARIZE_COMPLETE,
++        data: completions[0],
++      });
++      expect(contentParts[0]).toMatchObject({
++        type: ContentTypes.SUMMARY,
++        content: [{ type: 'text', text: 'Final checkpoint' }],
++        summaryVersion: 1,
++      });
++      expect(saved).toHaveBeenCalledTimes(1);
++      expect(saved).toHaveBeenCalledWith('Final checkpoint', 10);
++      expect(agentContext.getSummaryText()).toBe('Final checkpoint');
++      expect(agentContext.summaryVersion).toBe(1);
++      expect(result.messages).toHaveLength(1);
++      expect(result.messages?.[0]._getType()).toBe('remove');
++      expect(result.summarizationRequest).toBeUndefined();
++    } finally {
++      saved.mockRestore();
++      unregister();
++    }
++  });
++});
+diff --git a/src/summarization/node.ts b/src/summarization/node.ts
+index 76df55a2c88e019ba1c3591fe6bebc249cbb5e11..21e9c2415c03630fe7cbbf8e7ebff68d8af8e319 100644
+--- a/src/summarization/node.ts
++++ b/src/summarization/node.ts
+@@ -1744,15 +1744,19 @@ export function createSummarizationChunkHandler({
+       config.signal
+     );
+     if (protectionTrip != null) throw protectionTrip;
+-    const chunkAny = chunk as Parameters<typeof getChunkContent>[0]['chunk'];
+-    const raw = getChunkContent({ chunk: chunkAny, provider, reasoningKey });
+-    if (raw == null || (typeof raw === 'string' && !raw)) {
++    const messageChunk = chunk as Parameters<
++      typeof getChunkContent
++    >[0]['chunk'];
++    const raw = getChunkContent({
++      chunk: messageChunk,
++      provider,
++      reasoningKey,
++    });
++    if (raw == null || raw.length === 0) {
+       return;
+     }
+     const contentBlocks: t.MessageContentComplex[] =
+-      typeof raw === 'string'
+-        ? [{ type: ContentTypes.TEXT, text: raw } as t.MessageContentComplex]
+-        : raw;
++      typeof raw === 'string' ? [{ type: ContentTypes.TEXT, text: raw }] : raw;
+
+     void safeDispatchCustomEvent(
+       GraphEvents.ON_SUMMARIZE_DELTA,
+diff --git a/src/tools/BashExecutor.ts b/src/tools/BashExecutor.ts
+index 719d1da7a36920a473d8369f2fae01f1e30aff03..7140b6a80d164261b14d76e73343e19b34ae3e65 100644
+--- a/src/tools/BashExecutor.ts
++++ b/src/tools/BashExecutor.ts
+@@ -27,6 +27,10 @@ import {
+   appendArtifactTruncationWarning,
+   normalizeArtifactTruncation,
+ } from '@/tools/ArtifactTruncation';
++import {
++  ATTACHED_CODE_ARTIFACT_PATH_GUIDANCE,
++  CODE_INTERNAL_FILE_GUIDANCE,
++} from '@/tools/codeGuidance';
+ import { appendExecutionArtifactFileSummary } from '@/tools/CodeSessionFileSummary';
+ import { resolveAttachedWorkspaceInstanceId } from '@/tools/workspaceIdentity';
+ import { prepareBashProgrammaticCode } from './BashProgrammaticToolCalling';
+@@ -48,6 +52,7 @@ export const BashExecutionToolSchema = {
+ - The environment is stateless; variables and state don't persist between executions.
+ - Prior /mnt/data files are available and can be modified in place.
+ - ${CODE_ARTIFACT_PATH_GUIDANCE}
++- ${CODE_INTERNAL_FILE_GUIDANCE}
+ - ${BASH_SHELL_GUIDANCE}
+ - Input code **IS ALREADY** displayed to the user, so **DO NOT** repeat it in your response unless asked.
+ - Output code **IS NOT** displayed to the user, so **DO** write all desired output explicitly.
+@@ -104,7 +109,7 @@ Runs bash commands in the selected persistent project through an isolated sandbo
+
+ Usage:
+ - Project file changes persist between calls; shell variables, background processes, and execution-private temporary files do not.
+-- Injected files and generated artifacts use \${LIBRECHAT_CODE_DATA_DIR:-/mnt/data}; write durable files to the project root.
++- ${ATTACHED_CODE_ARTIFACT_PATH_GUIDANCE}
+ - Generated artifacts are automatically delivered; **DO NOT** provide download links.
+ - ${BASH_SHELL_GUIDANCE}
+ - NEVER use this tool to execute malicious commands.
+@@ -161,10 +166,8 @@ const STATEFUL_BASH_PARAM_NOTE =
+   'Files written to /mnt/data persist between calls on the same warm machine. Each call runs in a fresh sandbox: shell variables, cwd, /tmp, and background processes do NOT survive the call. Only /mnt/data is durable.';
+ const ATTACHED_BASH_PARAM_NOTE =
+   'Commands start in the selected persistent project. Project file changes persist, but shell variables, background processes, and execution-private temporary files do not.';
+-const ATTACHED_BASH_ARTIFACT_PATH_GUIDANCE =
+-  'Injected files and generated artifacts use `${LIBRECHAT_CODE_DATA_DIR:-/mnt/data}` for this execution only. Write anything needed later into the selected project.';
+ const ATTACHED_BASH_TMP_REMINDER =
+-  'Note: /tmp files are same-call scratch only and were not persisted; write files needed later into the selected project.';
++  'Note: /tmp files are same-call scratch only and were not persisted; keep necessary project files in the selected project, not the execution-scoped artifact directory.';
+
+ export function buildBashExecutionToolSchema(opts?: {
+   statefulSessions?: boolean;
+@@ -183,8 +186,14 @@ export function buildBashExecutionToolSchema(opts?: {
+     );
+   if (opts?.attachedWorkspace === true) {
+     commandDescription = commandDescription
+-      .replace('- Prior /mnt/data files are available and can be modified in place.\n', '')
+-      .replace(CODE_ARTIFACT_PATH_GUIDANCE, ATTACHED_BASH_ARTIFACT_PATH_GUIDANCE);
++      .replace(
++        '- Prior /mnt/data files are available and can be modified in place.\n',
++        ''
++      )
++      .replace(
++        CODE_ARTIFACT_PATH_GUIDANCE,
++        ATTACHED_CODE_ARTIFACT_PATH_GUIDANCE
++      );
+   }
+   return {
+     ...BashExecutionToolSchema,
+diff --git a/src/tools/BashProgrammaticToolCalling.ts b/src/tools/BashProgrammaticToolCalling.ts
+index 583b2b2fa46ed28478d47befb024e4cd6f5a2a17..d0fd27c69d521cf8dc17e788f18342176372b46f 100644
+--- a/src/tools/BashProgrammaticToolCalling.ts
++++ b/src/tools/BashProgrammaticToolCalling.ts
+@@ -32,8 +32,12 @@ import {
+   runPlainExecution,
+   formatCompletedResponse,
+ } from './ProgrammaticToolCalling';
+-import { logCodeApiDiagnostic } from '@/tools/diagnostics';
++import {
++  ATTACHED_CODE_ARTIFACT_PATH_GUIDANCE,
++  CODE_INTERNAL_FILE_GUIDANCE,
++} from '@/tools/codeGuidance';
+ import { resolveAttachedWorkspaceInstanceId } from '@/tools/workspaceIdentity';
++import { logCodeApiDiagnostic } from '@/tools/diagnostics';
+ import { INTENT_PROPERTY } from '@/tools/intentArg';
+ import { Constants } from '@/common';
+
+@@ -48,9 +52,6 @@ const DEFAULT_RUN_TIMEOUT_MS = resolveCodeApiRunTimeoutMs();
+ const BASH_LAST_BACKGROUND_PID_GUARD = ': &\nwait "$!"';
+ const CODE_API_WORKSPACE_HEADER = 'X-LibreChat-Code-Workspace-ID';
+ const ATTACHED_BASH_DATA_DIRECTORY = '"${LIBRECHAT_CODE_DATA_DIR:-/mnt/data}"';
+-const ATTACHED_BASH_ARTIFACT_PATH_GUIDANCE =
+-  `Use ${ATTACHED_BASH_DATA_DIRECTORY} for injected files and generated artifacts. ` +
+-  'The directory is execution-scoped; the selected workspace is the persistent project root.';
+
+ /** Bash reserved words that get `_tool` suffix when used as function names */
+ const BASH_RESERVED = new Set([
+@@ -91,16 +92,17 @@ DO NOT split work across multiple calls expecting to reuse variables.`;
+ const ATTACHED_WORKSPACE_WARNING = `ATTACHED WORKSPACE EXECUTION:
+ - Commands start in the selected persistent workspace; project file changes persist between calls.
+ - Each sandbox run is a fresh process, so shell variables, background processes, and temporary execution data do not persist.
+-- Injected files and generated artifacts use \${LIBRECHAT_CODE_DATA_DIR:-/mnt/data}; do not copy them into the project unless the task requires it.`;
++- The artifact directory is execution-scoped; it is not the persistent project root.`;
+
+ const CORE_RULES = `Rules:
+ - One call: state does not persist
+ - Tools are pre-defined as bash functions—DO NOT redefine them
+ - Each tool function accepts a JSON string argument
+-- Save tool output with raw=$(tool '{}'); printf '%s\n' "$raw" > /mnt/data/file.json; direct tool > file may be empty
+-- Tool stdout is normalized to one compact JSON value when possible; parse saved stdout once, then use fromjson? // . only for JSON-string fields
++- Capture tool output with raw=$(tool '{}') before processing it; direct tool > file may be empty
++- Tool stdout is normalized to one compact JSON value when possible; parse captured stdout once, then use fromjson? // . only for JSON-string fields
+ - Only echo/printf output returns to the model
+ - ${CODE_ARTIFACT_PATH_GUIDANCE}
++- ${CODE_INTERNAL_FILE_GUIDANCE}
+ - ${BASH_SHELL_GUIDANCE}
+ - timeout caps one sandbox run/replay iteration, not the total multi-round-trip workflow`;
+
+@@ -110,38 +112,37 @@ const ADDITIONAL_RULES =
+ const EXAMPLES = `Example (Complete workflow in one call):
+   # Query data and process
+   data=$(query_database '{"sql": "SELECT * FROM users"}')
+-  echo "$data" | jq '.[] | .name'
++  printf '%s\\n' "$data" | jq '.[] | .name'
+
+ Example (Parallel calls):
+-  { sf=$(web_search '{"query": "SF weather"}'); printf '%s\n' "$sf" > /mnt/data/sf.json; } &
+-  { ny=$(web_search '{"query": "NY weather"}'); printf '%s\n' "$ny" > /mnt/data/ny.json; } &
++  tmp_dir=$(mktemp -d /tmp/ptc.XXXXXXXXXX) || exit 1
++  trap 'rm -rf -- "$tmp_dir"' EXIT
++  { sf=$(web_search '{"query": "SF weather"}'); printf '%s\\n' "$sf" > "$tmp_dir/sf.json"; } &
++  { ny=$(web_search '{"query": "NY weather"}'); printf '%s\\n' "$ny" > "$tmp_dir/ny.json"; } &
+   wait
+-  echo "SF: $(jq -r . /mnt/data/sf.json)"
+-  echo "NY: $(jq -r . /mnt/data/ny.json)"`;
++  echo "SF: $(jq -r . "$tmp_dir/sf.json")"
++  echo "NY: $(jq -r . "$tmp_dir/ny.json")"
++
++Example (Only when an HTML preview is requested):
++  printf '%s\\n' '<!doctype html><title>Report</title><p>Summary</p>' > /mnt/data/report.html`;
+
+ const ATTACHED_CORE_RULES = `Rules:
+ - One call: process state does not persist; project files do
+ - Tools are pre-defined as bash functions—DO NOT redefine them
+ - Each tool function accepts a JSON string argument
++- Capture tool output with raw=$(tool '{}') before processing it; direct tool > file may be empty
+ - Resolve tool calls into variables before changing project files; do not redirect a tool call directly into the project
+-- Set data_dir=${ATTACHED_BASH_DATA_DIRECTORY}; save generated artifacts there, and write durable project files relative to the working directory
+-- Tool stdout is normalized to one compact JSON value when possible; parse saved stdout once, then use fromjson? // . only for JSON-string fields
++- Tool stdout is normalized to one compact JSON value when possible; parse captured stdout once, then use fromjson? // . only for JSON-string fields
+ - Only echo/printf output returns to the model
+-- ${ATTACHED_BASH_ARTIFACT_PATH_GUIDANCE}
++- ${ATTACHED_CODE_ARTIFACT_PATH_GUIDANCE}
++- ${CODE_INTERNAL_FILE_GUIDANCE}
+ - ${BASH_SHELL_GUIDANCE}
+ - timeout caps one sandbox run/replay iteration, not the total multi-round-trip workflow`;
+
+-const ATTACHED_EXAMPLES = `Example (Complete workflow in one call):
+-  data=$(query_database '{"sql": "SELECT * FROM users"}')
+-  echo "$data" | jq '.[] | .name'
+-
+-Example (Parallel calls):
+-  data_dir=${ATTACHED_BASH_DATA_DIRECTORY}
+-  { sf=$(web_search '{"query": "SF weather"}'); printf '%s\n' "$sf" > "$data_dir/sf.json"; } &
+-  { ny=$(web_search '{"query": "NY weather"}'); printf '%s\n' "$ny" > "$data_dir/ny.json"; } &
+-  wait
+-  echo "SF: $(jq -r . "$data_dir/sf.json")"
+-  echo "NY: $(jq -r . "$data_dir/ny.json")"`;
++const ATTACHED_EXAMPLES = EXAMPLES.replace(
++  '> /mnt/data/report.html',
++  `> ${ATTACHED_BASH_DATA_DIRECTORY}/report.html`
++);
+
+ const CODE_PARAM_DESCRIPTION = `Bash code that calls tools programmatically. Tools are available as bash functions.
+
+diff --git a/src/tools/CodeExecutor.ts b/src/tools/CodeExecutor.ts
+index a5ad70f733380bbe508f9bf92ca571faf1c78822..513a51904d114f21de8340d32f0485eac8e4b2df 100644
+--- a/src/tools/CodeExecutor.ts
++++ b/src/tools/CodeExecutor.ts
+@@ -18,6 +18,7 @@ import {
+   logCodeApiDiagnostic,
+ } from '@/tools/diagnostics';
+ import { appendCodeSessionFileSummary } from '@/tools/CodeSessionFileSummary';
++import { CODE_INTERNAL_FILE_GUIDANCE } from '@/tools/codeGuidance';
+ import { resolveFetchProxyAgent } from '@/utils/proxy';
+ import { INTENT_PROPERTY } from '@/tools/intentArg';
+ import { EnvVar, Constants } from '@/common';
+@@ -48,7 +49,7 @@ export const emptyOutputMessage =
+   'stdout: Empty. Ensure you\'re writing output explicitly.\n';
+
+ export const CODE_ARTIFACT_PATH_GUIDANCE =
+-  'Anything a later call needs (data, helper scripts/modules, partial results) MUST be written under `/mnt/data` in the same call that produces it; `/tmp` never survives the call. `/mnt/data` keeps files with recognized extensions, covering common source, text, data, document, image, and archive formats (.py/.sh/.sql/.md/.json/.csv/.parquet/.png/.pdf/.zip and similar); extensionless or unusual extensions are not kept. Failed executions register nothing; fix the error and rerun before relying on new files.';
++  'Managed sandbox: `/mnt/data` files are retained across calls and automatically collected/displayed, not private scratch. Use it only for requested files, necessary deliverables, or unavoidable cross-call storage. Prefer memory or unique same-call /tmp scratch (mktemp), with cleanup. `/tmp` and other sandbox directories are not durable. Retention requires recognized extensions; never hide/rename files to evade collection. Failed executions register nothing; fix the error and rerun before relying on new files.';
+
+ export const BASH_SHELL_GUIDANCE =
+   'Bash: multi-line files use heredoc/printf; run Python via python3 -c/heredoc, not bare Python.';
+@@ -57,7 +58,7 @@ const TMP_PATH_PATTERN = /(^|[^A-Za-z0-9_])\/tmp(?:\/|\b)/;
+ const MNT_DATA_PATH_PATTERN = /(^|[^A-Za-z0-9_])\/mnt\/data(?:\/|\b)/;
+
+ export const TMP_SCRATCH_OUTPUT_REMINDER =
+-  'Note: /tmp files are same-call scratch only and were not persisted; use /mnt/data for files needed later.';
++  'Note: /tmp files are same-call scratch only and were not persisted. Prefer memory or one-call processing; follow the tool/environment storage rules for requested files, necessary deliverables or unavoidable cross-call needs. Artifact files are automatically collected/displayed, not private scratch.';
+
+ export const FAILED_EXECUTION_FILE_REMINDER =
+   'Note: any files written during this failed call were not registered for later calls; fix the error and rerun before relying on them.';
+@@ -119,6 +120,7 @@ export const CodeExecutionToolSchema = {
+ - The environment is stateless; variables and imports don't persist between executions.
+ - Prior /mnt/data files are available and can be modified in place.
+ - ${CODE_ARTIFACT_PATH_GUIDANCE}
++- ${CODE_INTERNAL_FILE_GUIDANCE}
+ - Input code **IS ALREADY** displayed to the user, so **DO NOT** repeat it in your response unless asked.
+ - Output code **IS NOT** displayed to the user, so **DO** write all desired output explicitly.
+ - IMPORTANT: You MUST explicitly print/output ALL results you want the user to see.
+@@ -468,7 +470,7 @@ Usage:
+  * `df.head()` in the next, then hits a NameError it was told to treat as rare.
+  */
+ export const STATEFUL_ENV_NOTE =
+-  'Session state: executions in this conversation run on the same warm machine, so files persist between calls — but each execution is a NEW process. Variables, imports, and in-memory data NEVER carry over: every call must re-import and rebuild the state it needs. Only /mnt/data is durable (the machine itself may also be reset at any time), so write anything that must survive there and read it back next call.';
++  'Session state: executions in this conversation run on the same warm machine, so files persist between calls — but each execution is a NEW process. Variables, imports, and in-memory data NEVER carry over: every call must re-import and rebuild the state it needs. Only /mnt/data is durable (the machine itself may also be reset at any time); it is also automatically collected/displayed, not private scratch.';
+
+ export const StatefulCodeExecutionToolDescription = `
+ Runs code and returns stdout/stderr output. Executions in this conversation share one warm machine with a persistent /mnt/data, but each execution runs as a separate process (not a notebook-style kernel).
+@@ -493,7 +495,7 @@ export function buildCodeExecutionToolDescription(opts?: {
+ const STATELESS_CODE_PARAM_NOTE =
+   'The environment is stateless; variables and imports don\'t persist between executions.';
+ const STATEFUL_CODE_PARAM_NOTE =
+-  'Executions in this conversation share one warm machine, so files written to /mnt/data persist between calls. Each execution is a new process: variables and imports do NOT carry over — re-import and reload from /mnt/data every call.';
++  'Executions in this conversation share one warm machine, so files written to /mnt/data persist between calls. Each execution is a new process: variables and imports do NOT carry over — re-import and reload only the persisted files needed for this call.';
+
+ export function buildCodeExecutionToolSchema(opts?: {
+   statefulSessions?: boolean;
+diff --git a/src/tools/ProgrammaticToolCalling.ts b/src/tools/ProgrammaticToolCalling.ts
+index 4a1cc46a1aff3040c8393fdd1f3841bb458cca8d..b6e10961a7a17e4948f5c4ad778aa636e912eece 100644
+--- a/src/tools/ProgrammaticToolCalling.ts
++++ b/src/tools/ProgrammaticToolCalling.ts
+@@ -1,6 +1,5 @@
+ // src/tools/ProgrammaticToolCalling.ts
+ import { config } from 'dotenv';
+-import { normalizeProgrammaticToolResponse } from './response';
+ import { randomUUID } from 'node:crypto';
+ import fetch, { RequestInit } from 'node-fetch';
+ import { tool, DynamicStructuredTool } from '@langchain/core/tools';
+@@ -30,6 +29,12 @@ import {
+   selectProgrammaticTools,
+   type ProgrammaticInvocationParams,
+ } from './ProgrammaticCallerPolicy';
++import {
++  INTENT_PROPERTY,
++  PROGRAMMATIC_TOOL_INPUT,
++  inspectToolInputSchema,
++  stripIntentForInvoke,
++} from '@/tools/intentArg';
+ import {
+   clampCodeApiRunTimeoutMs,
+   createCodeApiRunTimeoutSchema,
+@@ -43,17 +48,13 @@ import {
+   appendArtifactTruncationWarning,
+   normalizeArtifactTruncation,
+ } from '@/tools/ArtifactTruncation';
+-import {
+-  INTENT_PROPERTY,
+-  PROGRAMMATIC_TOOL_INPUT,
+-  inspectToolInputSchema,
+-  stripIntentForInvoke,
+-} from '@/tools/intentArg';
+ import {
+   describeCodeApiError,
+   logCodeApiDiagnostic,
+ } from '@/tools/diagnostics';
+ import { appendExecutionArtifactFileSummary } from './CodeSessionFileSummary';
++import { CODE_INTERNAL_FILE_GUIDANCE } from '@/tools/codeGuidance';
++import { normalizeProgrammaticToolResponse } from './response';
+ import { resolveFetchProxyAgent } from '@/utils/proxy';
+ import { Constants } from '@/common';
+
+@@ -84,6 +85,7 @@ const CORE_RULES = `Rules:
+ - Tool results are decoded Python values (dict/list/str)
+ - Only print() output returns to the model
+ - ${CODE_ARTIFACT_PATH_GUIDANCE}
++- ${CODE_INTERNAL_FILE_GUIDANCE}
+ - timeout caps one sandbox run/replay iteration, not the total multi-round-trip workflow`;
+
+ const ADDITIONAL_RULES =
+diff --git a/src/tools/__tests__/BashExecutor.test.ts b/src/tools/__tests__/BashExecutor.test.ts
+index 0200b6fe832fce1e31777a29683ab100b164bc30..745bc558c16c2ee8b50bfb305301d78324f5379d 100644
+--- a/src/tools/__tests__/BashExecutor.test.ts
++++ b/src/tools/__tests__/BashExecutor.test.ts
+@@ -4,6 +4,7 @@ import {
+   BashToolOutputReferencesGuide,
+   StatefulBashExecutionToolDescription,
+   buildBashExecutionToolDescription,
++  buildBashExecutionToolSchema,
+ } from '../BashExecutor';
+ import { CODE_ARTIFACT_PATH_GUIDANCE } from '../CodeExecutor';
+
+@@ -26,9 +27,45 @@ describe('buildBashExecutionToolDescription', () => {
+     expect(BashExecutionToolDescription).toContain(
+       'Failed executions register nothing'
+     );
+-    expect(BashExecutionToolDescription).toContain('`/tmp` never survives the call');
++    expect(BashExecutionToolDescription).toContain(
++      '`/tmp` and other sandbox directories are not durable'
++    );
+   });
+
++  it.each([false, true])(
++    'limits delivery and persistence in managed mode (stateful=%s)',
++    (statefulSessions) => {
++      const description = buildBashExecutionToolDescription({
++        statefulSessions,
++      });
++      const parameter = buildBashExecutionToolSchema({ statefulSessions })
++        .properties.command.description;
++
++      for (const text of [description, parameter]) {
++        expect(text).toContain(
++          'automatically collected/displayed, not private scratch'
++        );
++        expect(text).toContain(
++          'requested files, necessary deliverables, or unavoidable cross-call storage'
++        );
++        expect(text).toContain(
++          'Prefer memory or unique same-call /tmp scratch (mktemp), with cleanup'
++        );
++        expect(text).not.toContain('Anything a later call needs');
++      }
++      expect(parameter).toContain(
++        'prompts, receipts, bridge scripts or report copies'
++      );
++      expect(parameter).toContain(
++        'A callback completion notice is not a request for attachments'
++      );
++      expect(parameter).toContain('authorized original workspace');
++      expect(parameter).toContain(
++        'Never hide files or change extensions to evade collection'
++      );
++    }
++  );
++
+   it('appends the tool-output references guide when enabled', () => {
+     const composed = buildBashExecutionToolDescription({
+       enableToolOutputReferences: true,
+@@ -48,7 +85,7 @@ describe('buildBashExecutionToolDescription', () => {
+      * rediscover it.
+      */
+     expect(BashToolOutputReferencesGuide).toContain('heredoc');
+-    expect(BashToolOutputReferencesGuide).toContain('<< \'EOF\'');
++    expect(BashToolOutputReferencesGuide).toMatch(/<< 'EOF'/);
+   });
+
+   it('separates base and guide with a blank line', () => {
+@@ -106,15 +143,28 @@ describe('buildBashExecutionToolDescription', () => {
+     });
+   });
+
+-  it('removes /mnt/data persistence claims from attached workspace parameters', async () => {
+-    const { buildBashExecutionToolSchema } = await import('../BashExecutor');
+-    const description = buildBashExecutionToolSchema({
++  it('keeps attached project persistence separate from execution-scoped delivery', () => {
++    const description = buildBashExecutionToolDescription({
++      attachedWorkspace: true,
++    });
++    const parameter = buildBashExecutionToolSchema({
+       attachedWorkspace: true,
+     }).properties.command.description;
+
+-    expect(description).toContain('selected persistent project');
+-    expect(description).toContain('Write anything needed later into the selected project');
+-    expect(description).not.toContain('Prior /mnt/data files');
+-    expect(description).not.toContain('Anything a later call needs');
++    for (const text of [description, parameter]) {
++      expect(text).toContain('selected persistent project');
++      expect(text).toContain('${LIBRECHAT_CODE_DATA_DIR:-/mnt/data}');
++      expect(text).toContain('requested files or necessary output artifacts');
++      expect(text).toContain('automatically collected/displayed');
++      expect(text).toContain('execution-scoped, not cross-call storage');
++      expect(text).toContain('authorized selected project/workspace');
++      expect(text).not.toContain('Prior /mnt/data files');
++      expect(text).not.toContain('Managed sandbox:');
++      expect(text).not.toContain('unavoidable cross-call storage');
++    }
++    expect(parameter).toContain('Prefer memory for single-call reads');
++    expect(parameter).toContain(
++      'A callback completion notice is not a request for attachments'
++    );
+   });
+ });
+diff --git a/src/tools/__tests__/CodeApiAuthHeaders.test.ts b/src/tools/__tests__/CodeApiAuthHeaders.test.ts
+index eb0e1e9eb6af1577dc3ab04ae3dd940d6399ebf6..b96ba6c44f395edd75c45202f93a568f4d642291 100644
+--- a/src/tools/__tests__/CodeApiAuthHeaders.test.ts
++++ b/src/tools/__tests__/CodeApiAuthHeaders.test.ts
+@@ -905,8 +905,11 @@ describe('CodeAPI auth header injection', () => {
+
+     const output = await tool.invoke({ command: 'touch /tmp/transient' });
+
+-    expect(output).toContain('write files needed later into the selected project');
+-    expect(output).not.toContain('use /mnt/data for files needed later');
++    expect(output).toContain(
++      'keep necessary project files in the selected project'
++    );
++    expect(output).toContain('not the execution-scoped artifact directory');
++    expect(output).not.toContain('use /mnt/data');
+   });
+
+   it('routes bash tools by trusted per-agent profile', async () => {
+diff --git a/src/tools/__tests__/CodeExecutor.stateful.test.ts b/src/tools/__tests__/CodeExecutor.stateful.test.ts
+index 342e79ec6e4efe30a24f4f82e261516bfda7ab44..f53f40fbbfea26dd625cabc718739d58ea40583c 100644
+--- a/src/tools/__tests__/CodeExecutor.stateful.test.ts
++++ b/src/tools/__tests__/CodeExecutor.stateful.test.ts
+@@ -64,11 +64,53 @@ describe('CodeExecutor stateful description', () => {
+       buildCodeExecutionToolSchema().properties.code.description;
+     const stateful = buildCodeExecutionToolSchema({ statefulSessions: true })
+       .properties.code.description;
+-    expect(stateless).toContain('variables and imports don\'t persist');
++    expect(stateless).toMatch(/variables and imports don't persist/);
+     expect(stateful).toContain('do NOT carry over');
+     expect(stateful).toContain('/mnt/data');
+     expect(stateful).not.toContain('typically still defined');
++    expect(stateful).not.toContain('reload from /mnt/data every call');
+   });
++
++  it.each([false, true])(
++    'limits internal files and delivery in managed mode (stateful=%s)',
++    (statefulSessions) => {
++      const description = buildCodeExecutionToolDescription({
++        statefulSessions,
++      });
++      const parameter = buildCodeExecutionToolSchema({ statefulSessions })
++        .properties.code.description;
++
++      for (const text of [description, parameter]) {
++        expect(text).toContain(
++          'automatically collected/displayed, not private scratch'
++        );
++        expect(text).toContain(
++          'requested files, necessary deliverables, or unavoidable cross-call storage'
++        );
++        expect(text).toContain(
++          'Prefer memory or unique same-call /tmp scratch (mktemp), with cleanup'
++        );
++        expect(text).toContain(
++          '`/tmp` and other sandbox directories are not durable'
++        );
++        expect(text).not.toContain('Anything a later call needs');
++        expect(text).not.toContain('write anything that must survive there');
++      }
++      expect(parameter).toContain(
++        'prompts, receipts, bridge scripts or report copies'
++      );
++      expect(parameter).toContain(
++        'A callback completion notice is not a request for attachments'
++      );
++      expect(parameter).toContain('authorized original workspace');
++      expect(parameter).toContain(
++        'rather than defaulting to base64 round-trips'
++      );
++      expect(parameter).toContain(
++        'Never hide files or change extensions to evade collection'
++      );
++    }
++  );
+ });
+
+ describe('CodeExecutor runtime_session_hint wire field', () => {
+diff --git a/src/tools/__tests__/ProgrammaticToolCalling.test.ts b/src/tools/__tests__/ProgrammaticToolCalling.test.ts
+index 36e87f802bdd7d95a214b145b9ddc048cbe96272..ce1406edc6958b6c909039aa722046905deb9eba 100644
+--- a/src/tools/__tests__/ProgrammaticToolCalling.test.ts
++++ b/src/tools/__tests__/ProgrammaticToolCalling.test.ts
+@@ -53,6 +53,55 @@ describe('ProgrammaticToolCalling', () => {
+       );
+     });
+
++    it.each([
++      [
++        'Python',
++        createProgrammaticToolCallingTool,
++        createProgrammaticToolCallingSchema,
++      ],
++      [
++        'Bash',
++        createBashProgrammaticToolCallingTool,
++        createBashProgrammaticToolCallingSchema,
++      ],
++    ] as const)(
++      'keeps %s internal processing separate from delivery',
++      (_name, createTool, createSchema) => {
++        const tool = createTool();
++        const parameter = createSchema().properties.code.description;
++
++        for (const description of [tool.description, parameter]) {
++          expect(description).toContain('Prefer memory for single-call reads');
++          expect(description).toContain('unique /tmp scratch (mktemp)');
++          expect(description).toContain(
++            'consume it and clean it up in that call'
++          );
++          expect(description).toContain(
++            'automatically collected/displayed, not private scratch'
++          );
++          expect(description).toContain(
++            'requested files, necessary deliverables, or unavoidable cross-call storage'
++          );
++          expect(description).toContain(
++            'prompts, receipts, bridge scripts or report copies'
++          );
++          expect(description).toContain(
++            'A callback completion notice is not a request for attachments'
++          );
++          expect(description).toContain('authorized original workspace');
++          expect(description).toContain(
++            'rather than defaulting to base64 round-trips'
++          );
++          expect(description).toContain(
++            'Never hide files or change extensions to evade collection'
++          );
++          expect(description).not.toContain('Anything a later call needs');
++          expect(description).not.toContain('/mnt/data/sf.json');
++          expect(description).not.toContain('/mnt/data/ny.json');
++        }
++      }
++    );
++
+     it('explains bash inner-tool stdout shape', () => {
+       const schema = createBashProgrammaticToolCallingSchema();
+       const description = schema.properties.code.description;
+@@ -64,11 +113,60 @@ describe('ProgrammaticToolCalling', () => {
+       expect(description).toContain('only for JSON-string fields');
+       expect(description).toContain('raw=$(tool');
+       expect(description).toContain('direct tool > file may be empty');
+-      expect(description).toContain('/mnt/data/sf.json');
++      expect(description).toContain('mktemp -d /tmp/ptc.XXXXXXXXXX');
++      expect(description).toContain('trap \'rm -rf -- "$tmp_dir"\' EXIT');
++      expect(description).toContain('sf=$(web_search');
++      expect(description).toContain('ny=$(web_search');
++      expect(description).toContain('> "$tmp_dir/sf.json"');
++      expect(description).toContain('> "$tmp_dir/ny.json"');
++      expect(description).toContain('Only when an HTML preview is requested');
++      expect(description).toContain('> /mnt/data/report.html');
+       expect(description).toContain('Failed executions register nothing');
+-      expect(description).toContain('`/tmp` never survives the call');
++      expect(description).toContain(
++        '`/tmp` and other sandbox directories are not durable'
++      );
+       expect(schema.properties.tool_manifest.uniqueItems).toBe(true);
+     });
++
++    it('uses same-call scratch and execution-scoped delivery in attached Bash PTC', () => {
++      const tool = createBashProgrammaticToolCallingTool({
++        workspaceId: 'project-a',
++      });
++      const schema = tool.schema as ReturnType<
++        typeof createBashProgrammaticToolCallingSchema
++      >;
++
++      for (const description of [
++        tool.description,
++        schema.properties.code.description,
++      ]) {
++        expect(description).toContain(
++          'project file changes persist between calls'
++        );
++        expect(description).toContain('raw=$(tool');
++        expect(description).toContain('direct tool > file may be empty');
++        expect(description).toContain('mktemp -d /tmp/ptc.XXXXXXXXXX');
++        expect(description).toContain('trap \'rm -rf -- "$tmp_dir"\' EXIT');
++        expect(description).toContain('> "$tmp_dir/sf.json"');
++        expect(description).toContain('> "$tmp_dir/ny.json"');
++        expect(description).toContain(
++          'execution-scoped, not cross-call storage'
++        );
++        expect(description).toContain('authorized selected project/workspace');
++        expect(description).toContain('Only when an HTML preview is requested');
++        expect(description).toContain(
++          '> "${LIBRECHAT_CODE_DATA_DIR:-/mnt/data}"/report.html'
++        );
++        expect(description).toContain(
++          'A callback completion notice is not a request for attachments'
++        );
++        expect(description).not.toContain('Managed sandbox:');
++        expect(description).not.toContain('unavoidable cross-call storage');
++        expect(description).not.toContain('/mnt/data/report.html');
++        expect(description).not.toContain('$data_dir/sf.json');
++        expect(description).not.toContain('$data_dir/ny.json');
++      }
++    });
+   });
+
+   it('strips attached-workspace artifact summaries before output reuse', () => {
+@@ -1145,7 +1243,8 @@ for member in team:
+     });
+
+     it.each([{ size: -1 }, { max_files: 70 }, {}])(
+-      'ignores malformed truncation reasons %j in programmatic responses', (reasons) => {
++      'ignores malformed truncation reasons %j in programmatic responses',
++      (reasons) => {
+         const [output, artifact] = formatCompletedResponse({
+           status: 'completed',
+           stdout: 'done\n',
+@@ -1160,7 +1259,8 @@ for member in team:
+
+         expect(output).not.toContain('omitted from delivery');
+         expect(artifact.artifact_truncation).toBeUndefined();
+-      });
++      }
++    );
+
+     it.each([1, 70])(
+       'preserves other response metadata when reason count is %i',
+@@ -1194,7 +1294,9 @@ for member in team:
+         expect(output).toContain('stderr:\ndiagnostic');
+         expect(output).toContain('Artifact delivery warning:');
+         expect(output).toContain('Generated files:');
+-        expect(output.includes('omitted from delivery')).toBe(reasonCount === 1);
++        expect(output.includes('omitted from delivery')).toBe(
++          reasonCount === 1
++        );
+         expect(artifact).toEqual({
+           session_id: response.session_id,
+           runtime_session_id: response.runtime_session_id,
+@@ -1209,24 +1311,33 @@ for member in team:
+       }
+     );
+
+-    it('adds a /tmp scratch reminder when source code used /tmp', () => {
+-      const response: t.ProgrammaticExecutionResponse = {
+-        status: 'completed',
+-        stdout: 'done\n',
+-        stderr: '',
+-        files: [],
+-        session_id: 'sess_abc123',
+-      };
++    it.each(['session', 'execution'] as const)(
++      'keeps the /tmp scratch reminder environment-neutral (%s files)',
++      (filePersistence) => {
++        const response: t.ProgrammaticExecutionResponse = {
++          status: 'completed',
++          stdout: 'done\n',
++          stderr: '',
++          files: [],
++          session_id: 'sess_abc123',
++        };
+
+-      const [output] = formatCompletedResponse(
+-        response,
+-        'tool "{}" > /tmp/result.json'
+-      );
++        const [output] = formatCompletedResponse(
++          response,
++          'tmp_file=$(mktemp /tmp/ptc.XXXXXXXXXX); trap \'rm -f -- "$tmp_file"\' EXIT; raw=$(tool "{}"); printf "%s" "$raw" > "$tmp_file"',
++          filePersistence
++        );
+
+-      expect(output).toContain('stdout:\ndone');
+-      expect(output).toContain('/tmp files are same-call scratch only');
+-      expect(output).toContain('use /mnt/data for files needed later');
+-    });
++        expect(output).toContain('stdout:\ndone');
++        expect(output).toContain('/tmp files are same-call scratch only');
++        expect(output).toContain('Prefer memory or one-call processing');
++        expect(output).toContain(
++          'storage rules for requested files, necessary deliverables or unavoidable cross-call needs'
++        );
++        expect(output).toContain('automatically collected/displayed');
++        expect(output).not.toContain('use /mnt/data');
++      }
++    );
+
+     it('preserves files on the artifact and summarizes them without listing paths', () => {
+       const response: t.ProgrammaticExecutionResponse = {
+diff --git a/src/tools/codeGuidance.ts b/src/tools/codeGuidance.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ae912c321e8eba3fbe8dba8c2a84d2aafd0dfd56
+--- /dev/null
++++ b/src/tools/codeGuidance.ts
+@@ -0,0 +1,5 @@
++export const CODE_INTERNAL_FILE_GUIDANCE =
++  'Prefer memory for single-call reads, parsing, encoding conversion, aggregation and temporary scripts. If same-call disk work is necessary, use unique /tmp scratch (mktemp), consume it and clean it up in that call. Do not export prompts, receipts, bridge scripts or report copies solely for internal processing or recordkeeping. A callback completion notice is not a request for attachments. Read needed excerpts from the authorized original workspace rather than defaulting to base64 round-trips that recreate sandbox files. Requested files and necessary deliverables are allowed; follow the tool/environment storage rules. Never hide files or change extensions to evade collection.';
++
++export const ATTACHED_CODE_ARTIFACT_PATH_GUIDANCE =
++  'Attached workspace: use `${LIBRECHAT_CODE_DATA_DIR:-/mnt/data}` for injected files and requested files or necessary output artifacts. Generated artifacts are automatically collected/displayed. This directory is execution-scoped, not cross-call storage; keep necessary durable project files in the authorized selected project/workspace.';
