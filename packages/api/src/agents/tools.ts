@@ -788,13 +788,20 @@ const LIST_WORKSPACE_FILES_TOOL_DEF: LCTool = Object.freeze({
   }) as LCTool['parameters'],
 }) as LCTool;
 
+const SANDBOX_CREATE_FILE_GUIDANCE =
+  'Use /mnt/data/{file} only for requested files, necessary deliverables or unavoidable cross-call storage. Files there are automatically collected/displayed, not private scratch. Prefer memory, or unique /tmp scratch created, used and cleaned in one Bash call; /tmp is not cross-call storage.';
+
+const SKILL_SANDBOX_CREATE_FILE_GUIDANCE = `Non-skills paths target the code-execution sandbox when enabled. ${SANDBOX_CREATE_FILE_GUIDANCE}`;
+
+const INTERNAL_FILE_EXPORT_GUIDANCE =
+  'Do not export prompts, receipts, bridge scripts or report copies solely for internal processing or recordkeeping. A callback completion notice is not a request for attachments. Read needed excerpts from the authorized original workspace instead of recreating sandbox files via base64. Never hide files or change extensions to evade collection.';
+
 const SKILL_CREATE_FILE_PARAMETERS: LCTool['parameters'] = Object.freeze({
   type: 'object',
   properties: {
     path: {
       type: 'string',
-      description:
-        'Path to write. Use "skills/{skillName}/..." for skill files when available, or a code-execution sandbox path such as "/mnt/data/result.txt" when code execution is enabled. For SKILL.md, the YAML frontmatter name must match {skillName}.',
+      description: `Path to write. Use "skills/{skillName}/..." for skill files when available. For SKILL.md, the YAML frontmatter name must match {skillName}. ${SKILL_SANDBOX_CREATE_FILE_GUIDANCE} ${INTERNAL_FILE_EXPORT_GUIDANCE}`,
     },
     content: {
       type: 'string',
@@ -815,8 +822,7 @@ const CODE_CREATE_FILE_PARAMETERS: LCTool['parameters'] = Object.freeze({
   properties: {
     path: {
       type: 'string',
-      description:
-        'Path to write in the code-execution sandbox, such as "/mnt/data/result.txt". Prefer /mnt/data/{file} for files that should remain available to later sandbox calls.',
+      description: `Path to write in the code-execution sandbox. ${SANDBOX_CREATE_FILE_GUIDANCE} ${INTERNAL_FILE_EXPORT_GUIDANCE}`,
     },
     content: {
       type: 'string',
@@ -909,26 +915,23 @@ const CODE_EDIT_FILE_PARAMETERS: LCTool['parameters'] = Object.freeze({
   required: ['path'],
 }) as LCTool['parameters'];
 
-const SKILL_CREATE_FILE_DESCRIPTION = `Create a new file, or overwrite an existing file with explicit intent.
+const SKILL_CREATE_FILE_DESCRIPTION = `Create a new file or full rewrite. Requires overwrite: true to replace existing files.
 
-Use for new files and full rewrites. Requires overwrite: true to replace existing files.
+Skill paths:
+- skills/{skillName}/SKILL.md: lean instructions, YAML frontmatter, trigger-friendly description, steps and short snippets. The frontmatter name must match {skillName}.
+- skills/{skillName}/references/{file}: long docs, schemas, examples, large templates, HTML/CSS/JS.
+- skills/{skillName}/scripts/{file}: helpers.
+- skills/{skillName}/assets/{file}: static assets.
+- skills/{skillName}/templates/{file}: reusable templates.
+To rename, create skills/{newName}/SKILL.md. Bundle large artifacts (e.g. references/template.html); say when to read/reuse them.
 
-Paths starting with "skills/" write skill files:
-- skills/{skillName}/SKILL.md - main instructions; keep it lean with YAML frontmatter, trigger-friendly description, workflow steps, and short snippets.
-- skills/{skillName}/references/{file} - long docs, schemas, examples, large templates, HTML/CSS/JS dashboards.
-- skills/{skillName}/scripts/{file} - helper scripts.
-- skills/{skillName}/assets/{file} - static assets.
-- skills/{skillName}/templates/{file} - reusable output templates.
+${SKILL_SANDBOX_CREATE_FILE_GUIDANCE}`;
 
-For SKILL.md, frontmatter name must match {skillName}; create skills/{newName}/SKILL.md to rename. Put large runnable artifacts in bundled files such as references/template.html, and have SKILL.md tell the agent when to read or reuse them.
+const CODE_CREATE_FILE_DESCRIPTION = `Create a new file or rewrite more than half a file. Requires overwrite: true to replace existing files; refuses otherwise.
 
-Non-skills paths target the code-execution sandbox when enabled. Prefer /mnt/data/{file}.`;
+Targets code-execution sandbox paths. ${SANDBOX_CREATE_FILE_GUIDANCE}
 
-const CODE_CREATE_FILE_DESCRIPTION = `Create a new file, or overwrite an existing file with explicit intent.
-
-Use for new files and full rewrites where the change is larger than half the file. Requires overwrite: true to replace existing files. Refuses otherwise.
-
-Targets code-execution sandbox paths. Prefer /mnt/data/{file} for files that should remain available to later sandbox calls.
+${INTERNAL_FILE_EXPORT_GUIDANCE}
 
 Very long content can exceed the streamed tool-argument limit (64 KB by default) and fail the call. For large files, create the file with its first section, then extend it with edit_file.`;
 
@@ -982,6 +985,8 @@ const ATTACHED_CODE_CREATE_FILE_DESCRIPTION = `Create a new file in the selected
 
 Use a path in the form "workspace/{relativePath}". Requires overwrite: true to replace an existing file and refuses otherwise. The workspace may be an existing project, a Git repository, or an empty directory.
 
+Keep authorized persistent project files in this workspace, not in an execution-scoped artifact directory. Do not create report copies or execution prompts solely for internal recordkeeping; a callback completion notice is not a request for attachments.
+
 Very long content can exceed the streamed tool-argument limit (64 KB by default). The attached workspace also limits each write to 1 MiB. Keep each call bounded.`;
 
 const ATTACHED_CODE_EDIT_FILE_DESCRIPTION = `Apply one or more ordered text replacements to an existing file in the selected attached environment.
@@ -989,8 +994,8 @@ const ATTACHED_CODE_EDIT_FILE_DESCRIPTION = `Apply one or more ordered text repl
 Use a path in the form "workspace/{relativePath}". Every old_text must match exactly one location at its step in the batch, unless that edit sets replace_all. Exact matching is tried first; where this environment allows it, whitespace-only differences are also accepted, and a whitespace-only miss names the line to copy. Up to 100 replacements and 1 MiB of edit text are allowed; the entire batch commits atomically or makes no change. A failure names every edit that did not apply and why, and may quote the current text where a missing edit most likely belongs; fix those edits against any quoted current text (read_file shows lines it leaves out or shortens), and retry.`;
 
 const ATTACHED_SKILL_CREATE_FILE_DESCRIPTION = `${SKILL_CREATE_FILE_DESCRIPTION.replace(
-  'Non-skills paths target the code-execution sandbox when enabled. Prefer /mnt/data/{file}.',
-  'For the selected attached environment, non-skill paths must use "workspace/{relativePath}".',
+  SKILL_SANDBOX_CREATE_FILE_GUIDANCE,
+  'For the selected attached environment, non-skill paths must use "workspace/{relativePath}" for authorized persistent project files, not execution-scoped artifacts.',
 )}`;
 
 const ATTACHED_SKILL_EDIT_FILE_DESCRIPTION = `Apply targeted text replacements to an existing file.
@@ -1011,8 +1016,8 @@ function attachedFileAuthoringParameters(
       path: {
         type: 'string',
         description: includeSkillFileInstructions
-          ? 'Use "skills/{skillName}/..." for a LibreChat skill file, or "workspace/{relativePath}" for a file in the selected attached environment.'
-          : 'Use "workspace/{relativePath}" for a file in the selected attached environment.',
+          ? `Use "skills/{skillName}/..." for a LibreChat skill file, or "workspace/{relativePath}" for a persistent project file in the selected attached environment. ${INTERNAL_FILE_EXPORT_GUIDANCE}`
+          : `Use "workspace/{relativePath}" for a persistent project file in the selected attached environment. ${INTERNAL_FILE_EXPORT_GUIDANCE}`,
       },
     },
   }) as LCTool['parameters'];

@@ -1433,6 +1433,67 @@ describe('registerFileAuthoringTools', () => {
     expect(filePathDescription(editFile)).not.toContain('rename skills');
   });
 
+  it.each([false, true])(
+    'keeps managed create_file limited to intentional files (skill-aware=%s)',
+    (includeSkillFileInstructions) => {
+      const result = registerFileAuthoringTools({
+        toolRegistry: makeRegistry(),
+        toolDefinitions: [],
+        includeSkillFileInstructions,
+      });
+      const createFile = result.toolDefinitions.find(
+        (definition) => definition.name === 'create_file',
+      );
+      const parameter = filePathDescription(createFile);
+
+      for (const text of [createFile?.description, parameter]) {
+        expect(text).toContain(
+          'Use /mnt/data/{file} only for requested files, necessary deliverables or unavoidable cross-call storage',
+        );
+        expect(text).toContain('automatically collected/displayed, not private scratch');
+        expect(text).toContain(
+          'Prefer memory, or unique /tmp scratch created, used and cleaned in one Bash call',
+        );
+        expect(text).toContain('/tmp is not cross-call storage');
+        expect(text).not.toContain('Prefer /mnt/data/');
+      }
+      expect(parameter).toContain('prompts, receipts, bridge scripts or report copies');
+      expect(parameter).toContain('A callback completion notice is not a request for attachments');
+      expect(parameter).toContain('authorized original workspace');
+      expect(parameter).toContain('instead of recreating sandbox files via base64');
+      expect(parameter).toContain('Never hide files or change extensions to evade collection');
+    },
+  );
+
+  it.each([false, true])(
+    'keeps attached create_file guidance out of managed storage (skill-aware=%s)',
+    (includeSkillFileInstructions) => {
+      const result = registerFileAuthoringTools({
+        toolRegistry: makeRegistry(),
+        toolDefinitions: [],
+        includeSkillFileInstructions,
+        workspaceTools: true,
+        workspaceOperations: new Set(CODE_WORKSPACE_OPERATIONS),
+      });
+      const createFile = result.toolDefinitions.find(
+        (definition) => definition.name === 'create_file',
+      );
+      const parameter = filePathDescription(createFile);
+
+      expect(createFile?.description).toContain('execution-scoped artifact');
+      for (const text of [createFile?.description, parameter]) {
+        expect(text).toContain('workspace/{relativePath}');
+        expect(text).toContain('persistent project file');
+        expect(text).not.toContain('/mnt/data');
+        expect(text).not.toContain('unavoidable cross-call storage');
+        expect(text).not.toContain('Non-skills paths target the code-execution sandbox');
+      }
+      expect(parameter).toContain('A callback completion notice is not a request for attachments');
+      expect(parameter).toContain('authorized original workspace');
+      expect(isFileAuthoringToolDefinition(createFile)).toBe(true);
+    },
+  );
+
   it('registers attached-workspace paths and atomic edit semantics', () => {
     const result = registerFileAuthoringTools({
       toolRegistry: makeRegistry(),
