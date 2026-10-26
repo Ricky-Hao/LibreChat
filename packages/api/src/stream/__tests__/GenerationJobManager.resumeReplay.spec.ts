@@ -1,7 +1,7 @@
 import { StepEvents, ContentTypes } from 'librechat-data-provider';
 import type { StandardGraph } from '@librechat/agents';
 import type { Agents } from 'librechat-data-provider';
-import type { SubagentContentBuffer } from '~/agents/subagentContent';
+import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
 import type { AbortResult } from '../interfaces/IJobStore';
 import type { ServerSentEvent } from '~/types';
 import {
@@ -10,7 +10,7 @@ import {
 } from '~/stream/GenerationJobManager';
 import { InMemoryEventTransport } from '~/stream/implementations/InMemoryEventTransport';
 import { InMemoryJobStore } from '~/stream/implementations/InMemoryJobStore';
-import { collectSubagentContent } from '~/agents/subagentContent';
+import { collectSubagentContent } from '~/agents/retainedSubagentContent';
 import { createToolTimingTracker } from '~/agents/toolTiming';
 
 jest.spyOn(console, 'log').mockImplementation();

@@ -44,8 +44,9 @@ jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
 }));
 
-jest.mock('~/hooks/Chat', () => ({
-  useGetAddedConvo: () => () => null,
+jest.mock('~/hooks/Conversations/useGetAddedConvo', () => ({
+  __esModule: true,
+  default: () => () => null,
 }));
 
 jest.mock('../Container', () => ({
@@ -83,6 +84,7 @@ function renderEditor({
   setSiblingIdx = jest.fn(),
   editedMessage = message,
   windowed = false,
+  isSubmitting = false,
 } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0, cacheTime: 0 } } });
   if (windowed) client.setQueryData([QueryKeys.historyWindow, 'conversation-1'], { limit: 24 });
@@ -91,7 +93,7 @@ function renderEditor({
       <EditMessage
         text={editedMessage.text}
         message={editedMessage}
-        isSubmitting={false}
+        isSubmitting={isSubmitting}
         ask={ask}
         enterEdit={enterEdit}
         siblingIdx={0}
@@ -458,5 +460,94 @@ describe('EditMessage', () => {
       expect.objectContaining({ targetResponseMessageId: emptyAssistantMessage.messageId }),
     );
     expect(enterEdit).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('EditMessage file removal', () => {
+  const report = { file_id: 'report', filename: 'report.pdf', type: 'application/pdf' };
+  const notes = { file_id: 'notes', filename: 'notes.txt', type: 'text/plain' };
+  const withFiles = { ...message, files: [report, notes] } as TMessage;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetMessages.mockReturnValue([withFiles]);
+  });
+
+  it('reruns with only the files that were kept, as a new version of the turn', async () => {
+    const user = userEvent.setup();
+    const ask = jest.fn();
+    const { enterEdit, setSiblingIdx } = renderEditor({ ask, editedMessage: withFiles });
+
+    const removeButtons = screen.getAllByRole('button', { name: 'com_ui_remove_file_named' });
+    expect(removeButtons).toHaveLength(2);
+    await user.click(removeButtons[0]);
+
+    expect(screen.getAllByRole('button', { name: 'com_ui_remove_file_named' })).toHaveLength(1);
+    expect(screen.getByText('com_ui_edit_files_removed')).toBeInTheDocument();
+    /** Focus stays in the chip row instead of falling to the page. */
+    expect(screen.getByRole('button', { name: 'com_ui_remove_file_named' })).toHaveFocus();
+
+    await user.click(screen.getByRole('button', { name: 'com_ui_update_rerun' }));
+
+    expect(ask).toHaveBeenCalledWith(
+      { text: 'Original message', parentMessageId: 'root', conversationId: 'conversation-1' },
+      expect.objectContaining({ overrideFiles: [notes] }),
+    );
+    expect(withFiles.files).toEqual([report, notes]);
+    expect(setSiblingIdx).toHaveBeenCalledWith(-1);
+    expect(enterEdit).toHaveBeenCalledWith(true);
+  });
+
+  it('does not let Save pretend to remove files', async () => {
+    const user = userEvent.setup();
+    renderEditor({ editedMessage: withFiles });
+
+    await user.type(screen.getByTestId('message-text-editor'), ' and more');
+    expect(screen.getByRole('button', { name: 'com_ui_save' })).toBeEnabled();
+
+    await user.click(screen.getAllByRole('button', { name: 'com_ui_remove_file_named' })[1]);
+    expect(screen.getByRole('button', { name: 'com_ui_save' })).toBeDisabled();
+  });
+
+  it('sends no files once every file is removed, and moves focus to the text', async () => {
+    const user = userEvent.setup();
+    const ask = jest.fn();
+    renderEditor({ ask, editedMessage: withFiles });
+
+    await user.click(screen.getAllByRole('button', { name: 'com_ui_remove_file_named' })[0]);
+    await user.click(screen.getByRole('button', { name: 'com_ui_remove_file_named' }));
+
+    expect(screen.queryByRole('button', { name: 'com_ui_remove_file_named' })).toBeNull();
+    expect(screen.getByTestId('message-text-editor')).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'com_ui_update_rerun' }));
+
+    expect(ask).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Original message' }),
+      expect.objectContaining({ overrideFiles: [] }),
+    );
+  });
+
+  it('cannot rerun a files-only message with every file removed', async () => {
+    const user = userEvent.setup();
+    const ask = jest.fn();
+    renderEditor({ ask, editedMessage: { ...withFiles, text: '', files: [report] } as TMessage });
+
+    await user.click(screen.getByRole('button', { name: 'com_ui_remove_file_named' }));
+
+    expect(screen.getByRole('button', { name: 'com_ui_update_rerun' })).toBeDisabled();
+  });
+
+  it('disables file removal while the editor is locked', () => {
+    renderEditor({ editedMessage: withFiles, isSubmitting: true });
+
+    for (const button of screen.getAllByRole('button', { name: 'com_ui_remove_file_named' })) {
+      expect(button).toBeDisabled();
+    }
+  });
+
+  it('shows no file chips on an answer', () => {
+    renderEditor({ editedMessage: { ...assistantMessage, files: [report] } as TMessage });
+
+    expect(screen.queryByRole('button', { name: 'com_ui_remove_file_named' })).toBeNull();
   });
 });

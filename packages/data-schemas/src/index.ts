@@ -13,6 +13,7 @@ export type {
 export { createModels } from './models';
 export {
   createMethods,
+  createSkillDeletionPersistenceAdapter,
   AGENT_OWNER_CONTACT_RESOLVED_FIELD,
   AgentSortCursorError,
   CLIENT_MESSAGE_SELECT,
@@ -32,6 +33,7 @@ export {
   validateSkillBody,
   validateRelativePath,
   inferSkillFileCategory,
+  filterExistingSkillIds,
   validateSkillFrontmatter,
   getCanonicalSkillFrontmatterKey,
   normalizeSkillFrontmatterKeys,
@@ -122,6 +124,8 @@ export {
   migrateTenantIndexes,
   dropSupersededPromptGroupIndexes,
   backfillMCPServerNormalizedNames,
+  backfillSearchTokens,
+  warnOnMissingSearchTokens,
 } from './migrations';
 export { createTaskCallbackMethods } from './methods/taskCallback';
 export type {
@@ -129,3 +133,8 @@ export type {
   TaskCallbackRecord,
   SealTaskCallbackResult,
 } from './methods/taskCallback';
+export type { SearchTokenBackfillResult } from './migrations';
+
+export { createBrowserSetupStore, createBrowserSetupBackend } from './methods/browserSetup';
+export type * from './types/browserSetup';
+export type * from './types/codeEnvironmentSetup';

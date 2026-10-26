@@ -12,9 +12,9 @@ import type { ScheduleMCPOutcome, ScheduledMCPIdentity } from 'librechat-data-pr
 import type { RunStep, StandardGraph } from '@librechat/agents';
 import type { AgentEventDetachedTerminalEvidence } from '~/agents/triggers/types';
 import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
+import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
 import type { ActivityPhaseSnapshot } from '~/agents/activityPhases/runtime';
 import type { ReplayLimits, ReplayPublication } from '../internal/replay';
-import type { SubagentContentBuffer } from '~/agents/subagentContent';
 import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
 import type { RecoveredSteerPayload } from '../SteerRecovery';
 import type { MCPRuntimeRequestBody } from '~/mcp/types';
@@ -466,6 +466,28 @@ export class JobPredecessorMismatchError extends Error {
   }
 }
 
+/** Thrown by `createJob` when the owner's account deletion began before the job could be admitted. */
+export class GenerationAdmissionDeniedError extends Error {
+  readonly code = 'ACCOUNT_DELETION_IN_PROGRESS';
+  readonly status = 409;
+
+  constructor() {
+    super('Account deletion is in progress');
+    this.name = 'GenerationAdmissionDeniedError';
+  }
+}
+
+/** Thrown by `createJob` when the account admission check itself failed; carries no lookup diagnostics. */
+export class GenerationAdmissionUnavailableError extends Error {
+  readonly code = 'GENERATION_ADMISSION_UNAVAILABLE';
+  readonly status = 503;
+
+  constructor() {
+    super('Generation admission could not be verified');
+    this.name = 'GenerationAdmissionUnavailableError';
+  }
+}
+
 export type JobMetadataPatch = Partial<
   Pick<
     SerializableJobData,
@@ -808,6 +830,8 @@ export interface UsageMetadata {
   input_token_details?: {
     /** Tokens written to cache */
     cache_creation?: number;
+    /** Subset of `cache_creation` written to Anthropic's 1-hour cache (see `getModelEndUsage`) */
+    cache_creation_1h?: number;
     /** Tokens read from cache */
     cache_read?: number;
     /** OpenAI GPT-5.6+ cache-write tokens (billed above the input rate) */

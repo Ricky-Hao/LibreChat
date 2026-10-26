@@ -1,4 +1,4 @@
-FROM node:24.16.0-bookworm
+FROM node:24.22.1-bookworm
 
 # Keep the base in sync with .nvmrc; fail the build instead of silently using another runtime.
 COPY .nvmrc package.json package-lock.json /opt/librechat-dev/

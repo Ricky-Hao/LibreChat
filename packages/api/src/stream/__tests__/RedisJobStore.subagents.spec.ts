@@ -1,6 +1,6 @@
 import type { Agents, SubagentUpdateEvent } from 'librechat-data-provider';
-import type { SubagentContentBuffer } from '~/agents/subagentContent';
-import { collectSubagentContent } from '~/agents/subagentContent';
+import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
+import { collectSubagentContent } from '~/agents/retainedSubagentContent';
 import { RedisJobStore } from '../implementations/RedisJobStore';
 
 const parent = (id = 'parent-step', index = 0) => ({

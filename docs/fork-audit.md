@@ -25,6 +25,14 @@ is covered by the [history-window maintenance guide](history-window-patch.md). I
 implementation commits, current responsibilities, regression entry points and upstream replacement
 criteria. This later maintenance is separate from the 2026-10-07 audit and is not deployment evidence.
 
+The 2026-10-26 upstream merge moves stream recovery into
+`packages/chat/src/core/resumable` and step reduction into `packages/chat/src/core/steps`.
+The client SSE hooks now supply the app's cache, pane state and event handlers. Keep the
+retained-prefix, terminal retry budget and foreground/online recovery tests when updating
+either side. Parent-message subagent recovery snapshots live in
+`packages/api/src/agents/retainedSubagentContent.ts`; upstream's `subagentContent.ts`
+separately owns persisted task-content logs. Both are required.
+
 ## Evidence key
 
 Private local records (not required to build or run the project) live under

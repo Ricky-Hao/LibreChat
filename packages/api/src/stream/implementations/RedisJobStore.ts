@@ -36,7 +36,7 @@ import type {
   ScheduleProviderOwner,
 } from '~/stream/interfaces/IJobStore';
 import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
-import type { SubagentContentBuffer } from '~/agents/subagentContent';
+import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
 import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
 import type { RecoveredSteerPayload } from '~/stream/SteerRecovery';
 import {
@@ -60,7 +60,7 @@ import {
   SCHEDULE_MCP_RECEIPT_LUA,
   SCHEDULE_RETENTION_LUA,
 } from '~/stream/internal/scheduleReceipts';
-import { collectSubagentContent, snapshotSubagentContent } from '~/agents/subagentContent';
+import { collectSubagentContent, snapshotSubagentContent } from '~/agents/retainedSubagentContent';
 import { parseScheduleMCPCompletion } from '~/schedules/authorization/continuation';
 import { instrumentIORedisClient, RedisUseCases } from '~/cache/redisTelemetry';
 import { RecoveredSteerPayloadMismatchError } from '~/stream/SteerRecovery';

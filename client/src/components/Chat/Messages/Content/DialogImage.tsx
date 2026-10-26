@@ -290,7 +290,7 @@ export default function DialogImage({
             <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
           )}
           {/* Close button - top left */}
-          <div className="absolute top-4 left-4 z-20">
+          <div className="absolute inset-s-4 top-4 z-20">
             <TooltipAnchor
               zIndex={TOOLTIP_Z_INDEX}
               description={localize('com_ui_close')}
@@ -299,7 +299,8 @@ export default function DialogImage({
                   ref={closeButtonRef}
                   onClick={() => onOpenChange(false)}
                   variant="media"
-                  className="h-10 w-10 p-0"
+                  size="bare"
+                  className="h-10 w-10"
                   aria-label={localize('com_ui_close')}
                 >
                   <X className="size-6" aria-hidden="true" />
@@ -310,7 +311,7 @@ export default function DialogImage({
 
           {/* Action buttons - top right (21rem = 20rem panel + 1rem gap) */}
           <div
-            className={`absolute top-4 z-20 flex items-center gap-2 transition-[right] duration-300 ${detailsBeside ? 'right-[21rem]' : 'right-4'}`}
+            className={`absolute top-4 z-20 flex items-center gap-2 transition-all duration-300 ${detailsBeside ? 'inset-e-[21rem]' : 'inset-e-4'}`}
           >
             {zoom > 1 && (
               <TooltipAnchor
@@ -320,7 +321,8 @@ export default function DialogImage({
                   <Button
                     onClick={resetZoom}
                     variant="media"
-                    className="h-10 w-10 p-0"
+                    size="bare"
+                    className="h-10 w-10"
                     aria-label={localize('com_ui_reset_zoom')}
                   >
                     <RotateCcw className="size-5" aria-hidden="true" />
@@ -335,7 +337,8 @@ export default function DialogImage({
                 <Button
                   onClick={() => downloadImage()}
                   variant="media"
-                  className="h-10 w-10 p-0"
+                  size="bare"
+                  className="h-10 w-10"
                   aria-label={localize('com_ui_download')}
                 >
                   <ArrowDownToLine className="size-5" aria-hidden="true" />
@@ -350,7 +353,8 @@ export default function DialogImage({
                   <Button
                     onClick={() => setIsPromptOpen(!isPromptOpen)}
                     variant="media"
-                    className="h-10 w-10 p-0"
+                    size="bare"
+                    className="h-10 w-10"
                     aria-label={imageDetailsLabel}
                   >
                     <MorphIcon
@@ -365,7 +369,7 @@ export default function DialogImage({
 
           {/* Image container - centered */}
           <div
-            className={`transition-[margin] duration-300 ${detailsBeside ? 'mr-80' : ''}`}
+            className={`transition-[margin] duration-300 ${detailsBeside ? 'me-80' : ''}`}
             onClick={(e) => e.stopPropagation()}
           >
             <div
@@ -405,8 +409,8 @@ export default function DialogImage({
           {showDetails && (
             <div
               data-side-panel
-              className={`bg-surface-primary border-text-on-media/10 fixed top-0 right-0 z-30 h-full w-80 max-w-full transform border-l shadow-2xl transition-transform duration-300 ${
-                isPromptOpen ? 'translate-x-0' : 'translate-x-full'
+              className={`bg-surface-primary border-text-on-media/10 fixed inset-e-0 top-0 z-30 h-full w-80 max-w-full transform border-s shadow-2xl transition-transform duration-300 ${
+                isPromptOpen ? 'translate-x-0' : 'translate-x-full rtl:-translate-x-full'
               }`}
               onClick={(e) => e.stopPropagation()}
             >
@@ -418,7 +422,8 @@ export default function DialogImage({
                   <Button
                     onClick={() => setIsPromptOpen(false)}
                     variant="ghost"
-                    className={detailsBeside ? 'hidden' : 'h-10 w-10 p-0'}
+                    size="bare"
+                    className={detailsBeside ? 'hidden' : 'h-10 w-10'}
                     aria-label={localize('com_ui_hide_image_details')}
                   >
                     <X className="size-5" aria-hidden="true" />

@@ -41,6 +41,7 @@ jest.mock('~/server/services/Config', () => ({
   getCachedTools: jest.fn().mockResolvedValue({}),
   getAppConfig: jest.fn().mockResolvedValue({
     fileStrategy: 'local',
+    skillDeletion: { finalizationEnabled: true },
     paths: { uploads: '/tmp/uploads', images: '/tmp/images' },
   }),
 }));
@@ -57,7 +58,8 @@ jest.mock('~/server/middleware/config/app', () => (req, _res, next) => {
 
 jest.mock('~/server/services/Files/strategies', () => ({
   getStrategyFunctions: jest.fn().mockReturnValue({
-    saveBuffer: jest.fn().mockResolvedValue('/uploads/test/file.txt'),
+    saveBuffer: jest.fn(async ({ userId, fileName }) => `/uploads/${userId}/${fileName}`),
+    deleteFile: jest.fn().mockResolvedValue(undefined),
     getDownloadStream: jest.fn().mockResolvedValue({
       pipe: jest.fn(),
       on: jest.fn(),
@@ -111,6 +113,7 @@ let mongoServer;
 let skillRoutes;
 let Skill;
 let SkillFile;
+let SkillUploadIntent;
 let AclEntry;
 let AccessRole;
 let User;
@@ -130,6 +133,7 @@ beforeAll(async () => {
   const dbModels = require('~/db/models');
   Skill = dbModels.Skill;
   SkillFile = dbModels.SkillFile;
+  SkillUploadIntent = dbModels.SkillUploadIntent;
   AclEntry = dbModels.AclEntry;
   AccessRole = dbModels.AccessRole;
   User = dbModels.User;
@@ -157,11 +161,14 @@ beforeAll(async () => {
   currentTestUser = testUsers.owner;
   skillRoutes = require('./skills');
   app.use('/api/skills', skillRoutes);
+  const { getSkillStatesController } = require('~/server/controllers/SkillStatesController');
+  app.get('/api/skill-states-probe', getSkillStatesController);
 });
 
 afterEach(async () => {
   await Skill.deleteMany({});
   await SkillFile.deleteMany({});
+  await SkillUploadIntent.deleteMany({});
   await AclEntry.deleteMany({});
   currentTestUser = testUsers.owner;
   mockFileConfig = undefined;
@@ -265,6 +272,22 @@ describe('Skill routes', () => {
     errSpy = jest.spyOn(console, 'error').mockImplementation();
   });
   afterEach(() => errSpy.mockRestore());
+
+  it('prunes a logically deleted Skill from user Skill states before ACL cleanup', async () => {
+    const created = await createSkillAsOwner({ name: 'state-fence-skill' });
+    expect(created.status).toBe(201);
+    const id = created.body._id;
+    await User.updateOne({ _id: testUsers.owner._id }, { $set: { skillStates: { [id]: false } } });
+
+    const before = await request(app).get('/api/skill-states-probe');
+    expect(before.status).toBe(200);
+    expect(before.body[id]).toBe(false);
+
+    await Skill.updateOne({ _id: id }, { $set: { deletingAt: new Date() } });
+    const after = await request(app).get('/api/skill-states-probe');
+    expect(after.status).toBe(200);
+    expect(after.body[id]).toBeUndefined();
+  });
 
   describe('POST /api/skills', () => {
     it('creates a skill and grants SKILL_OWNER ACL', async () => {
@@ -510,13 +533,21 @@ describe('Skill routes', () => {
     });
 
     it('persists storage metadata for imported skill files', async () => {
-      const savedFilepath =
-        'https://cdn.example.com/r/us-east-2/uploads/user123/imported-script.sh';
-      const saveBuffer = jest.fn().mockResolvedValue(savedFilepath);
+      const getFileURL = jest.fn(
+        async ({ userId, fileName }) =>
+          `https://cdn.example.com/r/us-east-2/uploads/${userId}/${fileName}`,
+      );
+      const saveBuffer = jest.fn(async (params) => getFileURL(params));
       const { getFileStrategy } = require('~/server/utils/getFileStrategy');
       const { getStrategyFunctions } = require('~/server/services/Files/strategies');
-      getFileStrategy.mockReturnValueOnce('cloudfront');
-      getStrategyFunctions.mockReturnValueOnce({ saveBuffer });
+      const defaultStrategy = getStrategyFunctions();
+      getFileStrategy.mockReturnValue('cloudfront');
+      const cloudfrontStrategy = {
+        saveBuffer,
+        deleteFile: jest.fn().mockResolvedValue(undefined),
+        getFileURL,
+      };
+      getStrategyFunctions.mockReturnValue(cloudfrontStrategy);
 
       const zip = new JSZip();
       zip.file(
@@ -536,6 +567,8 @@ describe('Skill routes', () => {
         filename: 'imported-skill.skill',
         contentType: 'application/zip',
       });
+      getFileStrategy.mockReturnValue('local');
+      getStrategyFunctions.mockReturnValue(defaultStrategy);
 
       expect(res.status).toBe(201);
       expect(saveBuffer).toHaveBeenCalledWith(
@@ -544,6 +577,7 @@ describe('Skill routes', () => {
           basePath: 'uploads',
         }),
       );
+      const savedFilepath = await saveBuffer.mock.results[0].value;
 
       const savedFile = await SkillFile.findOne({
         relativePath: 'scripts/imported-script.sh',
@@ -552,14 +586,14 @@ describe('Skill routes', () => {
         expect.objectContaining({
           filepath: savedFilepath,
           source: 'cloudfront',
-          storageKey: 'r/us-east-2/uploads/user123/imported-script.sh',
+          storageKey: new URL(savedFilepath).pathname.slice(1),
           storageRegion: 'us-east-2',
         }),
       );
     });
 
     it('rolls back the skill, files, ACL, and stored blob when a bundled file fails', async () => {
-      const saveBuffer = jest.fn().mockResolvedValue('/uploads/test/queries.sql');
+      const saveBuffer = jest.fn(async ({ userId, fileName }) => `/uploads/${userId}/${fileName}`);
       const deleteFile = jest.fn().mockResolvedValue(undefined);
       const { getStrategyFunctions } = require('~/server/services/Files/strategies');
       /** Both the write and the rollback delete resolve a strategy, so the
@@ -602,7 +636,7 @@ describe('Skill routes', () => {
       expect(await AclEntry.countDocuments({ resourceType: ResourceType.SKILL })).toBe(0);
       expect(deleteFile).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ filepath: '/uploads/test/queries.sql' }),
+        expect.objectContaining({ filepath: await saveBuffer.mock.results[0].value }),
       );
     });
 
@@ -802,8 +836,8 @@ describe('Skill routes', () => {
       const { updateSkillFileContent } = require('~/models');
       const originalStrategy = getStrategyFunctions.getMockImplementation();
       const stored = new Map();
-      const saveBuffer = jest.fn(async ({ buffer, fileName }) => {
-        const filepath = `/uploads/${fileName}`;
+      const saveBuffer = jest.fn(async ({ buffer, userId, fileName }) => {
+        const filepath = `/uploads/${userId}/${fileName}`;
         stored.set(filepath, Buffer.from(buffer));
         return filepath;
       });
@@ -814,7 +848,11 @@ describe('Skill routes', () => {
         }
         return Readable.from([buffer]);
       });
-      getStrategyFunctions.mockReturnValue({ saveBuffer, getDownloadStream });
+      getStrategyFunctions.mockReturnValue({
+        saveBuffer,
+        getDownloadStream,
+        deleteFile: jest.fn().mockResolvedValue(undefined),
+      });
 
       try {
         const created = await createSkillAsOwner();
@@ -876,7 +914,7 @@ describe('Skill routes', () => {
       expect((await upload('stale', initial.body.file_id)).status).toBe(409);
       const stored = await SkillFile.findOne({ skillId: created.body._id });
       expect(stored.file_id).toBe(replaced.body.file_id);
-      await request(app).delete(`${url}/references/revision.md`);
+      await request(app).delete(`${url}/references/revision.md`).expect(200);
       expect((await upload('resurrect', replaced.body.file_id)).status).toBe(409);
       expect(await SkillFile.countDocuments({ skillId: created.body._id })).toBe(0);
     });
@@ -971,7 +1009,7 @@ describe('Skill routes', () => {
       expect((await Skill.findById(skillId).lean()).version).toBe(capturedVersion + 1);
       const winner = await SkillFile.findOne({ skillId, relativePath }).lean();
 
-      const saveBuffer = jest.fn(async ({ fileName }) => `/uploads/${fileName}`);
+      const saveBuffer = jest.fn(async ({ userId, fileName }) => `/uploads/${userId}/${fileName}`);
       const deleteFile = jest.fn(async () => undefined);
       getStrategyFunctions.mockReturnValue({ saveBuffer, deleteFile });
       try {
@@ -1023,7 +1061,7 @@ describe('Skill routes', () => {
       };
       let browserRevision;
       const deleteFile = jest.fn(async () => undefined);
-      const saveBuffer = jest.fn(async ({ fileName }) => {
+      const saveBuffer = jest.fn(async ({ userId, fileName }) => {
         if (saveBuffer.mock.calls.length === 1) {
           const browser = await request(app)
             .post(`${url}/references/overlap.md`)
@@ -1036,7 +1074,7 @@ describe('Skill routes', () => {
           expect(browser.status).toBe(200);
           browserRevision = browser.body.file_id;
         }
-        return `/uploads/${fileName}`;
+        return `/uploads/${userId}/${fileName}`;
       });
       getStrategyFunctions.mockReturnValue({ saveBuffer, deleteFile });
       try {
@@ -1052,8 +1090,8 @@ describe('Skill routes', () => {
           }),
         ).rejects.toMatchObject({ code: 'SKILL_FILE_CONFLICT' });
         expect(saveBuffer).toHaveBeenCalledTimes(2);
-        const agentPath = `/uploads/${saveBuffer.mock.calls[0][0].fileName}`;
-        const browserPath = `/uploads/${saveBuffer.mock.calls[1][0].fileName}`;
+        const agentPath = await saveBuffer.mock.results[0].value;
+        const browserPath = await saveBuffer.mock.results[1].value;
         expect(await SkillFile.findOne({ skillId, relativePath }).lean()).toMatchObject({
           file_id: browserRevision,
           filepath: browserPath,
@@ -1090,10 +1128,10 @@ describe('Skill routes', () => {
       };
       await upsertSkillFile(input);
       const deleteFile = jest.fn(async () => undefined);
-      const saveBuffer = jest.fn(async ({ fileName }) => {
+      const saveBuffer = jest.fn(async ({ userId, fileName }) => {
         // Another writer commits after the handler's preflight but before its atomic update.
         await upsertSkillFile({ ...input, file_id: 'winner', filepath: '/uploads/winner' });
-        return `/uploads/${fileName}`;
+        return `/uploads/${userId}/${fileName}`;
       });
       getStrategyFunctions.mockReturnValue({ saveBuffer, deleteFile });
       try {
@@ -1111,21 +1149,19 @@ describe('Skill routes', () => {
           filepath: '/uploads/winner',
         });
         expect(deleteFile).toHaveBeenCalledTimes(1);
-        expect(deleteFile.mock.calls[0][1].filepath).toBe(
-          `/uploads/${saveBuffer.mock.calls[0][0].fileName}`,
-        );
+        expect(deleteFile.mock.calls[0][1].filepath).toBe(await saveBuffer.mock.results[0].value);
       } finally {
         getStrategyFunctions.mockImplementation(originalStrategy);
       }
     });
 
-    it('does not delete committed file bytes if the parent version bump fails', async () => {
+    it('acknowledges committed file bytes if the parent version bump fails', async () => {
       const created = await createSkillAsOwner();
       const { getStrategyFunctions } = require('~/server/services/Files/strategies');
       const originalStrategy = getStrategyFunctions.getMockImplementation();
       const deleteFile = jest.fn(async () => undefined);
       getStrategyFunctions.mockReturnValue({
-        saveBuffer: jest.fn(async () => '/uploads/committed'),
+        saveBuffer: jest.fn(async ({ userId, fileName }) => `/uploads/${userId}/${fileName}`),
         deleteFile,
       });
       const bump = jest
@@ -1139,9 +1175,10 @@ describe('Skill routes', () => {
             filename: 'committed.md',
             contentType: 'text/markdown',
           });
-        expect(response.status).toBe(500);
+        expect(response.status).toBe(200);
+        const committedPath = await getStrategyFunctions().saveBuffer.mock.results[0].value;
         expect(await SkillFile.findOne({ skillId: created.body._id }).lean()).toMatchObject({
-          filepath: '/uploads/committed',
+          filepath: committedPath,
         });
         expect(deleteFile).not.toHaveBeenCalled();
       } finally {
@@ -1150,14 +1187,14 @@ describe('Skill routes', () => {
       }
     });
 
-    it('cleans up the superseded blob when a replacement commits but the parent bump fails', async () => {
+    it('acknowledges a replacement and queues the superseded blob if the parent bump fails', async () => {
       const { getStrategyFunctions } = require('~/server/services/Files/strategies');
       const { upsertSkillFile } = require('~/models');
       const originalStrategy = getStrategyFunctions.getMockImplementation();
       const created = await createSkillAsOwner();
       const skillId = created.body._id;
       const oldPath = '/uploads/previous';
-      const newPath = '/uploads/replacement';
+      let newPath;
       const stored = new Set([oldPath]);
       await upsertSkillFile({
         skillId,
@@ -1173,7 +1210,8 @@ describe('Skill routes', () => {
       const deleteFile = jest.fn(async (_req, { filepath }) => {
         stored.delete(filepath);
       });
-      const saveBuffer = jest.fn(async () => {
+      const saveBuffer = jest.fn(async ({ userId, fileName }) => {
+        newPath = `/uploads/${userId}/${fileName}`;
         stored.add(newPath);
         return newPath;
       });
@@ -1190,18 +1228,19 @@ describe('Skill routes', () => {
             filename: 'committed.md',
             contentType: 'text/markdown',
           });
-        expect(response.status).toBe(500);
+        expect(response.status).toBe(200);
         expect(await SkillFile.findOne({ skillId }).lean()).toMatchObject({
           filepath: newPath,
           file_id: expect.not.stringMatching('original'),
         });
         expect(saveBuffer).toHaveBeenCalledTimes(1);
-        expect(deleteFile).toHaveBeenCalledTimes(1);
-        expect(deleteFile.mock.calls[0][1]).toMatchObject({
-          filepath: oldPath,
-          user: testUsers.editor._id.toString(),
+        expect(deleteFile).not.toHaveBeenCalled();
+        expect(await SkillUploadIntent.findOne({ fileId: 'original' }).lean()).toMatchObject({
+          state: 'committed',
+          storageKey: oldPath,
+          cleanupRequestedAt: expect.any(Date),
         });
-        expect(stored.has(oldPath)).toBe(false);
+        expect(stored.has(oldPath)).toBe(true);
         expect(stored.has(newPath)).toBe(true);
       } finally {
         bump.mockRestore();

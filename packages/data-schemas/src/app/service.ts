@@ -2,6 +2,7 @@ import {
   AgentCapabilities,
   EModelEndpoint,
   chatProjectsConfigSchema,
+  configSchema,
   filtersConfigSchema,
   conversationListConfigSchema,
   toolCallPreviewsConfigSchema,
@@ -19,6 +20,7 @@ import type {
   TAgentsEndpoint,
 } from 'librechat-data-provider';
 import type { AppConfig, FunctionTool } from '~/types/app';
+import type { ConfigDerivation } from './derive';
 import { loadMemoryConfig, isMemoryEnabled } from './memory';
 import { loadDefaultInterface } from './interface';
 import { loadTurnstileConfig } from './turnstile';
@@ -156,8 +158,13 @@ export const AppService = async (params?: {
   config: DeepPartial<TCustomConfig>;
   paths?: Paths;
   systemTools?: Record<string, FunctionTool>;
+  /**
+   * Expands each custom endpoint's `customParams` for the served `endpoints.custom`; `config`
+   * keeps them as librechat.yaml writes them.
+   */
+  expandCustomEndpoint?: ConfigDerivation['expandCustomEndpoint'];
 }): Promise<AppConfig> => {
-  const { config, paths, systemTools } = params || {};
+  const { config, paths, systemTools, expandCustomEndpoint } = params || {};
   if (!config) {
     throw new Error('Config is required');
   }
@@ -168,6 +175,7 @@ export const AppService = async (params?: {
   const memory = loadMemoryConfig(config.memory);
   const summarization = loadSummarizationConfig(config);
   const skillSync = loadSkillSyncConfig(config);
+  const skillDeletion = configSchema.shape.skillDeletion.parse(config.skillDeletion);
   const filteredTools = config.filteredTools;
   const includedTools = config.includedTools;
   const fileStrategy = (config.fileStrategy ?? configDefaults.fileStrategy) as
@@ -211,8 +219,10 @@ export const AppService = async (params?: {
     actions,
     balance,
     skillSync,
+    skillDeletion,
     webSearch,
     githubCompare: config.githubCompare,
+    timeouts: config.timeouts,
     mcpSettings,
     mcpAppSandbox,
     fileStrategy,
@@ -235,6 +245,7 @@ export const AppService = async (params?: {
     fileStrategies: config.fileStrategies,
     cloudfront: config.cloudfront as AppConfig['cloudfront'],
     secureImageLinks: config.secureImageLinks !== false,
+    credentials: { writeFormat: config.credentials?.writeFormat ?? 'v3' },
     conversationList: loadConversationListConfig(config),
     toolCallPreviews: loadToolCallPreviewsConfig(config),
     messageReads: messageReadsConfigSchema.parse(config.messageReads ?? {}),
@@ -270,7 +281,7 @@ export const AppService = async (params?: {
     return appConfig;
   }
 
-  const loadedEndpoints = loadEndpoints(config, agentsDefaults);
+  const loadedEndpoints = loadEndpoints(config, agentsDefaults, expandCustomEndpoint);
   stripInertMemoryCapability(loadedEndpoints[EModelEndpoint.agents]);
 
   const appConfig: AppConfig = {

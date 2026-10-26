@@ -8,11 +8,13 @@ import type { DeleteResult, FilterQuery, Model, Types, UpdateQuery } from 'mongo
 import type { UserSubmittedMessageFieldPath } from 'librechat-data-provider';
 import type { SearchParams } from 'meilisearch';
 import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
+import type { ISubagentContentChunk } from '~/models/subagentContent';
 import type { AppConfig, IConversation, IMessage } from '~/types';
 import type { BoundedMessageMethods } from './messageReads';
 import { createChatExpirationDate, createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { activeExpirationFilter, createFallbackRetentionDate } from '~/utils/retention';
 import { fitBoundAppSnapshots, hasBoundAppSnapshots } from './appSnapshots';
+import { prepareSubagentContentDeletion } from './subagentContent';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { createBoundedMessageMethods } from './messageReads';
 import { tenantStorage } from '~/config/tenantContext';
@@ -322,6 +324,18 @@ function buildMessageSaveUpdate(
   };
 }
 
+/**
+ * A legacy temporary message stores only its deadline; hydration then fills
+ * `isTemporary` with the schema default `false`, which must not read as permanent.
+ */
+function isTemporaryMessage(message: IMessage): boolean {
+  if (message.isTemporary === true) {
+    return true;
+  }
+  const implicit = message.isTemporary == null || message.$isDefault?.('isTemporary') === true;
+  return implicit && message.expiredAt != null;
+}
+
 async function findOneAndMergeMessageProvenance(
   Message: Model<IMessage>,
   identity: FilterQuery<IMessage>,
@@ -593,6 +607,7 @@ export type SubagentThreadViewMessageRecord = Pick<
   | 'subagentTriggerProjection'
 > & {
   textProjectionTruncated?: boolean;
+  contentRecoveryAvailable?: boolean;
   subagentTranscriptProjectionTruncated?: boolean;
   /** Storage-bounded visible content; validated into the public activity type by the API. */
   subagentActivity?: unknown[];
@@ -796,6 +811,7 @@ export interface MessageMethods extends BoundedMessageMethods {
     taskId: string;
     invocationId: string;
     tenantId?: string;
+    activeOnly?: boolean;
   }): Promise<NonNullable<NonNullable<IMessage['subagentTask']>['controlReceipts']>[number] | null>;
   getSubagentTaskControlReplay(input: {
     userId: string;
@@ -822,15 +838,6 @@ export interface MessageMethods extends BoundedMessageMethods {
     overrideTimestamp?: boolean,
     provenance?: { privateTextTokens: ReadonlyMap<string, readonly string[]> },
   ): Promise<unknown>;
-  recordMessage(params: {
-    user: string;
-    endpoint?: string;
-    messageId: string;
-    conversationId?: string;
-    parentMessageId?: string;
-    [key: string]: unknown;
-  }): Promise<IMessage | null>;
-  updateMessageText(userId: string, params: { messageId: string; text: string }): Promise<void>;
   updateToolCallResult(params: {
     userId: string;
     messageId: string;
@@ -917,10 +924,6 @@ export interface MessageMethods extends BoundedMessageMethods {
     kind: 'manual' | 'wakeup';
     claimId: string;
   }): Promise<boolean>;
-  deleteMessagesSince(
-    userId: string,
-    params: { messageId: string; conversationId: string },
-  ): Promise<DeleteResult>;
   getMessages(
     filter: FilterQuery<IMessage>,
     select?: string,
@@ -1529,83 +1532,6 @@ export function createMessageMethods(
       };
     } catch (err) {
       logger.error('Error saving messages in bulk:', err);
-      throw err;
-    }
-  }
-
-  /**
-   * Records a message in the database (no UUID validation).
-   */
-  async function recordMessage({
-    user,
-    endpoint,
-    messageId,
-    conversationId,
-    parentMessageId,
-    ...rest
-  }: {
-    user: string;
-    endpoint?: string;
-    messageId: string;
-    conversationId?: string;
-    parentMessageId?: string;
-    [key: string]: unknown;
-  }) {
-    try {
-      const provenance = capNormalizedProvenance(
-        normalizeUserSubmittedPaths(rest.userSubmittedPaths),
-        normalizeUserSubmittedMessageFieldPaths(rest.userSubmittedMessageFieldPaths),
-      );
-      const {
-        userSubmittedPaths: _userSubmittedPaths,
-        userSubmittedMessageFieldPaths: _userSubmittedMessageFieldPaths,
-        ...safeRest
-      } = rest;
-      delete safeRest.privateText;
-      delete safeRest.privacyRevision;
-      delete safeRest.privateTextTokens;
-      const message = {
-        user,
-        endpoint,
-        messageId,
-        conversationId,
-        parentMessageId,
-        ...safeRest,
-        ...(provenance.userSubmittedPaths.length > 0 && {
-          userSubmittedPaths: provenance.userSubmittedPaths,
-        }),
-        ...(provenance.userSubmittedMessageFieldPaths.length > 0 && {
-          userSubmittedMessageFieldPaths: provenance.userSubmittedMessageFieldPaths,
-        }),
-        ...(provenance.promoteWholeMessage && { isUserSubmitted: true }),
-      };
-      return await writeMessage({ user, messageId }, message, {
-        upsert: true,
-        unsetPrivateText: Object.prototype.hasOwnProperty.call(safeRest, 'text'),
-        stampModelOutputOnInsert:
-          rest.isCreatedByUser === false && rest.isUserSubmitted === undefined,
-      });
-    } catch (err) {
-      logger.error('Error recording message:', err);
-      throw err;
-    }
-  }
-
-  /**
-   * Updates the text of a message.
-   */
-  async function updateMessageText(
-    userId: string,
-    { messageId, text }: { messageId: string; text: string },
-  ) {
-    try {
-      await writeMessage(
-        { messageId, user: userId },
-        { text },
-        { upsert: false, unsetPrivateText: true },
-      );
-    } catch (err) {
-      logger.error('Error updating message text:', err);
       throw err;
     }
   }
@@ -2639,6 +2565,7 @@ export function createMessageMethods(
         tokenCount: updatedMessage.tokenCount,
         feedback: updatedMessage.feedback,
         endpoint: updatedMessage.endpoint,
+        isTemporary: isTemporaryMessage(updatedMessage),
         langfuseSampled: updatedMessage.langfuseSampled,
         langfuseDestinationIds: updatedMessage.langfuseDestinationIds,
         langfuseRunId: updatedMessage.langfuseRunId,
@@ -2743,12 +2670,14 @@ export function createMessageMethods(
     taskId,
     invocationId,
     tenantId,
+    activeOnly = false,
   }: {
     userId: string;
     conversationId: string;
     taskId: string;
     invocationId: string;
     tenantId?: string;
+    activeOnly?: boolean;
   }): Promise<StoredSubagentControlReceipt | null> {
     if (
       userId.length === 0 ||
@@ -2763,6 +2692,7 @@ export function createMessageMethods(
     }
     const Message = mongoose.models.Message as Model<IMessage>;
     const input = await Message.findOne({
+      ...(activeOnly ? activeExpirationFilter<IMessage>() : {}),
       user: userId,
       conversationId,
       ...(tenantId == null ? { tenantId: { $exists: false } } : { tenantId }),
@@ -3028,30 +2958,6 @@ export function createMessageMethods(
   }
 
   /**
-   * Deletes messages in a conversation since a specific message.
-   */
-  async function deleteMessagesSince(
-    userId: string,
-    { messageId, conversationId }: { messageId: string; conversationId: string },
-  ) {
-    try {
-      const Message = mongoose.models.Message as Model<IMessage>;
-      const message = await Message.findOne({ messageId, user: userId }).lean<IMessage>();
-
-      if (message) {
-        const query = Message.find({ conversationId, user: userId });
-        return await query.deleteMany({
-          createdAt: { $gt: message.createdAt },
-        });
-      }
-      return undefined;
-    } catch (err) {
-      logger.error('Error deleting messages:', err);
-      throw err;
-    }
-  }
-
-  /**
    * Retrieves messages from the database.
    */
   async function getMessages(
@@ -3122,7 +3028,10 @@ export function createMessageMethods(
       };
       const activityProjectionAvailable = {
         $and: [
-          { $eq: ['$subagentActivityProjection.version', 1] },
+          { $in: ['$subagentActivityProjection.version', [1, 2]] },
+          {
+            $eq: ['$messageId', { $concat: ['$subagentActivityProjection.taskId', ':assistant'] }],
+          },
           '$_subagentActivityProjectionSourceIsString',
           {
             $lte: [
@@ -3135,8 +3044,28 @@ export function createMessageMethods(
       const transcriptAvailable = {
         $and: [
           '$_subagentTranscriptSourceIsString',
+          { $eq: ['$messageId', { $concat: ['$subagentTranscript.taskId', ':assistant'] }] },
           {
             $lte: ['$_subagentTranscriptSourceBytes', SUBAGENT_TRANSCRIPT_SOURCE_BYTE_LIMIT],
+          },
+        ],
+      };
+      // Legacy reprojection is optional: retain the usable projection until the
+      // API validates the current input boundary against the bounded transcript.
+      const legacySteeringTranscriptAvailable = {
+        $and: [
+          { $eq: ['$subagentActivityProjection.version', 1] },
+          {
+            $cond: [
+              transcriptAvailable,
+              {
+                $gte: [
+                  { $indexOfBytes: ['$subagentTranscript.messagesJson', '"source":"steer"'] },
+                  0,
+                ],
+              },
+              false,
+            ],
           },
         ],
       };
@@ -3198,17 +3127,14 @@ export function createMessageMethods(
         message: {
           $cond: [
             { $eq: [{ $type: '$$receipt.message' }, 'string'] },
-            boundedString('$$receipt.message', SUBAGENT_VIEW_CONTROL_STRING_CODE_POINT_LIMIT),
+            boundedString('$$receipt.message', MAX_SUBAGENT_CONTROL_MESSAGE_LENGTH),
             null,
           ],
         },
         messageTruncated: {
           $or: [
             { $eq: ['$$receipt.messageTruncated', true] },
-            stringProjectionTruncated(
-              '$$receipt.message',
-              SUBAGENT_VIEW_CONTROL_STRING_CODE_POINT_LIMIT,
-            ),
+            stringProjectionTruncated('$$receipt.message', MAX_SUBAGENT_CONTROL_MESSAGE_LENGTH),
           ],
         },
       };
@@ -3601,6 +3527,12 @@ export function createMessageMethods(
         createdAt: 1,
         error: 1,
         unfinished: 1,
+        contentRecoveryAvailable: {
+          $and: [
+            { $eq: [{ $ifNull: ['$subagentContent.version', 0] }, 1] },
+            { $ne: [{ $ifNull: ['$subagentContent.deleted', false] }, true] },
+          ],
+        },
         subagentTranscriptProjectionTruncated: {
           $cond: [{ $ne: [{ $type: '$subagentTranscript.messagesJson' }, 'missing'] }, true, null],
         },
@@ -3665,13 +3597,23 @@ export function createMessageMethods(
         },
         subagentTranscript: {
           $cond: [
-            activityProjectionAvailable,
-            null,
+            {
+              $and: [
+                transcriptAvailable,
+                {
+                  $or: [
+                    { $eq: [activityProjectionAvailable, false] },
+                    legacySteeringTranscriptAvailable,
+                  ],
+                },
+              ],
+            },
             {
               taskId: '$subagentTranscript.taskId',
               mode: '$subagentTranscript.mode',
               messagesJson: '$subagentTranscript.messagesJson',
             },
+            null,
           ],
         },
       };
@@ -3876,6 +3818,9 @@ export function createMessageMethods(
           return {
             ...projected,
             subagentActivityProjectionJson: source.subagentActivityProjectionJson,
+            ...(source.subagentTranscript == null
+              ? {}
+              : { subagentTranscript: source.subagentTranscript }),
             ...(source.subagentActivityProjectionTruncated === true
               ? { subagentActivityProjectionTruncated: true }
               : {}),
@@ -4230,6 +4175,62 @@ export function createMessageMethods(
   async function deleteMessages(filter: FilterQuery<IMessage>) {
     try {
       const Message = mongoose.models.Message as Model<IMessage>;
+      if (typeof filter.messageId === 'string' && !/:(user|assistant)$/.test(filter.messageId)) {
+        return await Message.deleteMany(filter);
+      }
+      const wholeScope =
+        typeof filter.user === 'string' &&
+        Object.keys(filter).every((key) => ['user', 'conversationId', 'tenantId'].includes(key));
+      const contentSources = wholeScope
+        ? []
+        : await Message.find({
+            $and: [filter, { subagentContent: { $exists: true } }],
+          })
+            .select('user tenantId conversationId messageId')
+            .lean<IMessage[]>();
+      const SubagentContent = mongoose.models.SubagentContent as
+        | Model<ISubagentContentChunk>
+        | undefined;
+      if (SubagentContent != null) {
+        if (wholeScope) {
+          await prepareSubagentContentDeletion(mongoose, filter);
+          return await Message.deleteMany(filter);
+        }
+        const scopes = new Map<
+          string,
+          {
+            user: string;
+            conversationId: string;
+            taskId: string;
+            tenantId: string | { $exists: false };
+          }
+        >();
+        for (const source of contentSources) {
+          const taskId = source.messageId.replace(/:(user|assistant)$/, '');
+          if (taskId === source.messageId) continue;
+          scopes.set(`${source.tenantId ?? ''}:${source.user}:${source.conversationId}:${taskId}`, {
+            user: source.user,
+            conversationId: source.conversationId,
+            taskId,
+            tenantId: source.tenantId ?? { $exists: false },
+          });
+        }
+        if (scopes.size > 0) {
+          const contentScopes = [...scopes.values()];
+          /** Revoke the task before cleanup, including appends already admitted.
+           * Retain both markers until payload deletion succeeds so retries rediscover them. */
+          await Message.updateMany(
+            {
+              $or: contentScopes.map(({ taskId, ...scope }) => ({
+                ...scope,
+                messageId: { $in: [`${taskId}:user`, `${taskId}:assistant`] },
+              })),
+            },
+            { $set: { 'subagentContent.deleted': true } },
+          );
+          await SubagentContent.deleteMany({ $or: contentScopes });
+        }
+      }
       return await Message.deleteMany(filter);
     } catch (err) {
       logger.error('Error deleting messages:', err);
@@ -4368,8 +4369,6 @@ export function createMessageMethods(
     getPrivateMessageTexts,
     saveMessage,
     bulkSaveMessages,
-    recordMessage,
-    updateMessageText,
     updateToolCallResult,
     claimBackgroundToolResults,
     confirmBackgroundToolResultClaim,
@@ -4380,7 +4379,6 @@ export function createMessageMethods(
     getSubagentTaskControlReplay,
     claimSubagentTaskResult,
     releaseSubagentTaskResultClaim,
-    deleteMessagesSince,
     getMessages,
     getConversationTraceRefs,
     hasSampledTraceMessage,

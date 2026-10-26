@@ -1,13 +1,13 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
+import { getDefaultStore } from 'jotai';
 import { dataService } from 'librechat-data-provider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { isSubmittingFamily, resetSubmitting } from '@librechat/chat/react';
 import type { TAttachment } from 'librechat-data-provider';
-import type { MutableSnapshot } from 'recoil';
 import { MessageContext } from '~/Providers/MessageContext';
 import LogContent from '../LogContent';
-import store from '~/store';
 jest.mock('librechat-data-provider', () => {
   const actual = jest.requireActual('librechat-data-provider');
   return { ...actual, dataService: { ...actual.dataService } };
@@ -79,8 +79,8 @@ const baseAttachment = (overrides: Partial<TAttachment> = {}): TAttachment =>
  */
 const renderWith = (ui: React.ReactElement, opts: { streaming?: boolean } = {}) => {
   const streaming = opts.streaming ?? true;
-  const initializeState = (snapshot: MutableSnapshot) => {
-    snapshot.set(store.isSubmittingFamily(0), streaming);
+  const initializeState = () => {
+    getDefaultStore().set(isSubmittingFamily(0), streaming);
   };
   return render(
     <RecoilRoot initializeState={initializeState}>
@@ -92,6 +92,10 @@ const renderWith = (ui: React.ReactElement, opts: { streaming?: boolean } = {}) 
     </RecoilRoot>,
   );
 };
+
+afterEach(() => {
+  resetSubmitting(getDefaultStore());
+});
 
 describe('LogContent attachment routing', () => {
   it('keeps history cards light and opens a rich artifact only after an explicit preview', async () => {

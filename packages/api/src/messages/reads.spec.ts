@@ -459,7 +459,7 @@ it('binds revision and selected data to the same atomic query despite a subseque
   const source = methods.getMessageReadContent;
   jest.spyOn(methods, 'getMessageReadContent').mockImplementationOnce(async (input) => {
     const snapshot = await source(input);
-    await methods.updateMessageText('owner', { messageId: 'm', text: 'new'.repeat(1000) });
+    await methods.updateMessage('owner', { messageId: 'm', text: 'new'.repeat(1000) });
     return snapshot;
   });
   const r = await request(app)
@@ -625,9 +625,9 @@ it('detects repeated same-ms supported edits and the missing-to-present revision
   await seed('m', { text: 'before' });
   const clock = jest.spyOn(mongoose, 'now').mockReturnValue(now);
   const a = await content();
-  await methods.updateMessageText('owner', { messageId: 'm', text: 'one' });
+  await methods.updateMessage('owner', { messageId: 'm', text: 'one' });
   const b = await content();
-  await methods.updateMessageText('owner', { messageId: 'm', text: 'two' });
+  await methods.updateMessage('owner', { messageId: 'm', text: 'two' });
   clock.mockRestore();
   expect((await Message.findOne({ messageId: 'm' }).lean())!.updatedAt).toEqual(now);
   expect((await Message.findOne({ messageId: 'm' }).lean())!.__v).toBe(2);

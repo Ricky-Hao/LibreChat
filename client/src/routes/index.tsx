@@ -5,7 +5,6 @@ import {
   VerifyEmail,
   Registration,
   ResetPassword,
-  ApiErrorWatcher,
   TwoFactorScreen,
   TwoFactorSetupScreen,
   RequestPasswordReset,
@@ -16,6 +15,7 @@ import { importWithRecovery } from '~/lib/assets/lazy';
 import RouteErrorBoundary from './RouteErrorBoundary';
 import StartupLayout from './Layouts/Startup';
 import MarketplaceRoute from './Marketplace';
+import { codeSetupRoute } from './CodeSetup';
 import LoginLayout from './Layouts/Login';
 import dashboardRoutes from './Dashboard';
 import WithRum from '~/lib/rum/WithRum';
@@ -30,7 +30,6 @@ const AuthLayout = () => (
     <WithRum>
       <Outlet />
     </WithRum>
-    <ApiErrorWatcher />
   </AuthContextProvider>
 );
 
@@ -132,6 +131,7 @@ const routes: RouteObject[] = [
             ],
           },
           dashboardRoutes,
+          codeSetupRoute,
           {
             path: '/',
             element: <Root />,

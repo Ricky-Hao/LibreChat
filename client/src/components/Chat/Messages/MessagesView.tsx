@@ -1,8 +1,8 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { useAtomValue } from 'jotai';
-import { useRecoilValue } from 'recoil';
 import { Button } from '@librechat/client';
 import { Constants } from 'librechat-data-provider';
+import { useIsSubmitting } from '@librechat/chat/react';
 import type { TMessage } from 'librechat-data-provider';
 import type { ScrollNavigation } from '~/hooks/Messages/useMessageScrolling';
 import {
@@ -28,7 +28,6 @@ import ScrollButton from './ScrollButton';
 import PendingTurn from './PendingTurn';
 import MessageNav from './MessageNav';
 import { cn } from '~/utils';
-import store from '~/store';
 
 function MessagesViewContent({
   messagesTree: _messagesTree,
@@ -76,7 +75,7 @@ function MessagesViewContent({
     focusHistoryTree(messages, _messagesTree ?? null);
   }
   const threadRows = useThreadRows(FLAT_THREAD ? messages : null, treeConversationId, fileMap);
-  const isSubmitting = useRecoilValue(store.isSubmittingFamily(index));
+  const isSubmitting = useIsSubmitting(index);
   const { showScrollButton, maximizeChatSpace } = useChatSurface();
   const autoScroll = useAtomValue(autoScrollAtom);
 
@@ -158,7 +157,7 @@ function MessagesViewContent({
       <div className="relative flex-1 overflow-hidden overflow-y-auto">
         <div className="relative h-full">
           <div
-            className="scrollbar-gutter-stable"
+            className="scrollbar-gutter-stable overflow-y-auto"
             onScroll={(event) => {
               debouncedHandleScroll();
               history.onScroll(event);
@@ -166,7 +165,6 @@ function MessagesViewContent({
             ref={scrollableRef}
             style={{
               height: '100%',
-              overflowY: 'auto',
               width: '100%',
               /** The mount hook pins the anchor row itself (document-space
                *  measurement); native scroll anchoring reacting to the same
@@ -259,7 +257,11 @@ function MessagesViewContent({
             onNearBottomChange={handleNearBottom}
           />
 
-          <MessageNav scrollableRef={scrollableRef} />
+          <MessageNav
+            key={treeConversationId}
+            conversationId={treeConversationId}
+            scrollableRef={scrollableRef}
+          />
         </div>
       </div>
     </>

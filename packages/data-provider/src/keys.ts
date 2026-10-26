@@ -4,6 +4,8 @@ export enum QueryKeys {
   messages = 'messages',
   /* Full content of one tool-call part, fetched when its preview is not enough */
   toolCallPart = 'toolCallPart',
+  /* Child calls of a message's subagent transcripts that files reaching it late belong to */
+  subagentAttachmentCalls = 'subagentAttachmentCalls',
   ownerMessageTexts = 'ownerMessageTexts',
   sharedMessages = 'sharedMessages',
   sharedStartupConfig = 'sharedStartupConfig',
@@ -16,6 +18,8 @@ export enum QueryKeys {
   searchEnabled = 'searchEnabled',
   langfuseConnection = 'langfuseConnection',
   langfuseSessionLink = 'langfuseSessionLink',
+  langfusePrompts = 'langfusePrompts',
+  langfusePrompt = 'langfusePrompt',
   conversationTraceAvailability = 'conversationTraceAvailability',
   conversationTraceRecords = 'conversationTraceRecords',
   conversationTraceRecord = 'conversationTraceRecord',
@@ -26,10 +30,9 @@ export enum QueryKeys {
   balance = 'balance',
   endpoints = 'endpoints',
   tokenConfig = 'tokenConfig',
+  reasoningCapabilities = 'reasoningCapabilities',
   presets = 'presets',
   searchResults = 'searchResults',
-  tokenCount = 'tokenCount',
-  availablePlugins = 'availablePlugins',
   startupConfig = 'startupConfig',
   insights = 'insights',
   insightsAccess = 'insightsAccess',
@@ -59,6 +62,7 @@ export enum QueryKeys {
   promptGroups = 'promptGroups',
   allPromptGroups = 'allPromptGroups',
   promptGroup = 'promptGroup',
+  promptGroupContent = 'promptGroupContent',
   projects = 'projects',
   project = 'project',
   projectFiles = 'projectFiles',
@@ -110,9 +114,13 @@ export enum QueryKeys {
   schedule = 'schedule',
   parentSubagents = 'parentSubagents',
   subagentThread = 'subagentThread',
+  subagentTaskContent = 'subagentTaskContent',
+  subagentControlReceipt = 'subagentControlReceipt',
   backgroundTasks = 'backgroundTasks',
   conversationPullRequest = 'conversationPullRequest',
+  pullRequestConnection = 'pullRequestConnection',
   codeEnvironments = 'codeEnvironments',
+  codeSetupAttempt = 'codeSetupAttempt',
   agentQueuedTurns = 'agentQueuedTurns',
   /* Combined Pinned-section display order (favorites + pinned chats) */
   pinnedOrder = 'pinnedOrder',
@@ -120,6 +128,8 @@ export enum QueryKeys {
 
 // Dynamic query keys that require parameters
 export const DynamicQueryKeys = {
+  codeSetupAttempt: (attemptId: string, userId: string) =>
+    [QueryKeys.codeSetupAttempt, userId, attemptId] as const,
   agentFiles: (agentId: string) => ['agentFiles', agentId] as const,
   projectFiles: (projectId: string) => [QueryKeys.projectFiles, projectId] as const,
   projectAvailableFiles: (projectId: string) =>
@@ -128,6 +138,8 @@ export const DynamicQueryKeys = {
 } as const;
 
 export enum MutationKeys {
+  approveCodeSetup = 'approveCodeSetup',
+  denyCodeSetup = 'denyCodeSetup',
   resetToolApprovalGrants = 'resetToolApprovalGrants',
   subagentControl = 'subagentControl',
   cancelBackgroundTasks = 'cancelBackgroundTasks',
@@ -140,6 +152,8 @@ export enum MutationKeys {
   updatePinnedOrder = 'updatePinnedOrder',
   updateLangfuseConnection = 'updateLangfuseConnection',
   testLangfuseConnection = 'testLangfuseConnection',
+  updateLangfusePromptSync = 'updateLangfusePromptSync',
+  syncLangfusePrompts = 'syncLangfusePrompts',
   createAgentApiKey = 'createAgentApiKey',
   deleteAgentApiKey = 'deleteAgentApiKey',
   fileUpload = 'fileUpload',
@@ -199,4 +213,6 @@ export enum MutationKeys {
   moveConversationCodeEnvironment = 'moveConversationCodeEnvironment',
   convoSeen = 'convoSeen',
   convoUnread = 'convoUnread',
+  connectPullRequestAccount = 'connectPullRequestAccount',
+  disconnectPullRequestAccount = 'disconnectPullRequestAccount',
 }

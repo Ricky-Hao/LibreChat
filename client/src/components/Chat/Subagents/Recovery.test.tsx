@@ -2,6 +2,7 @@ import React from 'react';
 import axios from 'axios';
 import { RecoilRoot } from 'recoil';
 import { useAtomValue, useStore } from 'jotai';
+import { MemoryRouter } from 'react-router-dom';
 import { ContentTypes } from 'librechat-data-provider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -18,6 +19,7 @@ import SubagentThreadPanel from './SubagentThreadPanel';
 import { ChatSurfaceHarness } from 'test/harness';
 
 jest.mock('~/hooks', () => ({
+  ...jest.requireActual('~/hooks/Messages/useCopyToClipboard'),
   useLocalize: () => (key: string) => key,
   useFocusTrap: jest.requireActual('~/hooks/useFocusTrap').default,
   useNavigateToConvo: () => ({ navigateToConvo: jest.fn() }),
@@ -52,10 +54,6 @@ jest.mock('@librechat/client', () => ({
   ...jest.requireActual('@librechat/client'),
   useToastContext: () => ({ showToast: jest.fn() }),
   useMediaQuery: () => false,
-}));
-jest.mock('~/components/Chat/Messages/Content/Parts/Text', () => ({
-  __esModule: true,
-  default: ({ text }: { text: string }) => <div>{text}</div>,
 }));
 jest.mock('~/components/Chat/Messages/Content/MarkdownLite', () => ({
   __esModule: true,
@@ -116,20 +114,22 @@ function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const frame = (parts: TMessageContentParts[]) => (
     <QueryClientProvider client={client}>
-      <RecoilRoot>
-        <ChatSurfaceHarness>
-          <ContentParts
-            content={parts}
-            messageId="message"
-            conversationId="parent"
-            isSubmitting={false}
-            isCreatedByUser={false}
-            showThinking={true}
-            isLast={true}
-          />
-          <PanelHost />
-        </ChatSurfaceHarness>
-      </RecoilRoot>
+      <MemoryRouter>
+        <RecoilRoot>
+          <ChatSurfaceHarness>
+            <ContentParts
+              content={parts}
+              messageId="message"
+              conversationId="parent"
+              isSubmitting={false}
+              isCreatedByUser={false}
+              showThinking={true}
+              isLast={true}
+            />
+            <PanelHost />
+          </ChatSurfaceHarness>
+        </RecoilRoot>
+      </MemoryRouter>
     </QueryClientProvider>
   );
   return { ...render(frame(preview)), frame, client };
@@ -234,37 +234,43 @@ it('renders recovered running activity and subsequent deltas in the same open pa
   }
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <RecoilRoot>
-        <ChatSurfaceHarness>
-          <ContentParts
-            content={[
-              {
-                type: ContentTypes.TOOL_CALL,
-                tool_call: {
-                  ...tool_call,
-                  progress: 0.5,
-                  runStepStatus: undefined,
-                  output: '',
-                  subagent_content: recovered,
-                },
-              } as TMessageContentParts,
-            ]}
-            messageId="message"
-            conversationId="parent"
-            isSubmitting={true}
-            isLatestMessage={true}
-            isCreatedByUser={false}
-            showThinking={true}
-            isLast={true}
-          />
-          <Continue />
-          <PanelHost />
-        </ChatSurfaceHarness>
-      </RecoilRoot>
+      <MemoryRouter>
+        <RecoilRoot>
+          <ChatSurfaceHarness>
+            <ContentParts
+              content={[
+                {
+                  type: ContentTypes.TOOL_CALL,
+                  tool_call: {
+                    ...tool_call,
+                    progress: 0.5,
+                    runStepStatus: undefined,
+                    output: '',
+                    subagent_content: recovered,
+                  },
+                } as TMessageContentParts,
+              ]}
+              messageId="message"
+              conversationId="parent"
+              isSubmitting={true}
+              isLatestMessage={true}
+              isCreatedByUser={false}
+              showThinking={true}
+              isLast={true}
+            />
+            <Continue />
+            <PanelHost />
+          </ChatSurfaceHarness>
+        </RecoilRoot>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   fireEvent.click(screen.getByRole('button', { name: /com_ui_subagent_running/ }));
   expect(await screen.findByText('Before')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Continue fixture' }));
-  expect(await screen.findByText('Before after')).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole('region', { name: 'com_ui_subagent_thread_panel' })).toHaveTextContent(
+      'Before after',
+    ),
+  );
 });

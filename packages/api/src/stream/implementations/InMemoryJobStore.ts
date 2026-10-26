@@ -26,7 +26,7 @@ import type {
   ScheduleProviderOwner,
 } from '~/stream/interfaces/IJobStore';
 import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
-import type { SubagentContentBuffer } from '~/agents/subagentContent';
+import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
 import type { RecoveredSteerPayload } from '~/stream/SteerRecovery';
 import {
   JobStatusTransitionDeadlineError,
@@ -47,7 +47,7 @@ import {
   RecoveredSteerPayloadMismatchError,
 } from '~/stream/SteerRecovery';
 import { retainedScheduleReceipt } from '~/stream/internal/scheduleReceipts';
-import { snapshotSubagentContent } from '~/agents/subagentContent';
+import { snapshotSubagentContent } from '~/agents/retainedSubagentContent';
 import { createCheckpointNamespace } from '~/stream/checkpoints';
 import { retainScheduleMCPFailure } from '../scheduleFailure';
 import { toPendingSteer } from '~/stream/SteeringLifecycle';

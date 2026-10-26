@@ -124,7 +124,9 @@ test('large history loads one recent page, preserves an upward anchor, and opens
       .getByRole('switch', { name: 'Auto-Scroll to latest message on chat open' })
       .setChecked(enabled);
     await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
-    expect(await page.evaluate(() => localStorage.getItem('autoScroll'))).toBe(String(enabled));
+    await expect
+      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('autoScroll') ?? 'true')))
+      .toBe(enabled);
   };
   try {
     await page.goto('/c/new');

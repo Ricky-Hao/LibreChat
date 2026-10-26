@@ -43,9 +43,7 @@ const Wrapper = ({
     return (
       <div className={cn(wrapperClass, failed && failedStripeClass)} ref={rootRef}>
         <Popover.Trigger asChild>
-          <div className={contentClass} style={{ opacity: 1, transform: 'none' }}>
-            {children}
-          </div>
+          <div className={contentClass}>{children}</div>
         </Popover.Trigger>
       </div>
     );
@@ -53,9 +51,7 @@ const Wrapper = ({
 
   return (
     <div className={cn(wrapperClass, failed && failedStripeClass)} ref={rootRef}>
-      <div className={contentClass} style={{ opacity: 1, transform: 'none' }}>
-        {children}
-      </div>
+      <div className={contentClass}>{children}</div>
     </div>
   );
 };
@@ -101,7 +97,7 @@ export default function ProgressText({
   hasInput?: boolean;
   popover?: boolean;
   isExpanded?: boolean;
-  /** Why a failed card failed ("exit code 2"), shown after the failure
+  /** Why a failed card failed ("exit code 2"), shown in place of the generic failure
    *  suffix. Plain text inside the button, so it is part of its name. */
   verdict?: string;
 }) {
@@ -227,8 +223,7 @@ export default function ProgressText({
           {hasMetadata && (
             <span className="text-text-secondary flex max-w-full min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 font-normal [overflow-wrap:anywhere]">
               {subtitle && <span>{subtitle}</span>}
-              {errorSuffix && <span className="text-status-error">· {errorSuffix}</span>}
-              {errorSuffix && verdict && <span>· {verdict}</span>}
+              {errorSuffix && <span className="text-status-error">· {verdict || errorSuffix}</span>}
               {showTimer && <ElapsedTimer start={localPhaseStart} />}
               {durationParts.map(({ label, duration }) => (
                 <span key={label}>
