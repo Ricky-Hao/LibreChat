@@ -1,19 +1,19 @@
 {
   "name": "@librechat/agents",
-  "version": "4.0.4-ricky.5",
-  "artifact": "vendor/librechat-agents-4.0.4-ricky.5.tgz",
-  "sha256": "fe9dbfa083cfde285e7ae1941ec39a9d47a5b500df5e14134477505d9b4195aa",
+  "version": "4.1.1-ricky.1",
+  "artifact": "vendor/librechat-agents-4.1.1-ricky.1.tgz",
+  "sha256": "8846c95757723cc78b39f3a0dd5c0f2d9edf537bd6c4dc86d3834a63a6882441",
   "source": {
     "repository": "https://github.com/Ricky-Hao/agents",
-    "baseCommit": "24ca27d4c9acac3b332822569a12bd13e24a941a",
+    "baseCommit": "c56fc5eb7d141a25976c1886520ab4dac745ae07",
     "dirty": false,
     "buildState": "clean-commit",
     "committedSource": {
-      "commit": "ffd8a8e2bc888939038ce8e7f0c23f8dc971a456",
-      "tree": "0faddd4544dd410ebf545961f6abaae3c13e4b66"
+      "commit": "6939842a19a26681b9093ccffb52433636fa4df7",
+      "tree": "7e3ec48079ca4f19be36ee6f3952a093b6cb50b7"
     },
-    "patch": "vendor/agents-4.0.4-ricky.5.patch",
-    "patchSha256": "61ea2fc74e3a888c6f1f2be9f6203aff8c9035467279ee6eaa5a8d9cf6fb2ffc"
+    "patch": "vendor/agents-4.1.1-ricky.1.patch",
+    "patchSha256": "62c27132ba0e00384ca4343faddb240d28696c07f25996f97ee7bd90407773cf"
   },
   "consumers": ["api", "packages/api"]
 }

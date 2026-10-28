@@ -83,6 +83,45 @@ function verifySummaryReasoning(sdk) {
   }
 }
 
+/** Exercises schemas supplied by the consumer's installed Zod versions. */
+function verifySchemas(sdk, zod3, earlyZod4, zod4) {
+  assert.deepEqual(
+    sdk.toJsonSchema(zod3.object({ query: zod3.string() }), 'search', 'Search files'),
+    {
+      $ref: '#/definitions/search',
+      definitions: {
+        search: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query'],
+          additionalProperties: false,
+          description: 'Search files',
+        },
+      },
+      $schema: 'http://json-schema.org/draft-07/schema#',
+    },
+  );
+  const query = earlyZod4.string().min(1).max(10).describe('Early query');
+  for (const z of [earlyZod4, zod4]) {
+    const schema = z.object({ query, limit: z.number().default(5) });
+    const converted = sdk.toJsonSchema(schema, 'search', 'Search files');
+    assert.equal(converted.title, 'search');
+    assert.equal(converted.description, 'Search files');
+    assert.deepEqual(converted.required, ['query']);
+    assert.deepEqual(converted.properties.query, {
+      type: 'string',
+      minLength: 1,
+      maxLength: 10,
+      description: 'Early query',
+    });
+    assert.equal(converted.properties.limit.default, 5);
+    assert.deepEqual(schema.parse({ query: 'files' }), { query: 'files', limit: 5 });
+  }
+  assert.equal(query.description, 'Early query');
+  const jsonSchema = { type: 'object', properties: { query: { type: 'string' } } };
+  assert.equal(sdk.toJsonSchema(jsonSchema, 'search'), jsonSchema);
+}
+
 /** Self-contained so the identical behavioral smoke also runs in the ESM subprocess. */
 async function verifyIntent(sdk, DynamicStructuredTool, ToolMessage) {
   const strictTool = new DynamicStructuredTool({
@@ -338,6 +377,13 @@ for (const consumer of consumers) {
   const packageRoot = resolve(dirname(require.resolve('@librechat/agents')), '../..');
   const manifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'));
   assert.equal(manifest.version, version);
+  const sdkRequire = createRequire(resolve(packageRoot, 'package.json'));
+  const sdkZod = JSON.parse(readFileSync(sdkRequire.resolve('zod/package.json'), 'utf8'));
+  assert.equal(
+    sdkZod.version,
+    manifest.dependencies.zod,
+    'The SDK must resolve its declared exact Zod 3 version, not a stale nested Zod 4',
+  );
   assert.equal(manifest.types, manifest.exports['.'].types);
   assert.match(
     readFileSync(resolve(packageRoot, manifest.types), 'utf8'),
@@ -370,6 +416,7 @@ for (const consumer of consumers) {
   const { DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
   const { ToolMessage } = require('@librechat/agents/langchain/messages');
   verifySummaryReasoning(sdk);
+  verifySchemas(sdk, require('zod').z, require('zod/v4').z, require('zod-v4').z);
   await verifyIntent(sdk, DynamicStructuredTool, ToolMessage);
   await verifyArtifactGuidance(sdk);
   for (const subpath of Object.keys(manifest.exports)) {
@@ -392,6 +439,7 @@ for (const consumer of consumers) {
     const { DynamicStructuredTool } = await import('@librechat/agents/langchain/tools');
     const { ToolMessage } = await import('@librechat/agents/langchain/messages');
     (${verifySummaryReasoning.toString()})(sdk);
+    (${verifySchemas.toString()})(sdk, (await import('zod')).z, (await import('zod/v4')).z, (await import('zod-v4')).z);
     await (${verifyIntent.toString()})(sdk, DynamicStructuredTool, ToolMessage);
     await (${verifyArtifactGuidance.toString()})(sdk);
     assert.match(sdk.buildSkillCarrierText('fixture', { skillName: 'fixture' }), /Skill source/);
@@ -402,7 +450,7 @@ for (const consumer of consumers) {
   });
   assert.equal(imported.status, 0, imported.stderr);
   console.log(
-    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths, CJS/ESM summary reasoning/intent/result status/artifact guidance, public PTC system prompt and declaration exports verified`,
+    `${consumer}: ${manifest.version}; all ${Object.keys(manifest.exports).length} require/import subpaths, CJS/ESM summary reasoning/schema conversion/intent/result status/artifact guidance, public PTC system prompt and declaration exports verified`,
   );
 }
 console.log('Tarball integrity and single SDK lock resolution verified');

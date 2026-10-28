@@ -1,18 +1,36 @@
-# Repaired agent SDK
+# Vendored agent SDK
 
-`librechat-agents-4.0.4-ricky.5.tgz` is built from clean merged `main` commit
-`ffd8a8e2bc888939038ce8e7f0c23f8dc971a456` (tree
-`0faddd4544dd410ebf545961f6abaae3c13e4b66`) in the sibling
-`https://github.com/Ricky-Hao/agents` fork, after
-[PR #3](https://github.com/Ricky-Hao/agents/pull/3).
+`librechat-agents-4.1.1-ricky.1.tgz` is built from clean merged `main` commit
+`6939842a19a26681b9093ccffb52433636fa4df7` (tree
+`7e3ec48079ca4f19be36ee6f3952a093b6cb50b7`) in the sibling
+`https://github.com/Ricky-Hao/agents` fork. Its parents are the previous fork
+head `ffd8a8e2bc888939038ce8e7f0c23f8dc971a456` and fixed upstream 4.1.1
+commit `c56fc5eb7d141a25976c1886520ab4dac745ae07`.
 `agents.json` records its artifact and patch SHA-256. Applying
-`agents-4.0.4-ricky.5.patch` to base
-`24ca27d4c9acac3b332822569a12bd13e24a941a` reproduces that committed tree,
+`agents-4.1.1-ricky.1.patch` to that upstream commit reproduces the merged tree,
 including the regression tests. Packaged source files match the commit.
 `source.dirty: false` and `source.buildState: clean-commit` describe this build.
 This is a local review artifact, not a registry release or a deployed fix.
 
-Version ricky.5 separates internal processing from file delivery in the public
+Version 4.1.1-ricky.1 retains the fork's summary/reasoning, assistant phases,
+Skill provenance, PTC intent/error status, artifact guidance and Langfuse
+scope/redaction repairs. It adds upstream provider compatibility, schema
+conversion, local tool selection/result caps, and lightweight decision/rerank
+exports. Zod 3 and both early/current Zod 4 schemas remain supported; this is
+not a public-type migration. The existing Zod/deepmerge audit findings are not
+fixed by this update.
+
+The retained 4.0.4-ricky.5 artifact was built from clean `main` commit
+`ffd8a8e2bc888939038ce8e7f0c23f8dc971a456` (tree
+`0faddd4544dd410ebf545961f6abaae3c13e4b66`), after
+[PR #3](https://github.com/Ricky-Hao/agents/pull/3).
+Its patch base is `24ca27d4c9acac3b332822569a12bd13e24a941a`.
+Its tarball SHA-256 remains
+`fe9dbfa083cfde285e7ae1941ec39a9d47a5b500df5e14134477505d9b4195aa`;
+its patch SHA-256 remains
+`61ea2fc74e3a888c6f1f2be9f6203aff8c9035467279ee6eaa5a8d9cf6fb2ffc`.
+
+Version 4.0.4-ricky.5 separates internal processing from file delivery in the public
 PTC system instructions, tool descriptions and code parameters. Prefer memory,
 or unique same-call `/tmp` scratch with cleanup. Managed `/mnt/data` is retained
 across calls and automatically collected/displayed; use it only for requested
@@ -28,7 +46,8 @@ has changed.
 The retained ricky.4 artifact was built from clean commit
 `4f396f5b420d3d23fee673b6ee20420dfc902dae` (tree
 `666a2ea72e11edb8a198cd7cb793ba7fc0f1b669`), branch
-`fix/summary-reasoning-content`. Its patch uses the same base recorded above.
+`fix/summary-reasoning-content`. Its patch also uses base
+`24ca27d4c9acac3b332822569a12bd13e24a941a`.
 Its tarball SHA-256 remains
 `d848eeda3754f3b8277c9c78838071a1502f445ff47ab4377589590f712660eb`;
 its patch SHA-256 remains
@@ -92,7 +111,8 @@ npm run build
 npm pack --ignore-scripts --pack-destination /workspaces/LibreChat/vendor
 cd /workspaces/LibreChat
 npm install --ignore-scripts --no-audit --no-fund
-sha256sum vendor/librechat-agents-4.0.4-ricky.5.tgz
+npm ls @librechat/agents zod zod-v4 zod-to-json-schema --all
+sha256sum vendor/librechat-agents-4.1.1-ricky.1.tgz
 node vendor/verify-agents.mjs
 ```
 
@@ -100,11 +120,16 @@ Use a new fork version for each subsequent reviewed artifact. Do not overwrite a
 used tarball or patch. Update both API manifests and the lock resolution/integrity
 for the new artifact before reinstalling it.
 
+Verify the new lock with a clean `npm ci` as well. A tarball update can retain a
+stale nested Zod entry: the SDK must resolve its declared Zod 3, while
+`@langchain/openai` resolves its own Zod 4. Do not mask an invalid tree with an override.
+
 The artifact includes ESM, CJS and declarations, plus public source, license and
 README. The package allowlist excludes tests, fixtures, environment files and
 node_modules. `verify-agents.mjs [isolated-install-root]` checks tarball integrity,
 absence of nested stock SDK lock entries, and all require/import subpaths from
-both API consumers, including summary-reasoning/intent/result-status behavior,
+both API consumers, including installed Zod 3/early Zod 4/current Zod 4 schema
+conversion and summary-reasoning/intent/result-status behavior,
 managed/attached artifact guidance, public PTC system instructions in CJS/ESM,
 and declaration exports.
 It makes no provider or database calls. `agents.json` records
@@ -120,4 +145,4 @@ do not relabel an artifact built from uncommitted source as a clean-commit build
 Space-only empty context lines in the stored patch are normalized to blank
 lines (accepted by `git apply`) so the provenance file passes whitespace checks.
 
-SHA-256: `fe9dbfa083cfde285e7ae1941ec39a9d47a5b500df5e14134477505d9b4195aa`.
+SHA-256: `8846c95757723cc78b39f3a0dd5c0f2d9edf537bd6c4dc86d3834a63a6882441`.
