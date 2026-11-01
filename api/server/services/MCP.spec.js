@@ -1680,14 +1680,23 @@ describe('User parameter passing tests', () => {
             isError,
           });
           const manager = new MCPManager();
-          jest.spyOn(MCPServersRegistry, 'getInstance').mockReturnValue({
-            isAppServerConfig: async () => false,
-            resolveAllowlists: async () => ({
-              allowedDomains: null,
+          const registry = new MCPServersRegistry(
+            require('mongoose'),
+            ['127.0.0.1'],
+            null,
+            async (principal) => ({
+              allowedDomains: ['127.0.0.1'],
               allowedAddresses: null,
-              useSSRFProtection: false,
+              mcpApps: registry.getMCPAppsPolicy(),
+              serverNames: principal?.userId === 'hidden-user' ? [] : ['synthetic'],
             }),
+          );
+          registry.setYamlServerOptions({
+            synthetic: { type: 'streamable-http', url: 'http://127.0.0.1:1/mcp' },
           });
+          jest.spyOn(registry, 'isAppServerConfig').mockResolvedValue(false);
+          const hiddenCheck = jest.spyOn(registry, 'isHiddenFromPrincipal');
+          jest.spyOn(MCPServersRegistry, 'getInstance').mockReturnValue(registry);
           const connection = new MCPConnection({
             serverName: 'synthetic',
             serverConfig: { type: 'streamable-http', url: 'http://127.0.0.1:1/mcp' },
@@ -1763,6 +1772,11 @@ describe('User parameter passing tests', () => {
           await expect(callTool.mock.results[0].value).resolves.toHaveLength(2);
           expect(request).toHaveBeenCalledTimes(1);
           expect(callTool.mock.calls[0][0].provider).toBe(expectedProvider);
+          expect(hiddenCheck).toHaveBeenCalledWith(
+            'synthetic',
+            callTool.mock.calls[0][0].serverConfig,
+            user,
+          );
           expect(callback).toHaveBeenCalledTimes(1);
           expect(outputs[0].artifact?.content?.length ?? 0).toBe(1);
           expect(outputs[0].content === text).toBe(true);
@@ -1784,6 +1798,15 @@ describe('User parameter passing tests', () => {
           expect(res.write.mock.calls.some(([chunk]) => chunk.includes('synthetic-file'))).toBe(
             true,
           );
+          // A valid image fixture must not bypass checkout when that principal hides the server.
+          await expect(
+            manager.callTool({
+              ...callTool.mock.calls[0][0],
+              user: { ...user, id: 'hidden-user' },
+            }),
+          ).rejects.toThrow('No connection found for server synthetic');
+          expect(request).toHaveBeenCalledTimes(1);
+          expect(manager.getConnection).toHaveBeenCalledTimes(1);
         },
       );
     });

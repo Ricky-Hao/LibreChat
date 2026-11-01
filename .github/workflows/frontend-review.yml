@@ -50,6 +50,7 @@ env:
 jobs:
   client-build-regression:
     name: Client build recovery regression
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -59,6 +60,15 @@ jobs:
           node-version: '24.22.1'
           cache: npm
       - run: npm ci
+      # Loading the real Vite config imports both packages through their built entries.
+      - uses: actions/download-artifact@v7
+        with:
+          name: build-data-provider
+          path: packages/data-provider/dist
+      - uses: actions/download-artifact@v7
+        with:
+          name: build-client-package
+          path: packages/client/dist
       - run: google-chrome --version
       - run: npm run test:client-build
         env:

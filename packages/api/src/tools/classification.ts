@@ -36,6 +36,7 @@ import { supportsProgrammaticCodeExecution } from '~/code/capabilities';
 import { createContextProgrammaticBashTool } from '~/code/command';
 import { sanitizeGeminiSchema } from '~/mcp/zod';
 import { capturePersistedToolOptions } from '~/agents/options';
+import { TASK_CALLBACK_TOOL, TaskCallbackToolDefinition } from '~/agents/callbackDefinition';
 
 export type { LCTool, LCToolRegistry, AllowedCaller, JsonSchemaType };
 
@@ -414,7 +415,8 @@ export async function buildToolClassification(
   const additionalTools: GenericTool[] = [];
 
   const mcpTools = loadedTools.filter(isMCPTool);
-  if (mcpTools.length === 0) {
+  const hasTaskCallback = loadedTools.some((tool) => tool.name === TASK_CALLBACK_TOOL);
+  if (mcpTools.length === 0 && !hasTaskCallback) {
     return {
       additionalTools,
       toolDefinitions: [],
@@ -428,6 +430,18 @@ export async function buildToolClassification(
   const mcpToolAliases = collectMCPToolAliases(mcpToolDefs);
   aliasMCPToolOptions(mcpToolAliases, agentToolOptions);
   const toolRegistry: LCToolRegistry = buildToolRegistry(mcpToolDefs, agentToolOptions);
+  if (hasTaskCallback) {
+    toolRegistry.set(TASK_CALLBACK_TOOL, {
+      name: TASK_CALLBACK_TOOL,
+      description: TaskCallbackToolDefinition.description,
+      parameters: TaskCallbackToolDefinition.schema,
+      allowed_callers: agentToolOptions?.[TASK_CALLBACK_TOOL]?.allowed_callers?.includes(
+        'code_execution',
+      )
+        ? ['direct', 'code_execution']
+        : ['direct'],
+    });
+  }
 
   /** Clean up temporary mcpJsonSchema property from tools now that registry is populated */
   cleanupMCPToolSchemas(mcpTools);
