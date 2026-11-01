@@ -1,6 +1,119 @@
-import { PROGRAMMATIC_TOOL_INPUT, normalizeProgrammaticToolResponse } from '@librechat/agents';
-import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
+import { isToolMessage } from '@librechat/agents/langchain/messages';
+import {
+  PROGRAMMATIC_TOOL_INPUT,
+  PROGRAMMATIC_TOOL_CALL_ID,
+  normalizeProgrammaticToolResponse,
+} from '@librechat/agents';
+import type {
+  DynamicStructuredTool,
+  StructuredToolInterface,
+} from '@librechat/agents/langchain/tools';
+import type { RunnableConfig } from '@librechat/agents/langchain/runnables';
 import type { PtcToolCallEvent } from 'librechat-data-provider';
+import { TASK_CALLBACK_TOOL, TASK_CALLBACK_UNSUPPORTED_CONTEXT } from './callbackDefinition';
+
+const PTC_TOOL_FAILED = 'PTC_TOOL_FAILED';
+const CALLBACK_UNAVAILABLE = JSON.stringify({ error: 'CALLBACK_UNAVAILABLE' });
+
+interface PtcToolCallContext {
+  id?: string;
+  toolMap?: Map<string, StructuredToolInterface>;
+}
+
+interface PtcInvocationConfig extends RunnableConfig {
+  toolCall?: PtcToolCallContext;
+  [PROGRAMMATIC_TOOL_CALL_ID]?: string;
+}
+
+/**
+ * Bind only the native callback to the immutable outer turn. The bridge identity
+ * arrives on an SDK symbol, outside JSON arguments. Never copy sandbox routing
+ * fields into this context. All inner calls may handle registration data, so
+ * suppress their LangChain observations and replace thrown diagnostics.
+ */
+export function bindPtcCallbackContext(ptcTool: DynamicStructuredTool): DynamicStructuredTool {
+  const execute = ptcTool.func.bind(ptcTool);
+  ptcTool.func = async (input, runManager, config) => {
+    const outerCall = (config as PtcInvocationConfig | undefined)?.toolCall;
+    const toolMap = outerCall?.toolMap;
+    if (!toolMap?.has(TASK_CALLBACK_TOOL)) {
+      return execute(input, runManager, config);
+    }
+    const body = config?.configurable?.requestBody as
+      | { messageId?: string; conversationId?: string }
+      | undefined;
+    const requestBody = Object.freeze({
+      messageId: body?.messageId,
+      conversationId: body?.conversationId,
+    });
+    const outerId = outerCall?.id;
+    const isChild =
+      config?.metadata?.executionContext != null || config?.configurable?.executionContext != null;
+    const boundTools = new Map<string, StructuredToolInterface>();
+    for (const [name, tool] of toolMap) {
+      boundTools.set(
+        name,
+        new Proxy(tool, {
+          get(target, property) {
+            if (property !== 'invoke') return Reflect.get(target, property, target);
+            return async (args: unknown, innerConfig?: PtcInvocationConfig): Promise<unknown> => {
+              const innerId = innerConfig?.[PROGRAMMATIC_TOOL_CALL_ID];
+              try {
+                if (name !== TASK_CALLBACK_TOOL) {
+                  const invokeConfig: RunnableConfig = { ...innerConfig, callbacks: [] };
+                  Object.defineProperty(invokeConfig, PROGRAMMATIC_TOOL_CALL_ID, {
+                    value: innerId,
+                  });
+                  return await target.invoke(args, invokeConfig);
+                }
+                if (isChild) return TASK_CALLBACK_UNSUPPORTED_CONTEXT;
+                // An embedded LangChain ToolCall would replace config.toolCall.
+                // Only the empty callback input may reach the underlying tool.
+                if (
+                  typeof outerId !== 'string' ||
+                  outerId.length === 0 ||
+                  typeof innerId !== 'string' ||
+                  innerId.length === 0 ||
+                  args == null ||
+                  typeof args !== 'object' ||
+                  Array.isArray(args) ||
+                  Object.keys(args).length !== 0
+                ) {
+                  return CALLBACK_UNAVAILABLE;
+                }
+                const invokeConfig = {
+                  callbacks: [],
+                  configurable: { requestBody },
+                  toolCall: {
+                    id: JSON.stringify(['ptc', outerId, innerId]),
+                    name: TASK_CALLBACK_TOOL,
+                    args: {},
+                  },
+                };
+                Object.defineProperty(invokeConfig, PROGRAMMATIC_TOOL_CALL_ID, { value: innerId });
+                const result = await target.invoke(args, invokeConfig);
+                // Native result normalization deliberately preserves envelopes.
+                // The sandbox needs registration JSON, not a ToolMessage record.
+                return isToolMessage(result) ? result.content : result;
+              } catch {
+                throw new Error(PTC_TOOL_FAILED);
+              }
+            };
+          },
+        }),
+      );
+    }
+    try {
+      return await execute(input, runManager, {
+        ...config,
+        toolCall: { ...outerCall, toolMap: boundTools },
+      } as PtcInvocationConfig);
+    } catch {
+      throw new Error(PTC_TOOL_FAILED);
+    }
+  };
+  return ptcTool;
+}
 
 /** Whole-preview budget for one inner call's arguments. */
 const ARGS_PREVIEW_MAX_CHARS = 96;
@@ -123,6 +236,9 @@ export function instrumentPtcToolMap({
   traceExclusions,
   emit,
 }: InstrumentPtcToolMapParams): Map<string, StructuredToolInterface> {
+  // Later tools can receive the raw or encoded registration as input.
+  const privateResults = toolMap.has(TASK_CALLBACK_TOOL);
+  includePreviews = includePreviews && !privateResults;
   let sequence = 0;
   /** Emission is telemetry: a dead stream must never fail the program. */
   const safeEmit = (event: PtcToolCallEvent): void => {
@@ -149,7 +265,13 @@ export function instrumentPtcToolMap({
             return Reflect.get(target, property, target);
           }
           return async (input: unknown, config?: unknown): Promise<unknown> => {
-            const callId = `${toolCallId}:${sequence++}`;
+            const innerId = (config as PtcInvocationConfig | undefined)?.[
+              PROGRAMMATIC_TOOL_CALL_ID
+            ];
+            const callId =
+              typeof innerId === 'string' && innerId.length > 0
+                ? JSON.stringify([toolCallId, innerId])
+                : `${toolCallId}:${sequence++}`;
             const startedAt = Date.now();
             safeEmit({
               tool_call_id: toolCallId,
@@ -202,7 +324,7 @@ export function instrumentPtcToolMap({
                 durationMs: Date.now() - startedAt,
                 ...(runId != null ? { runId } : {}),
               });
-              throw error;
+              throw privateResults ? new Error(PTC_TOOL_FAILED) : error;
             }
           };
         },

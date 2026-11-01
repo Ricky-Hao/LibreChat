@@ -1,5 +1,23 @@
 # Vendored agent SDK
 
+`librechat-agents-4.1.1-ricky.2.tgz` adds the non-enumerable
+`PROGRAMMATIC_TOOL_CALL_ID` symbol to `executeTools` invocation config. Host
+adapters can distinguish inner calls and replay the same registration without
+trusting tool arguments. It does not copy request data or parent Agent context.
+The old SDK exposes only arguments and a programmatic metadata flag, which
+cannot distinguish an identical new call from a replay; host-only counters
+cannot provide that identity.
+
+This candidate was built with Node 24 from clean commit
+`ed959a3fe652c0d84f3dae81d9a38ee8efb2e0d8` (tree
+`6493df8fa9ea6369235a793c46bff65aa4a986c4`), fast-forwarded into `main`
+in an isolated local SDK clone. Its parent is the ricky.1 commit below. The
+sibling checkout and remote SDK branches were not changed. The complete source
+patch against upstream `c56fc5eb7d141a25976c1886520ab4dac745ae07` is
+`agents-4.1.1-ricky.2.patch`; `agents.json` records both digests. Apply that patch
+to reproduce the source tree, including regression tests. This is a local
+source candidate, not a registry publication or deployment.
+
 `librechat-agents-4.1.1-ricky.1.tgz` is built from clean merged `main` commit
 `6939842a19a26681b9093ccffb52433636fa4df7` (tree
 `7e3ec48079ca4f19be36ee6f3952a093b6cb50b7`) in the sibling
@@ -112,7 +130,7 @@ npm pack --ignore-scripts --pack-destination /workspaces/LibreChat/vendor
 cd /workspaces/LibreChat
 npm install --ignore-scripts --no-audit --no-fund
 npm ls @librechat/agents zod zod-v4 zod-to-json-schema --all
-sha256sum vendor/librechat-agents-4.1.1-ricky.1.tgz
+sha256sum vendor/librechat-agents-4.1.1-ricky.2.tgz
 node vendor/verify-agents.mjs
 ```
 
@@ -145,4 +163,4 @@ do not relabel an artifact built from uncommitted source as a clean-commit build
 Space-only empty context lines in the stored patch are normalized to blank
 lines (accepted by `git apply`) so the provenance file passes whitespace checks.
 
-SHA-256: `8846c95757723cc78b39f3a0dd5c0f2d9edf537bd6c4dc86d3834a63a6882441`.
+Current artifact SHA-256: `4427419ab29e9421dd4088be3b0531602d510b74c29b6be01281c82143473e51`.

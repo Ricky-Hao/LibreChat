@@ -1,10 +1,16 @@
-import { Providers, WebSearchToolDefinition, GitHubCompareToolDefinition } from '@librechat/agents';
+import {
+  Constants,
+  Providers,
+  WebSearchToolDefinition,
+  GitHubCompareToolDefinition,
+} from '@librechat/agents';
 import type {
   LoadToolDefinitionsParams,
   LoadToolDefinitionsDeps,
   ActionToolDefinition,
 } from './definitions';
 import { toolkitExpansion, toolkitParent } from './toolkits/mapping';
+import { TASK_CALLBACK_TOOL } from '~/agents/callbackDefinition';
 import { getToolDefinition } from './registry/definitions';
 import { getToolApprovalIdentity } from './approval';
 import { loadToolDefinitions } from './definitions';
@@ -34,6 +40,56 @@ describe('definitions.ts', () => {
   });
 
   describe('loadToolDefinitions', () => {
+    it.each<{ callers?: Array<'direct' | 'code_execution'> }>([
+      {},
+      { callers: [] },
+      { callers: ['direct'] },
+      { callers: ['code_execution'] },
+      { callers: ['direct', 'code_execution'] },
+    ])('opts only an explicitly bound callback into PTC (%p)', async ({ callers }) => {
+      const result = await loadToolDefinitions(
+        {
+          userId: 'user',
+          agentId: 'agent',
+          tools: [TASK_CALLBACK_TOOL, 'calculator', 'ask_user_question'],
+          toolOptions: {
+            [TASK_CALLBACK_TOOL]: { allowed_callers: callers ? [...callers] : undefined },
+            calculator: { allowed_callers: ['code_execution'] },
+            ask_user_question: { allowed_callers: ['code_execution'] },
+          },
+          programmaticToolsEnabled: true,
+          codeExecutionEnabled: true,
+        },
+        { getOrFetchMCPServerTools: mockGetOrFetchMCPServerTools, isBuiltInTool: () => true },
+      );
+      const enabled = callers?.includes('code_execution') === true;
+      expect(result.toolRegistry.get(TASK_CALLBACK_TOOL)?.allowed_callers).toEqual(
+        enabled ? ['direct', 'code_execution'] : ['direct'],
+      );
+      expect(result.toolRegistry.get('calculator')?.allowed_callers).toEqual(['direct']);
+      expect(result.toolRegistry.get('ask_user_question')?.allowed_callers).toEqual(['direct']);
+      expect(
+        result.toolDefinitions.some(
+          (tool) => tool.name === Constants.BASH_PROGRAMMATIC_TOOL_CALLING,
+        ),
+      ).toBe(enabled);
+    });
+
+    it('does not create an unbound native callback from tool_options', async () => {
+      const result = await loadToolDefinitions(
+        {
+          userId: 'user',
+          agentId: 'agent',
+          tools: ['calculator'],
+          toolOptions: { [TASK_CALLBACK_TOOL]: { allowed_callers: ['code_execution'] } },
+          programmaticToolsEnabled: true,
+          codeExecutionEnabled: true,
+        },
+        { getOrFetchMCPServerTools: mockGetOrFetchMCPServerTools, isBuiltInTool: () => true },
+      );
+      expect(result.toolRegistry.has(TASK_CALLBACK_TOOL)).toBe(false);
+    });
+
     it.each([undefined, false, true])(
       'gates selected comparison definitions on explicit opt-in (%p)',
       async (githubCompareEnabled) => {

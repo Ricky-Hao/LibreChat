@@ -3828,6 +3828,74 @@ describe('ToolService - Action Capability Gating', () => {
       expect([...result.configurable.ptcToolMap.keys()]).toEqual(['programmatic_tool']);
     });
 
+    it.each([
+      { label: 'explicit bound opt-in', allowed: true },
+      { label: 'default direct', direct: true },
+      { label: 'missing binding', unbound: true },
+      { label: 'callback capability disabled', noCallback: true },
+      { label: 'programmatic capability disabled', noProgrammatic: true },
+      { label: 'code capability disabled', noCode: true },
+      { label: 'code role denied', denied: true },
+      { label: 'caller projection excludes callback', excluded: true },
+    ])('keeps native callback gates in the real PTC tool map: $label', async (options) => {
+      const realApi = jest.requireActual('@librechat/api');
+      const callbackName = 'create_task_callback';
+      const capabilities = [
+        AgentCapabilities.tools,
+        ...(!options.noProgrammatic ? [AgentCapabilities.programmatic_tools] : []),
+        ...(!options.noCode ? [AgentCapabilities.execute_code] : []),
+        ...(!options.noCallback ? [AgentCapabilities.task_callbacks] : []),
+      ];
+      const req = createMockReq(capabilities);
+      req.body = { conversationId: 'conversation', messageId: 'assistant-anchor' };
+      const agent = {
+        id: 'agent_ptc',
+        tools: [Tools.execute_code, ...(!options.unbound ? [callbackName] : [])],
+        tool_options: {
+          [callbackName]: { allowed_callers: options.direct ? ['direct'] : ['code_execution'] },
+        },
+      };
+      mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(capabilities));
+      if (options.denied) {
+        mockGetRoleByName.mockResolvedValue(
+          buildRole({ [PermissionTypes.RUN_CODE]: { [Permissions.USE]: false } }),
+        );
+      }
+      mockLoadToolDefinitions.mockImplementationOnce(realApi.loadToolDefinitions);
+      const definitions = await loadAgentTools({ req, res: {}, agent, definitionsOnly: true });
+      const nativeTool = realApi.createTaskCallbackTool();
+      mockLoadToolsUtil.mockResolvedValue({ loadedTools: [nativeTool], toolContextMap: {} });
+      const result = await loadToolsForExecution({
+        req,
+        res: {},
+        agent,
+        toolNames: [Constants.BASH_PROGRAMMATIC_TOOL_CALLING],
+        toolRegistry: definitions.toolRegistry,
+        actionsEnabled: false,
+        ...(options.excluded
+          ? {
+              callerCapabilityProjection: {
+                version: 1,
+                directToolNames: [callbackName],
+                codeExecutionToolNames: [],
+                directOnlyToolNames: [callbackName],
+                codeExecutionOnlyToolNames: [],
+              },
+            }
+          : {}),
+      });
+      expect(result.configurable.ptcToolMap?.has(callbackName) === true).toBe(
+        options.allowed === true,
+      );
+      if (options.allowed) {
+        expect(result.configurable.ptcToolMap.get(callbackName)).toBe(nativeTool);
+        expect(definitions.toolRegistry.get(callbackName).allowed_callers).toEqual([
+          'direct',
+          'code_execution',
+        ]);
+      }
+    });
+
     it('intersects PTC loading with the SDK live caller projection', async () => {
       const capabilities = [
         AgentCapabilities.tools,

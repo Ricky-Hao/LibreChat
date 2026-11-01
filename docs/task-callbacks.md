@@ -33,6 +33,47 @@ submit the task, confirm acceptance, then give a brief final response if no
 independent work remains. Do not poll. Registration alone does not end the turn;
 a terminal callback starts a later generation in the original conversation.
 
+### Programmatic tool calling
+
+已有 `agent.tools` 绑定的 `create_task_callback` 可以通过现有 Agent
+`tool_options` 明确启用 PTC。默认仍为 direct；其他 native 工具不因此开放。
+例如 Agent 配置中的字段为：
+
+```json
+{
+  "tools": ["execute_code", "create_task_callback"],
+  "tool_options": {
+    "create_task_callback": { "allowed_callers": ["direct", "code_execution"] }
+  }
+}
+```
+
+保留 Agent 其他 tools/options。部署还必须允许 `programmatic_tools`、
+`execute_code` 和 `task_callbacks`，并启用 `taskCallbacks.enabled`。
+现有代码执行权限、实际工具绑定、工具可用名单及运行时 caller projection
+仍适用。仅设置 `tool_options` 不会创建工具绑定，也不会开放 PTC。
+callback 即使只配置 `code_execution`，仍保留 direct 调用。
+
+host 在外层 PTC 开始时复制当前 turn 的 conversation/assistant anchor；
+owner、tenant 和 Agent 仍来自原请求及实际加载的工具。SDK 用不可序列化的
+`PROGRAMMATIC_TOOL_CALL_ID` 传递 bridge 内层调用身份。注册身份同时包含外层
+tool call 和内层 call ID；同一内层调用重放或同一外层调用重试会复用注册。
+不同内层调用、外层调用、turn、会话、Agent 或 owner/tenant 互相隔离。
+代码参数不能提供或覆盖这些锚点；缺少可信身份时返回 `CALLBACK_UNAVAILABLE`。
+子执行仍返回 `CALLBACK_UNSUPPORTED_CONTEXT`，不继承父会话锚点。
+
+PTC 的完整 registration 只作为内部工具结果传回执行器内存。不要打印它。
+在同一次调用中，将整个 registration 序列化为 JSON，以 UTF-8 编码，再进行
+一次 Base64 编码，然后交给已授权、已绑定的专用私密文件工具。不要只编码
+`callback_id`，也不要二次编码。执行源码只能引用返回值变量，不能内嵌 bearer；
+不要把结果写入普通执行文件、prompt、日志或用户消息。Base64 不是加密。
+
+callback 可用的 PTC 调用会关闭所有内层参数和错误预览，以及内层 LangChain
+工具 observations；后续工具也可能收到原始或编码后的 registration。
+普通进度 trace 仍可显示工具名称、状态和耗时。该路径的抛出错误统一返回
+`PTC_TOOL_FAILED`，不携带原始错误或秘密。注册不会证明外部任务已接受、启动或结束；
+应在专用文件交接和任务提交成功后确认 executor 接受。
+
 ### 子 Agent 上下文限制
 
 此工具只支持普通 Agent 会话。SDK 子执行会继承父执行的 `requestBody`；
@@ -178,6 +219,8 @@ Run the owning fixtures without paid model calls:
 ```sh
 # From packages/api; no companion checkout or paid model calls are needed.
 npx jest src/agents/callbacks.integration.spec.ts --runInBand
+# Real pinned SDK PTC bridge, synthetic registration DB, local Code API/file fixtures.
+npx jest src/agents/callbacks.ptc.spec.ts src/agents/ptc.spec.ts src/tools/definitions.spec.ts --runInBand
 # From packages/data-provider
 npx jest src/taskCallbacks.spec.ts --runInBand
 # From packages/data-schemas; index-build compatibility and retry behavior.
@@ -192,6 +235,10 @@ branch isolation, deletion/retention/expiry, bounded bodies and crash recovery.
 验证前台、后台及 event-driven 子执行在注册前被拒绝；
 后台用例通过真实 `SubagentThreadTaskStore` 保存子线程并结算任务。
 相同 tool-call ID 在普通会话的不同 turn、分支及 Agent 之间保持隔离。
+PTC fixture 使用实际 vendored SDK 和 host 工厂；仅 Code API HTTP 对端与专用
+文件工具为本地 fixture。它验证完整 registration 的内存交接、一次编码、
+重放与隔离、锚点伪造拒绝、子上下文拒绝，以及错误和普通 trace 的秘密保护。
+它不执行部署端 sandbox，不注册生产 callback，也不发送真实终态回调。
 
 Set `CODER_MODULES_CHECKOUT` only for the optional cross-repository fixture.
 The companion module's actual `TaskRunner` then posts into that handler. Its model and

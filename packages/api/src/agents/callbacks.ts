@@ -30,6 +30,7 @@ import {
   TASK_CALLBACK_SOURCE,
   TASK_CALLBACK_TOOL,
   TASK_CALLBACK_GUIDANCE,
+  TASK_CALLBACK_UNSUPPORTED_CONTEXT,
   TaskCallbackToolDefinition,
 } from './callbackDefinition';
 import { ASK_USER_QUESTION_TOOL_NAME, createAskUserQuestionTool } from './hitl/askUserQuestionTool';
@@ -120,11 +121,7 @@ export function createTaskCallbackTool(deps: TaskCallbackToolDeps = {}): Dynamic
           config?.metadata?.executionContext != null ||
           req.resolvedConversation?.subagentThread != null
         ) {
-          return JSON.stringify({
-            error: 'CALLBACK_UNSUPPORTED_CONTEXT',
-            guidance:
-              'External task callbacks cannot resume child Agent executions. No callback was registered. Report this limitation to the parent Agent.',
-          });
+          return TASK_CALLBACK_UNSUPPORTED_CONTEXT;
         }
         const callback_url = callbackUrl(settings.publicUrl);
         const callback_id = `tcb_${randomBytes(32).toString('base64url')}`;

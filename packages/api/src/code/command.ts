@@ -29,6 +29,7 @@ import {
   WORKSPACE_QUEUE_MAX_WAIT_MS,
 } from './workspace';
 import { BACKGROUND_TOOL_INVOCATION_CONFIG_KEY } from '~/agents/invocation';
+import { bindPtcCallbackContext } from '~/agents/ptc';
 
 const DEFAULT_OUTPUT_BYTES = 256 * 1024;
 
@@ -393,7 +394,7 @@ export function createContextProgrammaticBashTool(
   const configuredDefault = attached
     ? context.codeEnvironmentConfigSchema?.limits?.defaultCommandTimeoutMs
     : undefined;
-  if (configuredDefault == null) return bashTool;
+  if (configuredDefault == null) return bindPtcCallbackContext(bashTool);
 
   const maxTimeoutMs = options.runTimeoutMs ?? WORKSPACE_COMMAND_DEFAULT_TIMEOUT_MS;
   const schema = structuredClone(bashTool.schema) as ReturnType<
@@ -417,7 +418,7 @@ export function createContextProgrammaticBashTool(
     const params = input as { timeout?: number };
     return execute({ ...params, timeout: params.timeout ?? defaultTimeoutMs }, ...args);
   };
-  return bashTool;
+  return bindPtcCallbackContext(bashTool);
 }
 
 /** Apply authorship before the SDK prepares the script and its replay requests. */
