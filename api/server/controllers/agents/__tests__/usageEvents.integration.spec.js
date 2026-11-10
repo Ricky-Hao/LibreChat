@@ -117,6 +117,7 @@ const SECOND_CALL_USAGE = {
 };
 
 const MAX_CONTEXT_TOKENS = 8000;
+const SUMMARY_CONTEXT_TOKENS = 6000;
 
 async function runToolLoop({
   res,
@@ -411,9 +412,11 @@ describe('usage events through the real agents pipeline', () => {
     const history = [
       new HumanMessage(`Turn 1 question. ${pad}`),
       new AIMessage(`Turn 1 answer. ${pad}`),
+      new HumanMessage(`Turn 2 question. ${pad}`),
+      new AIMessage(`Turn 2 answer. ${pad}`),
       // The default recency window preserves the latest two user-led turns.
-      new HumanMessage('Turn 2 question.'),
-      new AIMessage('Turn 2 answer.'),
+      new HumanMessage('Turn 3 question.'),
+      new AIMessage('3.'),
       new HumanMessage('Final question.'),
     ];
     const indexTokenCountMap = {};
@@ -432,9 +435,13 @@ describe('usage events through the real agents pipeline', () => {
           streamUsage: false,
         },
         instructions: 'You are a helpful assistant.',
-        maxContextTokens: 700,
+        maxContextTokens: SUMMARY_CONTEXT_TOKENS,
         summarizationEnabled: true,
-        summarizationConfig: { provider: 'usage-summary-test', model: 'gpt-4o-mini' },
+        summarizationConfig: {
+          provider: 'usage-summary-test',
+          model: 'gpt-4o-mini',
+          reserveRatio: 0.5,
+        },
       },
       returnContent: true,
       customHandlers: handlers,
@@ -510,20 +517,23 @@ describe('usage events through the real agents pipeline', () => {
       usageEmitSink,
     });
 
-    expect(history.reduce((sum, message) => sum + charCounter(message), 0)).toBeGreaterThan(700);
+    expect(history.reduce((sum, message) => sum + charCounter(message), 0)).toBeGreaterThan(
+      SUMMARY_CONTEXT_TOKENS,
+    );
     expect(summaryCalls).toHaveLength(1);
     expect(primaryCalls).toHaveLength(1);
     const summarizedContent = summaryCalls[0][0].map((message) => message.content);
-    expect(summarizedContent).toEqual(
-      expect.arrayContaining(history.slice(0, 2).map((message) => message.content)),
+    // The SDK summarizes the pruned provider window, including its retained recent tail.
+    // This budget keeps the last long answer and the three recent messages.
+    expect(summarizedContent.slice(0, -1)).toEqual(
+      history.slice(3).map((message) => message.content),
     );
-    expect(summarizedContent).not.toContain('Final question.');
-    expect(summarizedContent).not.toContain('Turn 2 question.');
+    expect(summarizedContent.at(-1)).toEqual(expect.stringContaining('checkpoint'));
     const primaryContent = primaryCalls[0][0].map((message) => message.content);
     expect(primaryContent).toEqual(
       expect.arrayContaining([
         expect.stringContaining('## Summary\nPrior turns compacted.'),
-        ...history.slice(2).map((message) => message.content),
+        ...history.slice(4).map((message) => message.content),
       ]),
     );
     expect(primaryContent.join('\n')).not.toContain('context detail to overflow');
@@ -541,7 +551,7 @@ describe('usage events through the real agents pipeline', () => {
      *  small (the compacted context, not the full history). */
     expect(snapshot?.breakdown?.summaryTokens).toBeGreaterThan(0);
     expect(snapshot?.breakdown?.messageTokens).toBeLessThan(snapshot?.breakdown?.summaryTokens);
-    expect(snapshot.breakdown.maxContextTokens).toBe(700);
+    expect(snapshot.breakdown.maxContextTokens).toBe(SUMMARY_CONTEXT_TOKENS);
     expect(snapshot.breakdown.messageCount).toBe(3);
     expect(snapshot.remainingContextTokens).toBeGreaterThan(0);
 

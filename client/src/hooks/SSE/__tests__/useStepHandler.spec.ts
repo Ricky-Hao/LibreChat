@@ -1,5 +1,6 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
+import { useStepHandler } from '@librechat/chat/react';
 import { renderHook, act } from '@testing-library/react';
 import { useStore, useAtomValue, createStore, Provider as JotaiProvider } from 'jotai';
 import {
@@ -10,6 +11,15 @@ import {
   ToolCallTypes,
   mergeEditedMessageContent,
 } from 'librechat-data-provider';
+import {
+  activeSubagentPanel,
+  listRegisteredSubagentProgressKeys,
+  reduceSubagentProgress,
+  registerSubagentProgressKey,
+  subagentParentStreamOpenByToolCallId,
+  subagentProgressByToolCallId,
+  subagentProgressKey,
+} from '@librechat/chat/react';
 import type {
   TMessageContentParts,
   SummaryContentPart,
@@ -22,21 +32,11 @@ import type {
   Agents,
   FullToolCall,
 } from 'librechat-data-provider';
-import type { ActiveSubagentPanel } from '~/components/Chat/Subagents/state';
+import type { ActiveSubagentPanel } from '@librechat/chat/react';
 import type { PtcTrace, PtcTraceEntry } from '~/common';
-import {
-  activeSubagentPanel,
-  listRegisteredSubagentProgressKeys,
-  reduceSubagentProgress,
-  registerSubagentProgressKey,
-  subagentParentStreamOpenByToolCallId,
-  subagentProgressByToolCallId,
-  subagentProgressKey,
-} from '~/components/Chat/Subagents/state';
 import { ptcTraceByToolCallId, ptcTraceKey, PTC_TRACE_MAX_ENTRIES } from '~/hooks/SSE/ptc';
 import { sandboxStartingByToolCallId } from '~/hooks/SSE/sandbox';
 import { resolveAskUserQuestionPart } from '~/utils/approval';
-import useStepHandler from '~/hooks/SSE/useStepHandler';
 import { IsolatedAtomStore } from 'test/harness';
 
 /** `Constants` is a heterogeneous enum (`string | number`); annotate as

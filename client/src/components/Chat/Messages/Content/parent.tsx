@@ -1,8 +1,8 @@
 import { Alert, Button } from '@librechat/client';
+import { findRerunParent } from '@librechat/chat';
 import { findMessageById } from 'librechat-data-provider';
 import type { TMessage } from 'librechat-data-provider';
 import { useHistoryParentQuery } from '~/data-provider/Messages/queries';
-import { findRerunParent } from './rerunParent';
 import { useLocalize } from '~/hooks';
 
 export function useRerunParent(

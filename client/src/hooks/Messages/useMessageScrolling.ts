@@ -1,6 +1,7 @@
 import { useRef, useMemo, useCallback, useLayoutEffect, useEffect } from 'react';
 import { useAtomValue } from 'jotai';
 import { Constants } from 'librechat-data-provider';
+import type { ScrollNavigation } from '@librechat/chat/react';
 import type { TMessage } from 'librechat-data-provider';
 import type { MouseEventHandler } from 'react';
 import { useMessagesConversation, useMessagesSubmission } from '~/Providers';
@@ -12,13 +13,7 @@ const attachThreshold = 150;
 /** Fallback for browsers that do not report scrollend. */
 const glideTimeout = 700;
 
-export type ScrollNavigation = {
-  conversationKey: string | undefined;
-  ready: boolean;
-  /** Only an explicit send, never a restored resume submission. */
-  explicitSendId?: string;
-  targetMessageId?: string;
-};
+export type { ScrollNavigation } from '@librechat/chat/react';
 
 export default function useMessageScrolling(
   messagesTree?: TMessage[] | null,

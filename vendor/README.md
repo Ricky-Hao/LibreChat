@@ -1,5 +1,23 @@
 # Vendored agent SDK
 
+The current `librechat-agents-4.2.1-ricky.2.tgz` combines upstream 4.2.1
+(`708c9118f478a84f28e8e253148a373b49fec191`) with the fork changes from
+4.1.1-ricky.2. It retains PTC call identity, trusted host context, intent/error
+handling, artifact guidance, reasoning normalization, assistant phases and skill
+provenance. Summarization uses upstream cancellation, failure classification,
+history retention and context-budget retries, with the fork's uncertainty guidance.
+The SDK now uses Zod 4; consumer Zod 3 and early/current Zod 4 schemas remain supported.
+Version ricky.2 reads Zod 4 schema definitions from the `_zod.def` data properties
+before falling back to Zod 3 `_def`. This avoids invoking Zod 4's legacy getter
+while preserving bounded inspection and unsafe getter/proxy rejection.
+The previous 4.2.1-ricky.1 tarball and patch remain available for recovery.
+
+This artifact was built with Node 24.22.1 from **uncommitted source in a normal
+directory**, using the upstream source archive plus `agents-4.2.1-ricky.2.patch`.
+No SDK repository, branch or registry was changed. There is no matching SDK commit.
+The complete patch includes regression tests and package lock changes.
+`agents.json` records the upstream base, patch digest and artifact digest.
+
 `librechat-agents-4.1.1-ricky.2.tgz` adds the non-enumerable
 `PROGRAMMATIC_TOOL_CALL_ID` symbol to `executeTools` invocation config. Host
 adapters can distinguish inner calls and replay the same registration without
@@ -118,19 +136,20 @@ Both API workspaces use this file dependency. Do not replace it with an npm
 link, an edited node_modules copy, or the stock registry package. Docker copies
 this directory before npm ci. No registry publishing is required.
 
-Regenerate only from a clean SDK commit merged into `main`, with Node 24.
-Confirm the exact merged SHA before building; reuse an unchanged valid dependency
-installation or run the `npm ci` step below:
+To reproduce the current candidate, extract the upstream archive for the recorded
+base into a normal directory, apply the recorded patch, and use Node 24. Keep this
+uncommitted-source provenance; a build from a clean SDK commit is a separate artifact.
+Reuse an unchanged valid dependency installation or run `npm ci` before building:
 
 ```sh
-cd /workspaces/agents
+cd /path/to/patched-sdk-source
 npm ci --ignore-scripts
 npm run build
-npm pack --ignore-scripts --pack-destination /workspaces/LibreChat/vendor
-cd /workspaces/LibreChat
+npm pack --ignore-scripts --pack-destination /path/to/LibreChat/vendor
+cd /path/to/LibreChat
 npm install --ignore-scripts --no-audit --no-fund
 npm ls @librechat/agents zod zod-v4 zod-to-json-schema --all
-sha256sum vendor/librechat-agents-4.1.1-ricky.2.tgz
+sha256sum vendor/librechat-agents-4.2.1-ricky.2.tgz
 node vendor/verify-agents.mjs
 ```
 
@@ -139,8 +158,8 @@ used tarball or patch. Update both API manifests and the lock resolution/integri
 for the new artifact before reinstalling it.
 
 Verify the new lock with a clean `npm ci` as well. A tarball update can retain a
-stale nested Zod entry: the SDK must resolve its declared Zod 3, while
-`@langchain/openai` resolves its own Zod 4. Do not mask an invalid tree with an override.
+stale nested Zod entry: the SDK must resolve its declared exact Zod version.
+Do not mask an invalid tree with an override.
 
 The artifact includes ESM, CJS and declarations, plus public source, license and
 README. The package allowlist excludes tests, fixtures, environment files and
@@ -155,12 +174,11 @@ the reviewed artifact identity and checksum for both this verifier and the E2E
 locked-origin policy; update it when intentionally replacing the artifact.
 
 Regeneration must also refresh the source patch, its digest, the artifact digest
-and lock integrity. Build from the committed source after all SDK edits. To reproduce this snapshot,
-apply the patch to the recorded base in a clean checkout before building with
-Node 24, or check out the matching `source.committedSource.commit`. Retain the
+and lock integrity. Build after all SDK edits. To reproduce this snapshot,
+apply the patch to the recorded upstream base before building with Node 24. Retain the
 historical build provenance when recording a later matching source commit;
 do not relabel an artifact built from uncommitted source as a clean-commit build.
 Space-only empty context lines in the stored patch are normalized to blank
 lines (accepted by `git apply`) so the provenance file passes whitespace checks.
 
-Current artifact SHA-256: `4427419ab29e9421dd4088be3b0531602d510b74c29b6be01281c82143473e51`.
+Current artifact SHA-256: `832579d9dfeb24f04f7666adb3e2069aa89c133bb19a0e005282f977a3d9329f`.

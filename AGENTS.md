@@ -268,6 +268,8 @@ success, and failure states in focused component tests.
 
 ## Testing
 
+在内存受限的开发 Workspace 中，重型类型检查、生产构建、Jest 和 E2E 按阶段串行执行，不同时启动多个重型检查。Jest 默认使用 `--runInBand`；仅在确认总内存有足够余量后增加并发。设置 `NODE_OPTIONS=--max-old-space-size=...` 前，先核对容器总内存上限，并为 OpenCode、编辑器、浏览器和原生内存分配保留余量；各 Node 进程的堆上限不能分别按容器总内存设置。单进程堆不足时按需提高上限，保持该重型检查独占运行；失败后先检查原进程是否退出，再重试。
+
 Run focused Jest tests from the owning workspace, not the entire monorepo. Prefer real logic and
 spies over mocked internals; use `mongodb-memory-server` for database queries and the real MCP SDK
 for MCP behavior. Mock only external HTTP APIs or uncontrollable services. For frontend tests use

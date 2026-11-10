@@ -6,14 +6,14 @@ import { MemoryRouter } from 'react-router-dom';
 import { ContentTypes } from 'librechat-data-provider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { TMessageContentParts, ToolCallPartResponse } from 'librechat-data-provider';
 import {
   activeSubagentPanel,
   recoverSubagentProgress,
   reduceSubagentProgress,
   subagentProgressByToolCallId,
   subagentProgressKey,
-} from './state';
+} from '@librechat/chat/react';
+import type { TMessageContentParts, ToolCallPartResponse } from 'librechat-data-provider';
 import ContentParts from '~/components/Chat/Messages/Content/ContentParts';
 import SubagentThreadPanel from './SubagentThreadPanel';
 import { ChatSurfaceHarness } from 'test/harness';
@@ -46,9 +46,9 @@ jest.mock('~/data-provider', () => ({
 jest.mock('./ParentSubagentsProvider', () => ({
   useParentSubagents: () => ({ byMessageId: new Map(), byThreadId: new Map() }),
 }));
-jest.mock('~/data-provider/Subagents/useSubagentActivityStream', () => ({
-  __esModule: true,
-  default: () => undefined,
+jest.mock('@librechat/chat/react', () => ({
+  ...jest.requireActual('@librechat/chat/react'),
+  useSubagentActivityStream: () => ({ isReady: false }),
 }));
 jest.mock('@librechat/client', () => ({
   ...jest.requireActual('@librechat/client'),
