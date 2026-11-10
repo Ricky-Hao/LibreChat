@@ -106,7 +106,12 @@ test.describe('pinned drag rules', () => {
     await skipWithoutHover(page);
     const [pinnedTitle] = uniqueTitles('pin-on-row', 1);
     const plainTitle = `pin-on-row plain ${randomUUID()}`;
-    seededPins = await seedPinnedConversations([pinnedTitle]);
+    /* Keep the source below the viewport even in isolation. In a full shard,
+     * Running/Finished rows can put it there before this test begins. */
+    seededPins = await seedPinnedConversations([
+      pinnedTitle,
+      ...uniqueTitles('pin-on-row spacer', 18),
+    ]);
     const plain = randomUUID();
     await seedConversations(getE2EUser().email, [
       { conversationId: plain, title: plainTitle, updatedAt: new Date() },
@@ -117,6 +122,7 @@ test.describe('pinned drag rules', () => {
     await expect(pinnedConvoRow(page, pinnedTitle)).toBeVisible();
     const plainRow = chatsListRow(page, plainTitle);
     await expect(plainRow).toBeVisible();
+    await expect(plainRow).not.toBeInViewport();
 
     /** The section takes a chat dropped anywhere on it, and a row is part of the
      *  section: a release that lands on one rather than between two has to pin
@@ -125,6 +131,9 @@ test.describe('pinned drag rules', () => {
 
     await expect(pinnedConvoRow(page, plainTitle)).toBeVisible();
     await expect.poll(() => isConversationPinned(plain)).toBe(true);
+
+    await reloadWithPinnedSection(page);
+    await expect(pinnedConvoRow(page, plainTitle)).toBeVisible();
   });
 
   test('a pinned chat cannot be dragged through a pinned model @scenario:a-pinned-chat-cannot-be-dragged-through-a-pinned-model', async ({

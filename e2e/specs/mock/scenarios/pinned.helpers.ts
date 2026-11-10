@@ -123,24 +123,33 @@ export async function dragRowOnto(
   target: Locator,
   fraction: number,
 ): Promise<void> {
-  const from = await source.boundingBox();
-  const to = await target.boundingBox();
-  if (!from || !to) {
-    throw new Error('drag source and target must both be laid out');
-  }
   /* The list disconnects its drag sources while the saved order reconciles, and
    * react-dnd marks a connected one `draggable`. Pressing on a row that is not
    * yet connected does not start a drag at all: the press and release become a
    * click, and the row navigates instead of moving. */
   await expect.poll(() => source.getAttribute('draggable'), { timeout: 15_000 }).toBe('true');
+  /* A laid-out row can still be below the sidebar viewport. Hover scrolls it
+   * into view and checks that the pointer can reach it before we measure. */
+  await source.hover();
+  const from = await source.boundingBox();
+  if (!from) {
+    throw new Error('drag source must be laid out');
+  }
   const startX = from.x + from.width / 2;
   const startY = from.y + from.height / 2;
-  const endX = to.x + to.width / 2;
-  const endY = to.y + to.height * fraction;
   await page.mouse.move(startX, startY);
   await page.mouse.down();
   /** The first move is what the browser turns into `dragstart`. */
   await page.mouse.move(startX, startY - 8, { steps: 4 });
+  /* Bring the target back only after starting the drag: scrolling their shared
+   * sidebar can move the source off screen again. Measure after that scroll. */
+  await target.scrollIntoViewIfNeeded();
+  const to = await target.boundingBox();
+  if (!to) {
+    throw new Error('drag target must be laid out');
+  }
+  const endX = to.x + to.width / 2;
+  const endY = to.y + to.height * fraction;
   await page.mouse.move(endX, endY, { steps: 24 });
   /** The list shifts rows under the pointer as it reorders, and the hover that
    *  decides a swap reads the offset at the moment it fires. A pointer that
