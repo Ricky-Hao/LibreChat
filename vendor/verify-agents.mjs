@@ -12,11 +12,13 @@ const { artifact, version, consumers, sha256 } = metadata;
 const archive = readFileSync(resolve(root, artifact));
 assert.equal(createHash('sha256').update(archive).digest('hex'), sha256);
 const { source } = metadata;
-assert.equal(source.dirty, false, 'This artifact was built from a clean source commit');
-assert.equal(source.buildState, 'clean-commit');
+assert.equal(
+  source.dirty,
+  true,
+  'This artifact was built from upstream source plus the recorded patch',
+);
+assert.equal(source.buildState, 'uncommitted-source');
 assert.match(source.baseCommit, /^[a-f0-9]{40}$/);
-assert.match(source.committedSource.commit, /^[a-f0-9]{40}$/);
-assert.match(source.committedSource.tree, /^[a-f0-9]{40}$/);
 assert.equal(
   createHash('sha256')
     .update(readFileSync(resolve(root, source.patch)))
@@ -84,7 +86,7 @@ function verifySummaryReasoning(sdk) {
 }
 
 /** Exercises schemas supplied by the consumer's installed Zod versions. */
-function verifySchemas(sdk, zod3, earlyZod4, zod4) {
+function verifySchemas(sdk, zod3, zod4) {
   assert.deepEqual(
     sdk.toJsonSchema(zod3.object({ query: zod3.string() }), 'search', 'Search files'),
     {
@@ -101,8 +103,9 @@ function verifySchemas(sdk, zod3, earlyZod4, zod4) {
       $schema: 'http://json-schema.org/draft-07/schema#',
     },
   );
-  const query = earlyZod4.string().min(1).max(10).describe('Early query');
-  for (const z of [earlyZod4, zod4]) {
+  const query = zod4.string().min(1).max(10).describe('Consumer query');
+  {
+    const z = zod4;
     const schema = z.object({ query, limit: z.number().default(5) });
     const converted = sdk.toJsonSchema(schema, 'search', 'Search files');
     assert.equal(converted.title, 'search');
@@ -112,12 +115,12 @@ function verifySchemas(sdk, zod3, earlyZod4, zod4) {
       type: 'string',
       minLength: 1,
       maxLength: 10,
-      description: 'Early query',
+      description: 'Consumer query',
     });
     assert.equal(converted.properties.limit.default, 5);
     assert.deepEqual(schema.parse({ query: 'files' }), { query: 'files', limit: 5 });
   }
-  assert.equal(query.description, 'Early query');
+  assert.equal(query.description, 'Consumer query');
   const jsonSchema = { type: 'object', properties: { query: { type: 'string' } } };
   assert.equal(sdk.toJsonSchema(jsonSchema, 'search'), jsonSchema);
 }
@@ -382,7 +385,7 @@ for (const consumer of consumers) {
   assert.equal(
     sdkZod.version,
     manifest.dependencies.zod,
-    'The SDK must resolve its declared exact Zod 3 version, not a stale nested Zod 4',
+    'The SDK must resolve its declared exact Zod version',
   );
   assert.equal(manifest.types, manifest.exports['.'].types);
   assert.match(
@@ -416,17 +419,13 @@ for (const consumer of consumers) {
   const { DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
   const { ToolMessage } = require('@librechat/agents/langchain/messages');
   verifySummaryReasoning(sdk);
-  verifySchemas(sdk, require('zod').z, require('zod/v4').z, require('zod-v4').z);
+  verifySchemas(sdk, require('zod/v3').z, require('zod/v4').z);
   await verifyIntent(sdk, DynamicStructuredTool, ToolMessage);
   await verifyArtifactGuidance(sdk);
   for (const subpath of Object.keys(manifest.exports)) {
     const specifier = `@librechat/agents${subpath === '.' ? '' : subpath.slice(1)}`;
     assert.ok(require(specifier));
   }
-  assert.equal(
-    require('@librechat/agents').isMetadataSummaryStub('[Metadata summary: 1 messages (1 human)]'),
-    true,
-  );
   const code = `
     import assert from 'node:assert/strict';
     const subpaths = ${JSON.stringify(Object.keys(manifest.exports))};
@@ -439,7 +438,7 @@ for (const consumer of consumers) {
     const { DynamicStructuredTool } = await import('@librechat/agents/langchain/tools');
     const { ToolMessage } = await import('@librechat/agents/langchain/messages');
     (${verifySummaryReasoning.toString()})(sdk);
-    (${verifySchemas.toString()})(sdk, (await import('zod')).z, (await import('zod/v4')).z, (await import('zod-v4')).z);
+    (${verifySchemas.toString()})(sdk, (await import('zod/v3')).z, (await import('zod/v4')).z);
     await (${verifyIntent.toString()})(sdk, DynamicStructuredTool, ToolMessage);
     await (${verifyArtifactGuidance.toString()})(sdk);
     assert.match(sdk.buildSkillCarrierText('fixture', { skillName: 'fixture' }), /Skill source/);

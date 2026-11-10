@@ -458,11 +458,34 @@ test.describe('activity fold', () => {
     });
     await failedCall.scrollIntoViewIfNeeded();
     await failedCall.hover();
+    /** A reader gesture releases bottom-follow before the earlier message grows. */
+    await Promise.all([
+      transcript.evaluate(
+        (content) =>
+          new Promise<void>((resolve) => {
+            content
+              .closest('.scrollbar-gutter-stable')!
+              .addEventListener(
+                'wheel',
+                () => requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+                { once: true },
+              );
+          }),
+      ),
+      page.mouse.wheel(0, -100),
+    ]);
+    await failedCall.hover();
     await expect(groupRail).toHaveAttribute('data-fold-lit');
-    const shift = await failedCall.evaluate((row) => {
+    const headerCenter = await groupHeader.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.top + rect.height / 2;
+    });
+    const shift = await failedCall.evaluate(async (row, headerY) => {
       const fold = row.closest<HTMLElement>('[data-testid="activity-phase-card"]')!;
       const message = row.closest<HTMLElement>('.message-render')!;
       const scroll = row.closest<HTMLElement>('.scrollbar-gutter-stable')!;
+      const rect = row.getBoundingClientRect();
+      const distance = rect.top + rect.height / 2 - headerY;
       const measure = () => ({
         top: fold.getBoundingClientRect().top,
         foldHeight: fold.getBoundingClientRect().height,
@@ -470,15 +493,30 @@ test.describe('activity fold', () => {
         scrollTop: scroll.scrollTop,
       });
       const before = measure();
-      document.getElementById('fold-layout-predecessor')!.style.height = '32px';
-      return { before, after: measure() };
-    });
-    expect(shift.after.top - shift.before.top).toBeCloseTo(32);
+      document.getElementById('fold-layout-predecessor')!.style.height = `${distance}px`;
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+      return {
+        before,
+        after: measure(),
+        distance,
+        pointer: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+      };
+    }, headerCenter);
+    expect(shift.distance).toBeGreaterThan(0);
+    expect(shift.after.top - shift.before.top).toBeCloseTo(shift.distance);
     expect(shift.after.foldHeight).toBe(shift.before.foldHeight);
     expect(shift.after.messageHeight).toBe(shift.before.messageHeight);
     expect(shift.after.scrollTop).toBe(shift.before.scrollTop);
-    /** 32px further down, the pointer is over the group's header: the path is hit-tested
-     *  again and now ends in that header's branch of the phase. */
+    expect(
+      await groupHeader.evaluate(
+        (element, point) => element.contains(document.elementFromPoint(point.x, point.y)),
+        shift.pointer,
+      ),
+    ).toBe(true);
+    /** Align the group's header with the still pointer even when error text wraps.
+     *  The path is hit-tested again and ends in that header's branch of the phase. */
     await expect(groupRail).not.toHaveAttribute('data-fold-lit');
     await endsAt(litBranch(phaseRail), groupHeader);
     await transcript.evaluate((content, anchor) => {

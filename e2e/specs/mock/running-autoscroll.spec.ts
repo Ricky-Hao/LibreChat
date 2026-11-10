@@ -18,9 +18,10 @@ async function setAutoScroll(page: Page, enabled: boolean) {
   await page.getByRole('tab', { name: 'Chat', exact: true }).click();
   const toggle = page.getByRole('switch', { name: 'Auto-Scroll to latest message on chat open' });
   await toggle.setChecked(enabled);
+  await expect(toggle).toBeChecked({ checked: enabled });
   await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
   await expect
-    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('autoScroll') ?? 'false')))
+    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('autoScroll') ?? 'true')))
     .toBe(enabled);
 }
 
@@ -60,7 +61,7 @@ test.describe('running conversation navigation scrolling', () => {
       const otherId = enabled ? await seedThread() : undefined;
       await page.goto(`/c/${id}`);
       await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
-      // Exercise the existing control and persistence, including the default false.
+      // Exercise the existing control and persistence, including the default true.
       await setAutoScroll(page, !enabled);
       await setAutoScroll(page, enabled);
       await sendMessage(page, `E2E_RUNNING_REPLY:scroll-${enabled}`);

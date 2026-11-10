@@ -4,9 +4,8 @@ import * as Primitive from '@radix-ui/react-dialog';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { OverlayRegistration, RegisterOverlay } from '../../Providers/Overlay';
 import { OverlayBackProvider } from '../../Providers/Overlay';
+import { Dialog, OGDialog } from '../OriginalDialog';
 import { AlertDialog } from '../AlertDialog';
-import { OGDialog } from '../OriginalDialog';
-import { Dialog } from '../Dialog';
 
 describe.each([
   ['OGDialog', OGDialog],

@@ -119,6 +119,8 @@ describe('vendored summary reasoning through the consumer pipeline', () => {
       const history = [
         new HumanMessage(`First question. ${pad}`),
         new AIMessage(`First answer. ${pad}`),
+        new HumanMessage(`Older question. ${pad}`),
+        new AIMessage(`Older answer. ${pad}`),
         new HumanMessage('Second question.'),
         new AIMessage('Second answer.'),
         new HumanMessage('Final question.'),
@@ -131,9 +133,13 @@ describe('vendored summary reasoning through the consumer pipeline', () => {
           llmConfig: { provider: 'summary-reasoning-primary-fixture', streaming: true },
           instructions: 'Use the compacted history.',
           reasoningKey: 'reasoning',
-          maxContextTokens: 700,
+          // Keep an older message outside the two recent turns after pruning.
+          maxContextTokens: 6000,
           summarizationEnabled: true,
-          summarizationConfig: { provider: 'summary-reasoning-summary-fixture' },
+          summarizationConfig: {
+            provider: 'summary-reasoning-summary-fixture',
+            reserveRatio: 0.5,
+          },
         },
         returnContent: true,
         customHandlers: handlers,

@@ -71,6 +71,7 @@ const mockGetQueryData = jest.fn((queryKey: readonly unknown[]) => {
 const mockCancelQueries = jest.fn(() => Promise.resolve());
 let mockQueryClient: QueryClient | undefined;
 const mockLoggerWarn = jest.fn();
+const mockShowToast = jest.fn();
 const mockGetLatestConversation = jest.fn(() => null as TConversation | null);
 const mockSetConversation = jest.fn();
 const mockResolveCodeWorkspaceSubmission = jest.fn<
@@ -86,6 +87,11 @@ const mockCodeWorkspace = {
 jest.mock('react-router-dom', () => ({
   ...jest.requireActual('react-router-dom'),
   useNavigate: () => mockNavigate,
+}));
+
+jest.mock('@librechat/client', () => ({
+  ...jest.requireActual('@librechat/client'),
+  useToastContext: () => ({ showToast: mockShowToast }),
 }));
 
 jest.mock('@tanstack/react-query', () => ({
@@ -508,7 +514,7 @@ describe('useChatFunctions ask', () => {
     expect(setMessages).not.toHaveBeenCalled();
     expect(setSubmission).not.toHaveBeenCalled();
     expect(mockLoggerWarn).toHaveBeenCalledWith(
-      '[useChatFunctions] Refusing to send before existing conversation history loads',
+      '[useTurns] Refusing to send before existing conversation history loads',
     );
   });
 
@@ -1167,6 +1173,51 @@ describe('useChatFunctions regenerate', () => {
       mockGetLatestConversation.mockReturnValue(null);
     }
   });
+
+  it.each(['request failed', 'navigated away'])(
+    'does not submit a missing parent when %s',
+    async (outcome) => {
+      const parent = userMessage('parent-outside-window');
+      const response = assistantMessage('visible-reply', parent.messageId);
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, cacheTime: Infinity } },
+        logger: { log: console.log, warn: console.warn, error: jest.fn() },
+      });
+      client.setQueryData([QueryKeys.historyWindow, 'conversation-1'], { limit: 24 });
+      mockQueryClient = client;
+      mockGetLatestConversation.mockReturnValue(conversation('conversation-1'));
+      let finish!: () => void;
+      jest.mocked(dataService.getConversationHistory).mockReturnValueOnce(
+        new Promise((resolve, reject) => {
+          finish = () =>
+            outcome === 'request failed'
+              ? reject(new Error('History unavailable'))
+              : resolve({ messages: [parent], start: null, nextCursor: null });
+        }),
+      );
+      try {
+        const { result, setSubmission, setMessages } = renderAsk([response]);
+        act(() => result.current.regenerate(response));
+        await waitFor(() => expect(dataService.getConversationHistory).toHaveBeenCalled());
+        if (outcome === 'navigated away') {
+          mockGetLatestConversation.mockReturnValue(conversation('conversation-2'));
+        }
+        await act(async () => finish());
+        await waitFor(() => expect(client.isFetching()).toBe(0));
+        expect(setSubmission).not.toHaveBeenCalled();
+        expect(setMessages).not.toHaveBeenCalled();
+        if (outcome === 'request failed') {
+          expect(mockShowToast).toHaveBeenCalledWith(
+            expect.objectContaining({ message: 'com_ui_history_parent_error' }),
+          );
+        }
+      } finally {
+        client.clear();
+        mockQueryClient = undefined;
+        mockGetLatestConversation.mockReturnValue(null);
+      }
+    },
+  );
 
   it('keys a non-tail regenerate to the selected assistant response', () => {
     let messages = [

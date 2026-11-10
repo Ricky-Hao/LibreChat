@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { RecoilRoot } from 'recoil';
 import { getDefaultStore } from 'jotai';
 import { QueryClient } from '@tanstack/react-query';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook as renderBareHook, act, waitFor } from '@testing-library/react';
 import {
   Constants,
   ContentTypes,
@@ -20,6 +20,7 @@ import type {
   TActivityLabelEvent,
   TMessageContentParts,
 } from 'librechat-data-provider';
+import type { RenderHookOptions, RenderHookResult } from '@testing-library/react';
 import type { Query, QueryKey } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type { StreamStatusResponse } from '~/data-provider';
@@ -31,7 +32,6 @@ import {
   removeUsageAtoms,
 } from '~/components/Chat/Input/TokenUsage/store';
 import { registerComposerDraft, captureComposerDraft, bindComposerLaunch } from '~/utils/drafts';
-import { pendingApprovalActionFamily } from '~/components/Chat/approval/state';
 
 type SSEEventListener = (e: Partial<MessageEvent> & { responseCode?: number }) => void;
 
@@ -335,23 +335,39 @@ jest.mock('librechat-data-provider', () => {
   };
 });
 
-import useResumableSSE, {
-  selectLocalSteersForQueue,
-  ABORT_SWEEP_STATUSES,
-} from '~/hooks/SSE/useResumableSSE';
+import { selectLocalSteersForQueue, ABORT_SWEEP_STATUSES } from '~/hooks/SSE/resumable';
+import { appStreamHost } from '~/Providers/StreamHostContext';
 import useSSE from '~/hooks/SSE/useSSE';
 import useEventHandlers from '~/hooks/SSE/useEventHandlers';
-import useStepHandler from '~/hooks/SSE/useStepHandler';
 import type { PendingSteer } from '@librechat/chat';
 import type { Transport } from '~/hooks/Chat/contract';
 import { ChatTransportContext, defaultChatTransport } from '~/Providers/ChatTransportContext';
 import {
+  useResumableSSE,
+  useStepHandler,
+  StreamHostProvider,
   recoveryDispositionsFamily,
   queuedMessagesByConvoId,
   stopRequestedByConvoId,
   detachedRunByConvoId,
   resetQueueFamilies,
+  pendingApprovalActionFamily,
 } from '@librechat/chat/react';
+
+/** Every hook here renders under the app's stream host, as `Root` mounts it. */
+function renderHook<Result, Props>(
+  callback: (props: Props) => Result,
+  options?: RenderHookOptions<Props>,
+): RenderHookResult<Result, Props> {
+  const Inner = options?.wrapper;
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(
+      StreamHostProvider,
+      { host: appStreamHost },
+      Inner ? createElement(Inner, null, children) : children,
+    );
+  return renderBareHook(callback, { ...options, wrapper });
+}
 
 const CONV_ID = 'conv-abc-123';
 

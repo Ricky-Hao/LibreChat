@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import type { HistoryPage } from 'librechat-data-provider';
 import {
   seedConversations,
   seedMessages,
@@ -72,16 +73,18 @@ test('a completed foreground child survives a hard reload with preview-only hist
       );
       if (coldReload) await page.reload();
       else await page.goto(`/c/${conversationId}`);
-      const messages = await (await history).json();
-      const stored = messages.find(
-        (message: { messageId: string }) => message.messageId === 'recovery-parent',
-      );
-      expect(stored.content[0].tool_call).toMatchObject({
+      const response = await history;
+      expect(response.ok()).toBe(true);
+      expect(new URL(response.url()).searchParams.get('history')).toBe('recent');
+      const window: HistoryPage = await response.json();
+      const stored = window.messages.find((message) => message.messageId === 'recovery-parent');
+      expect(stored).toBeDefined();
+      expect(stored!.content![0].tool_call).toMatchObject({
         subagentContentOmitted: true,
         subagentContentParts: 31,
         output: 'Done.',
       });
-      expect(stored.content[0].tool_call.subagent_content).toBeUndefined();
+      expect(stored!.content![0].tool_call.subagent_content).toBeUndefined();
       const detail = page.waitForResponse(
         (response) =>
           response.url().includes('/parts/') && response.url().includes('recovery-parent'),

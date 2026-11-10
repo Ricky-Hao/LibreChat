@@ -106,25 +106,67 @@ test.describe('pinned drag rules', () => {
     await skipWithoutHover(page);
     const [pinnedTitle] = uniqueTitles('pin-on-row', 1);
     const plainTitle = `pin-on-row plain ${randomUUID()}`;
-    seededPins = await seedPinnedConversations([pinnedTitle]);
-    const plain = randomUUID();
-    await seedConversations(getE2EUser().email, [
-      { conversationId: plain, title: plainTitle, updatedAt: new Date() },
+    /* Keep the source below the viewport even in isolation. In a full shard,
+     * Running/Finished rows can put it there before this test begins. */
+    seededPins = await seedPinnedConversations([
+      pinnedTitle,
+      ...uniqueTitles('pin-on-row spacer', 18),
     ]);
-    unpinnedConversationIds.push(plain);
+    const plain = randomUUID();
+    /* Preceding Running/Finished rows can leave the source outside the virtual
+     * list's mounted window. Reproduce that without relying on shard state. */
+    const newerChats = uniqueTitles('pin-on-row newer', 12).map((title) => ({
+      conversationId: randomUUID(),
+      title,
+      updatedAt: new Date(),
+    }));
+    await seedConversations(getE2EUser().email, [
+      ...newerChats,
+      { conversationId: plain, title: plainTitle, updatedAt: new Date(Date.now() - 60_000) },
+    ]);
+    unpinnedConversationIds.push(plain, ...newerChats.map((chat) => chat.conversationId));
 
     await openWithPinnedSection(page);
     await expect(pinnedConvoRow(page, pinnedTitle)).toBeVisible();
     const plainRow = chatsListRow(page, plainTitle);
+    await expect(plainRow).toHaveCount(0);
+    /* A locator cannot scroll an unmounted virtual row. Move the sidebar a
+     * little at a time until overscan mounts it, still below the viewport. */
+    const sidebarScroll = page
+      .getByRole('region', { name: 'Chat history' })
+      .locator('.overflow-y-auto');
+    await expect
+      .poll(async () => {
+        if ((await plainRow.count()) > 0) {
+          return true;
+        }
+        await sidebarScroll.evaluate((element) => element.scrollBy(0, 200));
+        return false;
+      })
+      .toBe(true);
     await expect(plainRow).toBeVisible();
+    await expect(plainRow).not.toBeInViewport();
+
+    const pinResponse = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/api/convos/pin',
+    );
 
     /** The section takes a chat dropped anywhere on it, and a row is part of the
      *  section: a release that lands on one rather than between two has to pin
      *  the chat, not be swallowed by the row it landed on. */
     await dragRowOnto(page, plainRow, pinnedConvoRow(page, pinnedTitle), 0.5);
+    const response = await pinResponse;
+    expect(response.ok()).toBe(true);
+    expect(response.request().postDataJSON()).toMatchObject({
+      arg: { conversationId: plain, pinned: true },
+    });
+    expect(await response.json()).toMatchObject({ conversationId: plain, pinned: true });
 
     await expect(pinnedConvoRow(page, plainTitle)).toBeVisible();
     await expect.poll(() => isConversationPinned(plain)).toBe(true);
+
+    await reloadWithPinnedSection(page);
+    await expect(pinnedConvoRow(page, plainTitle)).toBeVisible();
   });
 
   test('a pinned chat cannot be dragged through a pinned model @scenario:a-pinned-chat-cannot-be-dragged-through-a-pinned-model', async ({

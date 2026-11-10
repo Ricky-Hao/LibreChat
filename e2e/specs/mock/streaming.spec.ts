@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { ContentTypes } from 'librechat-data-provider';
-import type { TMessage } from 'librechat-data-provider';
+import type { HistoryPage } from 'librechat-data-provider';
 import {
   MOCK_ENDPOINTS,
   NEW_CHAT_PATH,
@@ -65,12 +65,14 @@ test.describe('stream transport fidelity', () => {
             return;
           }
           const response = await route.fetch();
-          const messages: TMessage[] = await response.json();
-          const assistant = messages.findLast((message) => !message.isCreatedByUser);
+          expect(response.ok()).toBe(true);
+          expect(new URL(route.request().url()).searchParams.get('history')).toBe('recent');
+          const history: HistoryPage = await response.json();
+          const assistant = history.messages.findLast((message) => !message.isCreatedByUser);
           if (assistant == null) throw new Error('Expected a persisted assistant response');
           assistant.text = 'Pending recovery';
           assistant.content = [{ type: ContentTypes.TEXT, text: 'Pending recovery' }];
-          await route.fulfill({ response, json: messages });
+          await route.fulfill({ response, json: history });
         },
       );
       page.on('request', (request) => {
@@ -124,6 +126,9 @@ test.describe('stream transport fidelity', () => {
         await page.goto(NEW_CHAT_PATH);
         await page.locator(`[data-conversation-id="${conversationId}"]`).click();
         await expect(messagesView(page)).toContainText('Pending recovery');
+        expect(new URL(page.url()).pathname).toBe(`/c/${conversationId}`);
+        /** Sidebar navigation drops the initial model-spec query parameter. */
+        const resumedUrl = page.url();
         /** Resume must wait for startup config: upstream needs its forced-retention
          * policy before rebuilding a submission. The late retry policy applies to
          * the first attachment too. */
@@ -143,7 +148,7 @@ test.describe('stream transport fidelity', () => {
         await expect(messagesView(page)).toContainText(expected);
         expect(attachments).toBe(2);
         expect(generationPosts).toBe(0);
-        expect(page.url()).toBe(conversationUrl);
+        expect(page.url()).toBe(resumedUrl);
       } finally {
         releaseConfig();
       }
@@ -326,8 +331,10 @@ test.describe('stream transport fidelity', () => {
       '**/api/messages/*',
       async (route) => {
         const response = await route.fetch();
-        const messages: TMessage[] = await response.json();
-        const assistant = messages.findLast((message) => !message.isCreatedByUser);
+        expect(response.ok()).toBe(true);
+        expect(new URL(route.request().url()).searchParams.get('history')).toBe('recent');
+        const history: HistoryPage = await response.json();
+        const assistant = history.messages.findLast((message) => !message.isCreatedByUser);
         if (assistant == null) throw new Error('Expected a persisted assistant response');
         assistant.text = '';
         assistant.content = [
@@ -336,7 +343,7 @@ test.describe('stream transport fidelity', () => {
             tool_call: { id: 'missed-completion', name: 'subagent', args: '{}', progress: 0.1 },
           },
         ];
-        await route.fulfill({ response, json: messages });
+        await route.fulfill({ response, json: history });
       },
       { times: 1 },
     );

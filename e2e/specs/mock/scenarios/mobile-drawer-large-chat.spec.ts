@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { buildStressMessages, ROWS } from '../../../benchmarks-mobile-chat/payload';
 import { getE2EUser } from '../../../setup/user';
+import { loadAllHistory } from '../helpers';
 import {
   deleteConversations,
   deleteMessagesByConversation,
@@ -29,7 +30,8 @@ for (const { strip, direction } of [
         localStorage.setItem('mobileDrawerStrip', JSON.stringify(withStrip));
       }, strip);
       await page.goto(`/c/${id}`);
-      await expect(page.locator('.message-render')).toHaveCount(ROWS, { timeout: 60_000 });
+      await expect(page.locator('.message-render')).toHaveCount(24);
+      await loadAllHistory(page, id, ROWS);
       await page.evaluate((dir) => document.documentElement.setAttribute('dir', dir), direction);
       const opener = page.getByTestId('header-open-sidebar-button');
       const pane = page.getByTestId('app-pane');

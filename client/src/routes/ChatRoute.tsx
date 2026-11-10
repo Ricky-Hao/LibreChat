@@ -79,6 +79,14 @@ export default function ChatRoute() {
   } else if (routeState.pending && conversation?.conversationId === conversationId) {
     setRouteState({ conversationId, pending: false });
   }
+  /** Start the visible conversation before startup's speech and model catalogs compete
+   *  for the browser's per-origin connections. Its messages cannot mount until it answers. */
+  const initialConvoQuery = useGetConvoIdQuery(conversationId, {
+    enabled:
+      isAuthenticated &&
+      conversationId !== Constants.NEW_CONVO &&
+      (!hasSetConversation.current || routeState.pending),
+  });
   useAppStartup({ startupConfig, user });
   const { newConversation } = useNewConvo();
   const { showToast } = useToastContext();
@@ -136,12 +144,6 @@ export default function ChatRoute() {
   const modelsQuery = useGetModelsQuery({
     enabled: isAuthenticated,
     refetchOnMount: 'always',
-  });
-  const initialConvoQuery = useGetConvoIdQuery(conversationId, {
-    enabled:
-      isAuthenticated &&
-      conversationId !== Constants.NEW_CONVO &&
-      (!hasSetConversation.current || routeState.pending),
   });
   const endpointsQuery = useGetEndpointsQuery({ enabled: isAuthenticated });
   const assistantListMap = useAssistantListMap();

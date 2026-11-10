@@ -177,15 +177,11 @@ test.describe('conversation export', () => {
     });
 
     const target = page.getByTestId('screenshot-target');
-    /** Long threads mount progressively from the scroll anchor, so the full
-     *  area lands a few frames after first paint — poll until it converges.
-     *  (The capture path itself force-completes the mount; this precondition
-     *  samples the DOM directly and must wait on its own.) */
-    await expect
-      .poll(() => target.evaluate((node) => node.scrollWidth * node.scrollHeight), {
-        timeout: 60_000,
-      })
-      .toBeGreaterThan(ABORT_CSS_AREA * 1.15);
+    /** The initial window fits. Export must fetch every row before applying the guard. */
+    await expect(target.locator('.message-render')).toHaveCount(24);
+    expect(await target.evaluate((node) => node.scrollWidth * node.scrollHeight)).toBeLessThan(
+      ABORT_CSS_AREA,
+    );
 
     const dialog = await openExportModal(page);
     await selectExportType(page, dialog, 'screenshot (.png)');
@@ -194,7 +190,18 @@ test.describe('conversation export', () => {
     page.on('download', () => {
       downloadFired = true;
     });
+    const fullHistory = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === `/api/messages/${conversationId}` && !url.searchParams.has('history');
+    });
     await dialog.getByRole('button', { name: 'Export', exact: true }).click();
+    const exported = await fullHistory;
+    expect(exported.ok()).toBe(true);
+    expect(await exported.json()).toHaveLength(OVERSIZED_MESSAGES);
+    await expect(target.locator('.message-render')).toHaveCount(OVERSIZED_MESSAGES);
+    expect(await target.evaluate((node) => node.scrollWidth * node.scrollHeight)).toBeGreaterThan(
+      ABORT_CSS_AREA * 1.15,
+    );
 
     await expect(page.getByText('too large to export as a screenshot').first()).toBeVisible({
       timeout: 15000,
