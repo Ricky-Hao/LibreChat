@@ -1,8 +1,13 @@
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Constants, QueryKeys, dataService } from 'librechat-data-provider';
+import {
+  QueryClient,
+  focusManager,
+  onlineManager,
+  QueryClientProvider,
+} from '@tanstack/react-query';
 import type { TMessage } from 'librechat-data-provider';
 import { appChatHost } from '../ChatHostContext';
 
@@ -20,13 +25,17 @@ const getMessages = dataService.getMessagesByConvoId as jest.MockedFunction<
 
 const messages = [{ messageId: 'm-1', conversationId: 'convo-1' }] as TMessage[];
 
-function renderMessages(queryClient: QueryClient, conversationId: string | undefined) {
+function renderMessages(
+  queryClient: QueryClient,
+  conversationId: string | undefined,
+  isStreaming = false,
+) {
   const wrapper = ({ children }: { children: React.ReactNode }) => (
     <MemoryRouter>
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </MemoryRouter>
   );
-  return renderHook(() => appChatHost.useMessages(conversationId, { isStreaming: false }), {
+  return renderHook(() => appChatHost.useMessages(conversationId, { isStreaming }), {
     wrapper,
   });
 }
@@ -44,8 +53,34 @@ describe('appChatHost.useMessages', () => {
     await waitFor(() =>
       expect(result.current).toEqual({ messages, isLoading: false, isFetching: false }),
     );
-    expect(getMessages).toHaveBeenCalledWith('convo-1', { toolPreviews: true });
+    expect(getMessages).toHaveBeenCalledWith('convo-1', {
+      toolPreviews: true,
+      lazyAttachments: true,
+    });
   });
+
+  it.each([false, true])(
+    'refreshes history on focus and reconnect only while not streaming (%s)',
+    async (isStreaming) => {
+      const queryClient = new QueryClient();
+      const { result, unmount } = renderMessages(queryClient, 'convo-1', isStreaming);
+      await waitFor(() => expect(result.current.isFetching).toBe(false));
+      const query = queryClient.getQueryCache().find([QueryKeys.messages, 'convo-1']);
+      expect(query?.options).toMatchObject({
+        refetchOnWindowFocus: !isStreaming,
+        refetchOnReconnect: !isStreaming,
+      });
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await waitFor(() => expect(getMessages).toHaveBeenCalledTimes(isStreaming ? 1 : 2));
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+      await waitFor(() => expect(getMessages).toHaveBeenCalledTimes(isStreaming ? 1 : 3));
+      unmount();
+      focusManager.setFocused(undefined);
+      queryClient.clear();
+    },
+  );
 
   it('serves a warm cache at once while it revalidates in the background', async () => {
     const queryClient = new QueryClient();

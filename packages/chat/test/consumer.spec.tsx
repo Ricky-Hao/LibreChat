@@ -200,8 +200,17 @@ const messagesHost: MessagesHost = {
     handleSmoothToRef: () => undefined,
     debouncedHandleScroll: () => undefined,
     handleNearBottomChange: () => undefined,
+    detachFromBottom: () => undefined,
   }),
   useScreenshotTarget: () => undefined,
+  useHistory: () => ({
+    hasOlder: false,
+    isWindowed: false,
+    isLoading: false,
+    isError: false,
+    load: () => undefined,
+    onScroll: () => undefined,
+  }),
   useAutoScroll: () => false,
   useConversationSeen: () => () => undefined,
 };

@@ -7,8 +7,9 @@ import {
   seedMessages,
 } from '../db';
 import { getE2EUser } from '../../../setup/user';
+import { loadAllHistory } from '../helpers';
 
-/** Past the row count at which the thread mounts progressively instead of all at once. */
+/** Spans multiple history windows and progressive row mounts. */
 const TURNS = 60;
 
 async function seedLongChat(): Promise<string> {
@@ -52,7 +53,12 @@ test.describe('long conversations', () => {
   }) => {
     await page.goto(`/c/${conversationId}`);
 
-    const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
+    const thread = page.getByTestId('screenshot-target');
+    await expect(thread.locator('.message-render')).toHaveCount(24);
+    await loadAllHistory(page, conversationId, TURNS);
+    await thread
+      .getByText('Turn 1 of the long conversation', { exact: true })
+      .scrollIntoViewIfNeeded();
     await expect(
       thread.getByText('Turn 1 of the long conversation', { exact: true }),
     ).toBeVisible();
@@ -68,8 +74,8 @@ test.describe('long conversations', () => {
   }) => {
     await page.goto(`/c/${conversationId}`);
 
-    const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
-    await expect(thread.locator('.message-render')).toHaveCount(TURNS);
+    const thread = page.getByTestId('screenshot-target');
+    await loadAllHistory(page, conversationId, TURNS);
     const latest = thread.getByText(`Turn ${TURNS} of the long conversation`, { exact: true });
     await thread
       .getByText('Turn 1 of the long conversation', { exact: true })

@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test';
 import { ContentTypes } from 'librechat-data-provider';
-import type { TMessage } from 'librechat-data-provider';
+import type { HistoryPage, TMessage } from 'librechat-data-provider';
 import type { Page, Response } from '@playwright/test';
 
 /** Substring of the reply emitted by the mock LLM server. */
@@ -116,6 +116,31 @@ export async function enableFileSearch(page: Page) {
 
 /** The conversation messages container. */
 export const messagesView = (page: Page) => page.getByTestId('messages-view');
+
+/** Load the seeded transcript through the same paging control a reader uses. */
+export async function loadAllHistory(page: Page, conversationId: string, count: number) {
+  const thread = page.getByTestId('screenshot-target');
+  const older = page.getByRole('button', { name: 'Load older messages', exact: true });
+  await expect(thread.locator('.message-render').first()).toBeAttached();
+  while (await older.count()) {
+    await expect(older).toBeEnabled();
+    const response = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === `/api/messages/${conversationId}` && url.searchParams.has('before');
+    });
+    /** Scrolling this control into view can start automatic paging before a click. */
+    await older.dispatchEvent('click');
+    const result = await response;
+    expect(result.ok()).toBe(true);
+    const history: HistoryPage = await result.json();
+    if (!history.nextCursor) {
+      break;
+    }
+    await expect(older).toBeEnabled();
+  }
+  /** Fetch completion and progressive row mounting are separate steps. */
+  await expect(thread.locator('.message-render')).toHaveCount(count);
+}
 
 /** Build the mock-model reply trigger and its expected rendered text for a label. */
 export const replyPrompt = (label: string) => `E2E_REPLY:${label}`;

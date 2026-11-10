@@ -227,13 +227,6 @@ test('a hidden sibling reply stays unread until its actual branch is rendered @s
       sender: 'Assistant',
     },
     {
-      messageId: visible,
-      parentMessageId: root,
-      text: 'Visible alternative',
-      isCreatedByUser: false,
-      sender: 'Assistant',
-    },
-    {
       messageId: followup,
       parentMessageId: older,
       text: 'Remote follow-up',
@@ -244,6 +237,14 @@ test('a hidden sibling reply stays unread until its actual branch is rendered @s
       messageId: hidden,
       parentMessageId: followup,
       text: 'Hidden branch reply',
+      isCreatedByUser: false,
+      sender: 'Assistant',
+    },
+    // A cold history window focuses its latest message. Keep the unread reply on the other branch.
+    {
+      messageId: visible,
+      parentMessageId: root,
+      text: 'Visible alternative',
       isCreatedByUser: false,
       sender: 'Assistant',
     },

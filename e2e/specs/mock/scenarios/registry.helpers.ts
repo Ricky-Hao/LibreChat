@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
+import { stripTypeScriptTypes } from 'node:module';
 import vendor from '../../../../vendor/agents.json';
+import code from '../../../../vendor/code/package.json';
 import { repoRoot } from './lint.helpers';
 
 type Manifest = {
   name?: string;
+  version?: string;
   workspaces?: string[];
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
@@ -113,13 +116,80 @@ function workspaceLink(key: string, entry: LockEntry, head: Lockfile, root: stri
   }
 }
 
+/** Upstream vendors only the browser enrollment protocol, pinned to its source digest. */
+function validCodeVendor(head: Lockfile, root: string): boolean {
+  try {
+    const entry = head.packages[`node_modules/${code.name}`];
+    if (
+      !entry?.link ||
+      entry.resolved !== 'vendor/code' ||
+      head.packages['vendor/code']?.version !== code.version ||
+      Object.keys(head.packages).filter((key) => packageOf(key) === code.name).length !== 1
+    )
+      return false;
+    for (const directory of ['', ...workspaces(root, manifestAt(root, ''))]) {
+      const manifest = manifestAt(root, directory);
+      for (const field of dependencyFields) {
+        const expected =
+          directory === 'packages/api' && field === 'dependencies'
+            ? 'file:../../vendor/code'
+            : undefined;
+        if (
+          manifest[field]?.[code.name] !== expected ||
+          head.packages[directory]?.[field]?.[code.name] !== expected
+        )
+          return false;
+      }
+    }
+    if (
+      Object.entries(head.packages).some(
+        ([directory, locked]) =>
+          directory !== 'packages/api' &&
+          dependencyFields.some((field) => locked[field]?.[code.name]),
+      )
+    )
+      return false;
+    if (
+      !lstatSync(resolve(root, 'vendor')).isDirectory() ||
+      !lstatSync(resolve(root, 'vendor/code')).isDirectory()
+    )
+      return false;
+    for (const file of [
+      'package.json',
+      'browser-enrollment-protocol.ts',
+      'browser-enrollment-protocol.js',
+    ]) {
+      if (!lstatSync(resolve(root, 'vendor/code', file)).isFile()) return false;
+    }
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'vendor/code/package.json'), 'utf8'),
+    ) as typeof code;
+    if (JSON.stringify(manifest) !== JSON.stringify(code)) return false;
+    const source = readFileSync(
+      resolve(root, 'vendor/code/browser-enrollment-protocol.ts'),
+      'utf8',
+    );
+    return (
+      createHash('sha256').update(source).digest('hex') === code.librechatUpstream.sha256 &&
+      readFileSync(resolve(root, 'vendor/code/browser-enrollment-protocol.js'), 'utf8') ===
+        stripTypeScriptTypes(source).replace(/[ \t]+$/gm, '')
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Return unusable origins, preserving the original named diagnostic contract. */
 export function offRegistry(head: Lockfile, root = repoRoot): string[] {
   const problems: string[] = [];
   let vendorValid: boolean | undefined;
+  let codeValid: boolean | undefined;
   for (const [key, entry] of Object.entries(head.packages)) {
     if (entry.link && workspaceLink(key, entry, head, root)) continue;
-    if (packageOf(key) === vendor.name) {
+    if (packageOf(key) === code.name) {
+      codeValid ??= validCodeVendor(head, root);
+      if (key === `node_modules/${code.name}` && codeValid) continue;
+    } else if (packageOf(key) === vendor.name) {
       vendorValid ??= validVendor(head, root);
       if (key === `node_modules/${vendor.name}` && vendorValid) continue;
       // The declared SDK must not silently revert to the stock registry package.
@@ -140,6 +210,12 @@ export function offRegistry(head: Lockfile, root = repoRoot): string[] {
       }
     }
     problems.push(`${key} -> ${entry.resolved}`);
+  }
+  if (
+    !head.packages[`node_modules/${code.name}`] &&
+    head.packages['packages/api']?.dependencies?.[code.name]
+  ) {
+    problems.push(`node_modules/${code.name} -> undefined`);
   }
   if (
     !head.packages[`node_modules/${vendor.name}`] &&

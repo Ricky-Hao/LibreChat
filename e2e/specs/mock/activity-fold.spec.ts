@@ -459,10 +459,16 @@ test.describe('activity fold', () => {
     await failedCall.scrollIntoViewIfNeeded();
     await failedCall.hover();
     await expect(groupRail).toHaveAttribute('data-fold-lit');
-    const shift = await failedCall.evaluate((row) => {
+    const headerCenter = await groupHeader.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.top + rect.height / 2;
+    });
+    const shift = await failedCall.evaluate((row, headerY) => {
       const fold = row.closest<HTMLElement>('[data-testid="activity-phase-card"]')!;
       const message = row.closest<HTMLElement>('.message-render')!;
       const scroll = row.closest<HTMLElement>('.scrollbar-gutter-stable')!;
+      const rect = row.getBoundingClientRect();
+      const distance = rect.top + rect.height / 2 - headerY;
       const measure = () => ({
         top: fold.getBoundingClientRect().top,
         foldHeight: fold.getBoundingClientRect().height,
@@ -470,15 +476,16 @@ test.describe('activity fold', () => {
         scrollTop: scroll.scrollTop,
       });
       const before = measure();
-      document.getElementById('fold-layout-predecessor')!.style.height = '32px';
-      return { before, after: measure() };
-    });
-    expect(shift.after.top - shift.before.top).toBeCloseTo(32);
+      document.getElementById('fold-layout-predecessor')!.style.height = `${distance}px`;
+      return { before, after: measure(), distance };
+    }, headerCenter);
+    expect(shift.distance).toBeGreaterThan(0);
+    expect(shift.after.top - shift.before.top).toBeCloseTo(shift.distance);
     expect(shift.after.foldHeight).toBe(shift.before.foldHeight);
     expect(shift.after.messageHeight).toBe(shift.before.messageHeight);
     expect(shift.after.scrollTop).toBe(shift.before.scrollTop);
-    /** 32px further down, the pointer is over the group's header: the path is hit-tested
-     *  again and now ends in that header's branch of the phase. */
+    /** Align the group's header with the still pointer even when error text wraps.
+     *  The path is hit-tested again and ends in that header's branch of the phase. */
     await expect(groupRail).not.toHaveAttribute('data-fold-lit');
     await endsAt(litBranch(phaseRail), groupHeader);
     await transcript.evaluate((content, anchor) => {

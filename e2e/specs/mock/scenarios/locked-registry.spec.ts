@@ -11,7 +11,7 @@ import { offRegistry, PUBLIC_REGISTRY } from './registry.helpers';
  * reach. What a clean install needs is that each locked tarball comes from a host
  * this repository already installs from, and that the registry actually serves
  * it. Hosts are checked for the whole lockfile, with the declared, integrity-checked
- * repaired SDK archive as the sole file exception. Registry availability is
+ * repaired SDK archive and pinned browser protocol as the exact file exceptions. Registry availability is
  * already exercised by this job's clean install.
  */
 

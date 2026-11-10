@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   copyFileSync,
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,6 +14,7 @@ import {
 import { expect, test } from '@playwright/test';
 import type { LockEntry, Lockfile } from './registry.helpers';
 import vendor from '../../../../vendor/agents.json';
+import code from '../../../../vendor/code/package.json';
 import { inOneProject, repoRoot } from './lint.helpers';
 import { offRegistry } from './registry.helpers';
 
@@ -36,6 +38,7 @@ test.describe('locked origin policy', () => {
       { resolved: 'https://user:password@registry.npmjs.org/package.tgz' },
       { resolved: 'https://' },
       { resolved: 'vendor/other', link: true },
+      { resolved: 'vendor/code', link: true },
       { resolved: 'packages/api', link: true },
       { resolved: '../outside', link: true },
     ]) {
@@ -97,7 +100,8 @@ test.describe('locked origin policy', () => {
           resolve(root, directory, 'package.json'),
         );
       }
-      mkdirSync(resolve(root, 'vendor'));
+      mkdirSync(resolve(root, 'vendor'), { recursive: true });
+      cpSync(resolve(repoRoot, 'vendor/code'), resolve(root, 'vendor/code'), { recursive: true });
       copyArchive();
       expect(offRegistry(head, root)).toEqual([]);
       for (const consumer of vendor.consumers) {
@@ -140,7 +144,37 @@ test.describe('locked origin policy', () => {
         `sha512-${createHash('sha512').update(readFileSync(artifact)).digest('base64')}`;
       rejects(tampered);
       copyArchive();
+      cpSync(resolve(repoRoot, 'vendor/code'), resolve(root, 'vendor/code'), { recursive: true });
       expect(offRegistry(head, root)).toEqual([]);
+
+      const protocol = resolve(root, 'vendor/code/browser-enrollment-protocol.ts');
+      const javascript = resolve(root, 'vendor/code/browser-enrollment-protocol.js');
+      const codeKey = `node_modules/${code.name}`;
+      const rejectsCode = (changed = head) =>
+        expect(offRegistry(changed, root)).toContain(`${codeKey} -> vendor/code`);
+      for (const file of [protocol, javascript, resolve(root, 'vendor/code/package.json')]) {
+        const original = readFileSync(file);
+        rmSync(file);
+        rejectsCode();
+        symlinkSync(resolve(repoRoot, 'vendor/code', file.split('/').pop()!), file);
+        rejectsCode();
+        rmSync(file);
+        writeFileSync(file, 'tampered protocol');
+        rejectsCode();
+        writeFileSync(file, original);
+      }
+      const nestedCode = structuredClone(head);
+      nestedCode.packages[`node_modules/other/${codeKey}`] = { ...head.packages[codeKey] };
+      rejectsCode(nestedCode);
+      const wrongConsumer = structuredClone(head);
+      wrongConsumer.packages['packages/api'].dependencies![code.name] = 'file:../../vendor/other';
+      rejectsCode(wrongConsumer);
+      const missingCode = structuredClone(head);
+      delete missingCode.packages[codeKey];
+      expect(offRegistry(missingCode, root)).toContain(`${codeKey} -> undefined`);
+      rmSync(resolve(root, 'vendor/code'), { recursive: true });
+      symlinkSync(resolve(repoRoot, 'vendor/code'), resolve(root, 'vendor/code'));
+      rejectsCode();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
