@@ -14,7 +14,7 @@
 
 - [b1e6d088b10e8fe9e919e9eda79b78b0837ef7b3](https://github.com/Ricky-Hao/LibreChat/commit/b1e6d088b10e8fe9e919e9eda79b78b0837ef7b3)
 
-本组是文档载荷，合同检查对应 Markdown 差异；无需业务测试。应用主分支和发布入口仍按其原规则。
+本组是文档载荷，合同检查对应 Markdown 差异；无需业务测试。采用阶段同步维护源码主分支为 `patches`，发布由补丁仓根 CI 在 manifest 重放后构建；生成应用中的旧 workflow 保留为兼容数据。
 
 ## 维护与验证
 

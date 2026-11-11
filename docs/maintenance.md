@@ -74,7 +74,7 @@ git diff --check
 3. 部分替代只删去已覆盖的 hunks，保留剩余责任及依赖。完全替代后更新状态和 replacement；不要留下仍会执行的重复载荷。SDK 的更换须同时核主机消费方，不能回退 PR #14 的 coverage 读取/存储合同。
 4. 从目标前序状态生成每组 `git diff --binary --full-index --no-ext-diff --no-renames <before> <after> -- <paths>`，包含代码、必要调用方、测试与文档。共享文件只选择本组 hunks，不复制整文件覆盖；更新 manifest 路径和 tests 合同。
 5. 更换基线时将 manifest 的 `base` 改为已评估的完整 SHA；检查完整顺序、各组依赖闭包和入口，修复所有冲突。完成实际应用检查与受影响业务测试，再更新各组来源和状态。重放或树比较只证明提取完整性。
-6. 在补丁仓正常提交与推送。应用分支的采用、与现有 `rickyhao/dev` 历史的整合及发布需要各自明确方案；新重放分支合回旧 fork 不会自动删除旧补丁。不强推、重置已发布分支或切换镜像 ref 完成迁移。
+6. 在补丁仓正常提交与推送，经适用测试后合入维护主分支 `patches`。活动 CI 按 manifest 生成完整应用并发布现有 GHCR 镜像；不将生成应用合回旧 `rickyhao/dev`，不强推或重置已发布分支。合并、push、发布及部署按当前授权执行。
 
 ## 淘汰补丁
 
@@ -90,4 +90,12 @@ git diff --check
 
 两种淘汰均须同步状态映射及链接，审查全清单的顺序、依赖、路径和测试入口，尤其是共享入口；按[应用流程](#选择与失败处理)从干净固定基线验证完整选择及受影响组的依赖闭包，并执行[测试合同](#测试合同)中的相关实际回归及适用项目检查。完成差异与文档检查后正常 commit、push。移出清单只改变以后生成的应用，不会删除现有应用 checkout 或已发布分支中的功能；应用采用另按更新流程确定方案。
 
-本仓采用固定上游基线加有序补丁的维护方法。历史文档中的“从旧 fork 合并上游”不是本补丁仓的默认更新流程。发布仍只能使用通过检查、合并到应用主分支后的提交；部署对应已发布产物。
+## CI 与发布
+
+活动入口为补丁仓根的 [`.github/workflows/rickyhao-dev-image.yml`](../.github/workflows/rickyhao-dev-image.yml)。目标为 `patches` 的 PR 只运行维护工具自测、固定基线完整重放和测试合同入口计划；入口计划不执行业务测试，业务改动仍需上述适用合同的真实证据。
+
+本仓库 `patches` 的 push 或手动事件在验证成功后才可进入发布 job。两个 job 都 checkout 精确补丁 SHA；上游 checkout 使用 manifest 完整 SHA 和 `fetch-depth: 0`，确保 replacement 祖先检查有效。发布 job 重新生成并核对已验证 tree，再登录 GHCR，从生成应用目录构建，失败即停止。只有发布 job 拥有 `packages: write`，验证 job 仅有 `contents: read`。
+
+`ghcr.io/ricky-hao/librechat:rickyhao-dev` 保留为现有部署使用的标签，`sha-<完整补丁 SHA>` 用于追溯该补丁版本。镜像 labels 同时记录补丁 revision、manifest base 和生成 tree；运行时 BUILD_COMMIT 指补丁 revision，BUILD_BRANCH 为 `patches`。Actions 依赖沿用现有 major 并固定完整 commit SHA，更新时核对发布说明与安全公告。旧应用中的同名 workflow 为兼容载荷，不是本分支的活动发布入口。
+
+本仓采用固定上游基线加有序补丁的维护方法。发布来源为通过检查并合入 `patches` 的补丁版本；部署对应已发布产物。默认分支设置由仓库负责人处理，代码 push 不等于设置已切换。流程说明不授权额外 tag、Release、dispatch 或部署。

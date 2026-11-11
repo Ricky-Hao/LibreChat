@@ -1,6 +1,6 @@
 # LibreChat fork 补丁集
 
-`patches` 分支保存可选择、可重放的 fork 差异。应用源码在独立应用 checkout 中生成；本分支不承载活动 GitHub Actions。
+`patches` 是维护源码主分支，保存可选择、可重放的 fork 差异。应用源码在独立应用 checkout 中生成；活动 CI 从 manifest 固定基线重放后构建 GHCR 镜像。
 
 固定应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`（upstream main）。原始完整 fork 源：`38c026db83d0ca12a067083b5c1551c1bca2754b`。
 共有 26 个状态条目、24 份标准 Git diff：`keep` 9、`feature` 4、`awaiting-upstream` 3、`local` 8、`upstream` 2。
@@ -47,7 +47,9 @@ runner 在应用 checkout 执行：Jest 精确 discovery、逐文件结果与非
 
 2026-11-11，在此固定基线上完成完整重放、26 组传递依赖闭包预检和 71 项去重合同验收：54 项 focused、6 项 types、9 项 browser 和 2 项 project 全部通过。最终有效结果去重后为 106 个 Jest suites、6074 个 tests，以及 80 个 Playwright tests，无失败、跳过、todo 或 Playwright 自动重试。intent-labels 的完整浏览器文件复用 test-adaptations 中更新后执行的结果。
 
-正式重放与[生成应用提交 `4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79`](https://github.com/Ricky-Hao/LibreChat/commit/4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79) 的 tree 均为 `dcc8f4edc32c510e7eea8e9b514ef0117c02c90c`。
+业务验收版本的正式重放与[应用提交 `4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79`](https://github.com/Ricky-Hao/LibreChat/commit/4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79) 的 tree 均为 `dcc8f4edc32c510e7eea8e9b514ef0117c02c90c`。
+
+CI 采用阶段仅同步应用 `AGENTS.md` 的维护与发布入口；当前[应用提交 `c81e3483feffc4e6ae50298dcf081139c1b3a98f`](https://github.com/Ricky-Hao/LibreChat/commit/c81e3483feffc4e6ae50298dcf081139c1b3a98f) 与正式重放的 tree 为 `c00edf8153e549ffc044609af4a21c9eb409dc5f`。业务实现未变，复用上述完整验收与生产构建证据。新增 CI 的 actionlint、24 种发布条件、权限、精确 checkout、完整祖先历史及构建 context 检查通过；本地实际执行验证与发布两个 job 的重放脚本，均得到该 tree，脏目标失败能立即停止。13 项维护工具自测及贡献文档合同通过。应用文档提交经原 hooks 正常提交、推送，pre-push 以已完整验收的 `4ab9f9c` 为本次文档增量基线；没有重跑完整业务或慢速门禁。以上为本地证据，GitHub Actions 运行与镜像发布结果待负责人跟踪。
 
 首次浏览器执行发现历史窗口、移动端编辑器入口和耗时文案断言未适配当前上游；修正夹具和定位后，相关失败及连带跳过用例已实际补跑通过。提交 lint 另发现计时器测试字面文本与导出夹具嵌套三元表达式，修正后定向执行的 33 个计时器测试和 3 个导出浏览器测试通过。上述重复执行不另加到去重计数。
 
@@ -65,4 +67,12 @@ runner 在应用 checkout 执行：Jest 精确 discovery、逐文件结果与非
 python3 -m unittest discover -s tools -p 'test_*.py' -v
 ```
 
-应用的合并、发布和部署属于后续阶段，沿既有 `rickyhao/dev` → GHCR 流程执行。本轮只交付新基线补丁适配分支和生成的应用分支；本分支不改变 default branch、应用主分支或发布入口。
+## CI 与镜像来源
+
+[Rickyhao Dev Docker Image](.github/workflows/rickyhao-dev-image.yml) 监听 `patches` 的 push、目标为 `patches` 的 PR，并保留手动入口。只读验证 job 运行 Python 维护工具自测、校验 manifest、获取固定上游及完整祖先历史，使用正式工具 check/apply 全部载荷并记录生成 tree；合同 `--plan` 只校验入口，明确标记业务测试 `NOT RUN`。
+
+发布 job 依赖验证成功，仅在 `Ricky-Hao/LibreChat` 的 `refs/heads/patches` push/手动事件运行。它从相同补丁 SHA 和固定 base 再生成应用、核对 tree，然后从该目录的 `Dockerfile.multi`、`api-build` target 构建 `linux/amd64` 镜像。PR 不登录 registry 或推镜像。
+
+镜像继续发布到 `ghcr.io/ricky-hao/librechat:rickyhao-dev`，并保留完整补丁 SHA 标签 `sha-<patchset SHA>`。OCI revision、`io.librechat.patchset.revision` 和运行时 `BUILD_COMMIT` 表示补丁集版本；`io.librechat.upstream.base` 与 `io.librechat.generated.tree` 分别记录上游基线和生成源码 tree，不把补丁 SHA 当作应用 checkout 的 HEAD。部署继续消费现有标签，部署动作另行授权。
+
+生成应用中的旧 `rickyhao/dev` workflow 仍由 [fork-image](patches/fork-image/README.md) 载荷保留，其静态合同只检查兼容数据；活动入口以本补丁仓根 workflow 为准。维护、合并和发布采用 `patches` → manifest 重放 → GHCR 流程，不要求将新应用合回旧 fork。

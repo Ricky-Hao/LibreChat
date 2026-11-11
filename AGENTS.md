@@ -11,5 +11,5 @@
 - 测试在应用 checkout 执行，确认实际 discovery、非空执行和失败传播。入口计划、树比较、构建和历史计数不能替代业务测试。
 - 修改维护工具后运行 `python3 -m unittest discover -s tools -p 'test_*.py' -v`。文档及清单改动检查内容、引用、结构和 `git diff --check`；应用测试按具体任务授权执行。
 - `.work/` 是忽略的本地工作区，不作为交付依赖。不得把临时 checkout、凭据或日志加入提交。
-- 本分支不放活动发布/部署 workflow。应用流程仍为设计、开发、测试、合并到 `rickyhao/dev`、发布、部署；本说明不增加后续动作授权。
+- `patches` 是维护源码主分支。活动 CI 先验证维护工具并按 manifest 重放，再从生成应用发布 GHCR 镜像，继续使用 `rickyhao-dev` 标签。PR 只验证；发布仅限本仓库 `patches` 的 push/手动入口。设计、开发、测试、合入 `patches`、发布、部署依次进行；合并、push 和部署各按当前授权执行。
 - commit、push 及外部动作遵守当前任务授权。保护其他工作树及未知修改，不清理无关任务或会话。

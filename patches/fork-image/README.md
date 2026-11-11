@@ -15,7 +15,7 @@
 - [aac3b604eb0a57a3f047dc9e02075b410493dcda](https://github.com/Ricky-Hao/LibreChat/commit/aac3b604eb0a57a3f047dc9e02075b410493dcda)
 - [d4aa7f06f7e1e44eddf99245e38e4af4c20aba17](https://github.com/Ricky-Hao/LibreChat/commit/d4aa7f06f7e1e44eddf99245e38e4af4c20aba17)
 
-workflow 仅作为补丁数据；patches 分支无活动 workflow。静态合同不发布镜像，也不证明 registry/Actions 可用。部署必须使用已合并主分支发布的产物。
+本组 workflow 保留为旧 `rickyhao/dev` 的兼容载荷，现有合同继续精确检查该来源；不将应用侧合同改成补丁仓 CI 的合同。当前活动入口位于补丁仓根的 [同名 workflow](../../.github/workflows/rickyhao-dev-image.yml)，从 `patches` 的 manifest 生成应用后构建镜像，继续使用 `rickyhao-dev` 标签。静态合同不发布镜像，也不证明 registry/Actions 可用；部署使用已发布产物。
 
 ## 维护与验证
 

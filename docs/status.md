@@ -30,7 +30,7 @@
 | 22. Subagent initialization diagnostics | [subagent-diagnostics](../patches/subagent-diagnostics/README.md) | local | correlation/stage 细节可简化，授权、模型、配置校验及安全失败分类仍须保留。 |
 | 23. Internal files versus delivered artifacts | [file-guidance](../patches/file-guidance/README.md) | local | workspace/scratch/delivery 模型指引；不构成 collector 或秘密隔离保证，不单独作为保留完整 fork SDK 的理由。 |
 | 24. Visible conversation loading priority | [loading-priority](../patches/loading-priority/README.md) | local | 提前可见会话查询，沿用 enabled 条件、不增加查询；独立于历史窗口，性能需实际 Lighthouse。 |
-| 25. Devcontainer, fork image CI, build/test adaptations | [dev-environment](../patches/dev-environment/README.md)、[fork-image](../patches/fork-image/README.md)、[test-adaptations](../patches/test-adaptations/README.md) | local | 分别维护 Coder/locked setup、现有 rickyhao/dev 镜像入口和当前有效 fixture；保留基线 a11y workflow，不重放过期 fixture。 |
+| 25. Devcontainer, fork image CI, build/test adaptations | [dev-environment](../patches/dev-environment/README.md)、[fork-image](../patches/fork-image/README.md)、[test-adaptations](../patches/test-adaptations/README.md) | local | 分别维护 Coder/locked setup、旧 rickyhao/dev 镜像入口兼容载荷和当前有效 fixture；活动镜像入口在补丁仓根，从 manifest 生成应用。保留基线 a11y workflow，不重放过期 fixture。 |
 | 26. Vendored SDK, lock/build wiring and prior artifacts | [sdk](../patches/sdk/README.md) | keep | 只携带当前消费的 4.2.2-ricky.1、源码 patch、元数据、锁文件、主机消费方和构建接线；历史归档不重放。 |
 
 另有 [contributor-guidance](../patches/contributor-guidance/README.md) 文档载荷（local），保存应用 AGENTS 和 PR template 的净差异。根 AGENTS 负责补丁仓自身维护。合并三对行为、拆出环境/镜像/测试责任并保留贡献指南后，清单共 26 条目、24 份载荷：keep 9、feature 4、awaiting-upstream 3、local 8、upstream 2。
@@ -54,8 +54,10 @@ index-retry 的 replacement commit 为 `e2b2839375d5e8052dec4785bf3117ce27aa67dc
 
 原始历史审计及其测试计数仍可从 [固定应用源](https://github.com/Ricky-Hao/LibreChat/blob/38c026db83d0ca12a067083b5c1551c1bca2754b/docs/fork-audit.md) 读取，不转为本阶段 pass。2026-11-11 的固定基线验收完成 71 项去重合同：54 项 focused、6 项 types、9 项 browser 和 2 项 project 全部通过。去重后 106 个 Jest suites、6074 个 tests 及 80 个 Playwright tests 通过；生产构建、固定基线 static-checks 和两个 Lighthouse 场景通过，原有失败及修正后补跑见[根 README](../README.md#验证)。loading-priority 的调用顺序本身仍不能证明性能改善，本轮 Lighthouse 只证明当前实验场景满足原预算。
 
-最终[应用提交 `4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79`](https://github.com/Ricky-Hao/LibreChat/commit/4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79) 与正式重放共用 tree `dcc8f4edc32c510e7eea8e9b514ef0117c02c90c`。原 pre-push 完整检查通过，普通 push 已成功；原门禁跳过的配置迁移测试、缺少 depcheck 的依赖检查及未涉及的 ESLint 配置检查见根 README，不计入已运行通过项。
+业务验收[应用提交 `4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79`](https://github.com/Ricky-Hao/LibreChat/commit/4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79) 与当时正式重放共用 tree `dcc8f4edc32c510e7eea8e9b514ef0117c02c90c`。原 pre-push 完整检查通过，普通 push 已成功；原门禁跳过的配置迁移测试、缺少 depcheck 的依赖检查及未涉及的 ESLint 配置检查见根 README，不计入已运行通过项。
+
+CI 采用阶段仅更新贡献指引载荷中的应用 `AGENTS.md`。当前[应用提交 `c81e3483feffc4e6ae50298dcf081139c1b3a98f`](https://github.com/Ricky-Hao/LibreChat/commit/c81e3483feffc4e6ae50298dcf081139c1b3a98f) 与正式重放共用新 tree `c00edf8153e549ffc044609af4a21c9eb409dc5f`；业务实现、锁文件和 Dockerfile 未变，复用既有真实验收及生产构建。新增根 CI 的 actionlint、触发/权限/checkout/context/metadata 结构检查、13 项工具自测和两 job 重放脚本的本地模拟通过，71 项合同入口计划明确为 `NOT RUN`。文档差异、格式和链接通过，应用文档增量经原 hooks 普通提交、推送；不将这些本地结果计为 GitHub Actions 或镜像发布成功。
 
 fresh Docker/Envbuilder、可选 Compose、镜像发布、部署、真实 Redis/provider 与 Safari/Firefox 均没有新增验收证据。
 
-当前采用固定基线加有序补丁的维护方法，见 [maintenance.md](maintenance.md)。独立文档里的旧 merge-sync 推荐不作为此补丁仓的默认流程；应用主分支迁移、合并、发布和部署仍需各自方案与授权。
+当前维护入口为 `patches` → manifest 固定基线重放 → GHCR，继续使用 `rickyhao-dev` 标签；见 [maintenance.md](maintenance.md#ci-与发布) 和[活动 workflow](../.github/workflows/rickyhao-dev-image.yml)。PR 只验证，发布仅限本仓 `patches` 的 push/手动入口。独立文档里的旧 merge-sync 推荐不作为此补丁仓的默认流程；默认分支设置和实际 Actions 结果由负责人随后处理，合并、push 与部署各按当前授权执行。

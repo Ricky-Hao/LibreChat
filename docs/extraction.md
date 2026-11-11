@@ -67,4 +67,4 @@ bd7963d6c15f234810e9fbf441a1341b2fafcf8a
 
 原始提取阶段的维护工具 13 项单元测试通过。该阶段应用重放只执行合同 `--tier all --plan`：142 个合同项去重为 70 个检查命令，入口校验全部通过并输出 NOT RUN；没有执行应用 Jest、类型检查、构建、浏览器或 Lighthouse。旧基线实际源差异的 `git diff --check <固定基线>` 通过，独立于嵌套 patch 文件的字节保留。当前验证范围见 [README](../README.md)，执行方法见 [维护说明](maintenance.md)。
 
-补丁仓只保留许可证、来源、维护说明、清单、载荷和维护工具；应用发布 workflow 仅存在于载荷数据。`.work/` 内的临时提取脚本、index、checkout 和日志不提交，也不是交付依赖。应用源码继续保存在固定源 Git 历史及下一阶段生成的应用 checkout 中。
+补丁仓保留许可证、来源、维护说明、清单、载荷、维护工具和根目录活动 CI；采用阶段新增的 CI 按 manifest 重放应用后构建镜像。旧应用发布 workflow 仍作为兼容载荷数据。`.work/` 内的临时提取脚本、index、checkout 和日志不提交，也不是交付依赖。应用源码保存在固定源 Git 历史和生成的应用 checkout 中。

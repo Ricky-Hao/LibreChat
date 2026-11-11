@@ -1,0 +1,143 @@
+name: Rickyhao Dev Docker Image
+
+on:
+  push:
+    branches: [patches]
+  pull_request:
+    branches: [patches]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    name: Validate and replay patchset
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      base: ${{ steps.manifest.outputs.base }}
+      tree: ${{ steps.replay.outputs.tree }}
+    steps:
+      - name: Checkout exact patchset revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Test maintenance tools
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+
+      - name: Validate manifest and read fixed base
+        id: manifest
+        run: |
+          python3 -c "from tools.patchset import load_manifest; print('base=' + load_manifest()['base'])" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout fixed upstream with ancestor history
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: LibreChat-AI/LibreChat
+          ref: ${{ steps.manifest.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: .work/application
+
+      - name: Check and apply complete patchset
+        id: replay
+        env:
+          UPSTREAM_BASE: ${{ steps.manifest.outputs.base }}
+        run: |
+          python3 tools/patchset.py check --target .work/application
+          python3 tools/patchset.py apply --target .work/application
+          python3 tools/patchset.py test --target .work/application --tier all --plan
+          git -C .work/application diff --exit-code
+          tree=$(git -C .work/application write-tree)
+          printf 'tree=%s\n' "$tree" >> "$GITHUB_OUTPUT"
+          printf 'Fixed upstream: %s\nGenerated application tree: %s\nContract plan only; business tests NOT RUN.\n' "$UPSTREAM_BASE" "$tree"
+
+  publish:
+    name: Build and publish generated application
+    needs: validate
+    if: >-
+      github.repository == 'Ricky-Hao/LibreChat' &&
+      github.ref == 'refs/heads/patches' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout validated patchset revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Checkout validated upstream with ancestor history
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: LibreChat-AI/LibreChat
+          ref: ${{ needs.validate.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: .work/application
+
+      # Each job has its own checkout; reproduce and compare before registry login.
+      - name: Reproduce validated application tree
+        env:
+          EXPECTED_TREE: ${{ needs.validate.outputs.tree }}
+        run: |
+          python3 tools/patchset.py check --target .work/application
+          python3 tools/patchset.py apply --target .work/application
+          git -C .work/application diff --exit-code
+          test "$(git -C .work/application write-tree)" = "$EXPECTED_TREE"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute build date
+        id: meta
+        run: printf 'date=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push generated amd64 image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .work/application
+          file: .work/application/Dockerfile.multi
+          target: api-build
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/ricky-hao/librechat:rickyhao-dev
+            ghcr.io/ricky-hao/librechat:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.date }}
+            io.librechat.patchset.revision=${{ github.sha }}
+            io.librechat.upstream.base=${{ needs.validate.outputs.base }}
+            io.librechat.generated.tree=${{ needs.validate.outputs.tree }}
+          cache-from: type=gha,scope=rickyhao-dev-amd64
+          cache-to: type=gha,mode=max,scope=rickyhao-dev-amd64
+          build-args: |
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_BRANCH=patches
+            BUILD_DATE=${{ steps.meta.outputs.date }}
