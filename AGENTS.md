@@ -58,7 +58,7 @@
 
 以下 TS 模块边界、配置、错误脱敏、Jotai 所有权、主题、i18n 和真实 SDK 测试契约继续适用。默认开发/PR 约定不覆盖用户明确指定的 fork 目标分支。仅维护指引文档时审内容、引用、适用格式及 `git diff --check`，不启动应用、不跑全仓业务检查、不新增 review 轮次。
 
-本 fork 的项目主分支为 `rickyhao/dev`，不是下文 upstream 约定中的 `main`。改动须先通过测试并合并到 `rickyhao/dev`，再沿现有 `rickyhao-dev-image.yml` → GHCR 流程发布，之后才能部署对应产物。推送该分支会触发现有镜像发布；已授权 push 包含这一既有影响，不等于额外 tag、Release、dispatch 或部署授权。
+本 fork 的维护源码主分支为 `patches`，不是下文 upstream 约定中的 `main`。应用 checkout 由补丁仓 `manifest.json` 的固定基线与有序载荷生成；改动须回写所属补丁、通过适用测试，再合入 `patches`。活动发布入口位于补丁仓根 `.github/workflows/rickyhao-dev-image.yml`，从生成应用构建 GHCR 镜像并保留 `rickyhao-dev` 标签。应用 checkout 中同名 workflow 是旧 `rickyhao/dev` 的兼容载荷。授权 push 到 `patches` 包含其自动镜像发布影响，不等于额外 tag、Release、dispatch 或部署授权。
 
 `AGENTS.md` is the repository's contributor guidance. Backend code lives in `packages/api`
 (TypeScript) and `packages/data-schemas` (database methods); `api` is legacy Express wiring.
