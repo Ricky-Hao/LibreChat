@@ -324,6 +324,7 @@ jest.mock('@librechat/api', () => ({
   logGenerationStartFailure: jest.requireActual('@librechat/api').logGenerationStartFailure,
   resolveFailedTurnContent: jest.requireActual('@librechat/api').resolveFailedTurnContent,
   applyRetainedContentEdit: jest.requireActual('@librechat/api').applyRetainedContentEdit,
+  getConversationHistory: jest.requireActual('@librechat/api').getConversationHistory,
   withBalanceReservations: jest.requireActual('@librechat/api').withBalanceReservations,
   getModelMaxTokens: jest.requireActual('@librechat/api').getModelMaxTokens,
   projectRetainedMessageContent: jest.requireActual('@librechat/api').projectRetainedMessageContent,
