@@ -1,8 +1,8 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, useLayoutEffect } from 'react';
+import { DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES } from 'librechat-data-provider';
 import {
   documentVisibility,
   applyActivityLabelPart,
-  offsetActivityPhaseBoundary,
   findActivityLabelMessageIndex,
 } from '@librechat/chat';
 import type { ResumableServices, ResumableStreamParams } from '@librechat/chat/react';
@@ -29,7 +29,6 @@ const resumableParts: ResumableParts = {
   findSteerTarget: findSteerMessageIndex,
   applyActivityLabel: applyActivityLabelPart,
   findActivityLabelTarget: findActivityLabelMessageIndex,
-  offsetActivityPhaseBoundary,
   applyReasoningLabel,
   findReasoningLabelTarget: findReasoningLabelMessageIndex,
 };
@@ -49,6 +48,10 @@ export function useResumableServices({
   setStreamId,
 }: ResumableStreamParams): () => ResumableServices {
   const { auth, config } = useChatSettings();
+  const retryLimit = useRef(DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES);
+  useLayoutEffect(() => {
+    retryLimit.current = config.terminalRecoveryMaxRetries ?? DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES;
+  }, [config.terminalRecoveryMaxRetries]);
   const { token, isAuthenticated = false } = auth;
   const transport = useChatTransport();
   const { setMessages, getMessages, setConversation, setIsSubmitting, newConversation } = chat;
@@ -84,6 +87,7 @@ export function useResumableServices({
     (): ResumableServices => ({
       logger,
       visibility: documentVisibility,
+      terminalRecoveryMaxRetries: () => retryLimit.current,
       fetchStatus: fetchStreamStatus,
       cache,
       queue,

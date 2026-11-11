@@ -5,6 +5,7 @@ import { SettingsTabValues } from 'librechat-data-provider';
 import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from '@headlessui/react';
 import {
   Button,
+  OverlayBack,
   DialogLayer,
   useMediaQuery,
   useRemScale,
@@ -47,7 +48,7 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
     setMobileDetail(true);
   };
 
-  return (
+  const dialog = (
     <Transition appear show={open}>
       <Dialog as="div" className="relative z-50" onClose={() => onOpenChange(false)}>
         <TransitionChild
@@ -154,5 +155,12 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
         </TransitionChild>
       </Dialog>
     </Transition>
+  );
+  return (
+    <OverlayBack open={open} onClose={() => onOpenChange(false)}>
+      <OverlayBack open={open && inDetail} onClose={() => setMobileDetail(false)}>
+        {dialog}
+      </OverlayBack>
+    </OverlayBack>
   );
 }

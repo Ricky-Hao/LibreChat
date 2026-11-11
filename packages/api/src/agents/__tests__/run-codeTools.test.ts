@@ -1,14 +1,16 @@
+import { logger } from '@librechat/data-schemas';
 import { FileContext } from 'librechat-data-provider';
 import type { AgentInputs, SubagentTaskConfig, SubagentResolveContext } from '@librechat/agents';
 import type { FileProvisionCommit } from '@librechat/data-schemas';
 import type { TFile } from 'librechat-data-provider';
+import type { RunConfig } from '@librechat/agents';
 import type { ProvisionCallbackDeps, ProvisionToolContext } from '~/files/provision/callback';
 import type { HostSubagentTaskConfig } from '~/agents/subagentDelivery';
 import type { ServerRequest } from '~/types';
-import { reportSubagentResolutionFailure } from '~/agents/failures/subagent';
 import { createProvisionFilesCallback } from '~/files/provision/callback';
 import { SUBAGENT_COMPLETION_DELIVERY } from '~/agents/subagentDelivery';
 import { mergeCodeFilesIntoContext } from '~/agents/codeFilesSession';
+import { SubagentInitializationError } from '~/agents/initialization';
 import { createFileProvisionRecovery } from '../../files/operations';
 import { CHECK_BACKGROUND_TASK_NAME } from '~/agents/background';
 import { createRun } from '~/agents/run';
@@ -116,6 +118,34 @@ async function captureAgentsRunConfig(
 
 describe('createRun code-tool eager/session wiring', () => {
   beforeEach(() => jest.clearAllMocks());
+
+  it('wires correlated safe resolution diagnostics into the SDK run', async () => {
+    await captureRunConfig();
+    const config = (Run.create as jest.Mock).mock.calls[0][0] as RunConfig;
+    const handler = config.onSubagentResolutionFailure;
+    expect(handler).toEqual(expect.any(Function));
+    const cause = handler?.(
+      {
+        phase: 'config',
+        subagentType: 'private child name',
+        aborted: false,
+        type: 'Error',
+        cause: 'unknown',
+        message: 'Subagent error: Unable to initialize the selected subagent.',
+        parentRunId: '11111111-1111-4111-8111-111111111111',
+        childRunId: '22222222-2222-4222-8222-222222222222',
+      },
+      new SubagentInitializationError('model_unavailable'),
+    );
+    expect(cause).toBe('model_unavailable');
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[SubagentExecutor] Subagent initialization failed',
+      expect.objectContaining({ parentRunId: '11111111-1111-4111-8111-111111111111', cause }),
+    );
+    expect(JSON.stringify((logger.warn as jest.Mock).mock.calls)).not.toContain(
+      'private child name',
+    );
+  });
 
   it('includes queued paths in model instructions and reserves live paths across agents', async () => {
     const file: TFile = {
@@ -529,9 +559,26 @@ describe('createRun code-tool eager/session wiring', () => {
     );
   });
 
-  it('reports why a subagent could not start instead of leaving the SDK to guess', async () => {
+  it('reports why a subagent could not start alongside safe initialization classification', async () => {
     const runConfig = await captureRunConfig();
-    expect(runConfig.onSubagentResolutionFailure).toBe(reportSubagentResolutionFailure);
+    const handler = runConfig.onSubagentResolutionFailure as NonNullable<
+      RunConfig['onSubagentResolutionFailure']
+    >;
+    handler(
+      {
+        phase: 'config',
+        subagentType: 'private child name',
+        cause: 'unknown',
+        type: 'Error',
+        aborted: false,
+        message: 'Subagent error: Unable to initialize the selected subagent.',
+      },
+      new Error('provider unavailable'),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[subagents] Subagent could not start',
+      expect.objectContaining({ causes: [{ name: 'Error' }] }),
+    );
   });
 
   it('passes the trusted per-agent code-session partition to the SDK', async () => {

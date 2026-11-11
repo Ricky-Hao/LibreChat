@@ -72,6 +72,7 @@ export type ChatConfig = {
   loaded?: boolean;
   /** Whether the deployment tracks token balances, refreshed after each turn. */
   balanceEnabled?: boolean;
+  terminalRecoveryMaxRetries?: number;
 };
 
 /** The signed-in account, as far as the chat reads it. */

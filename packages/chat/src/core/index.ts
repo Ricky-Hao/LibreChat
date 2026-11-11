@@ -31,3 +31,4 @@ export * from './thread';
 export * from './lanes';
 export * from './activity';
 export * from './code';
+export * from './history';

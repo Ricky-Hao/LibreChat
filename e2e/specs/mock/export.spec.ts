@@ -30,8 +30,8 @@ const MIN_PIXEL_RATIO = 0.5;
 
 const OVERSIZED_TITLE = 'Oversized export fixture';
 const OVERSIZED_PARAGRAPH = 'Oversized export fixture paragraph';
-/** Keep 4,000 unclipped paragraphs in a shallow thread. */
-const OVERSIZED_MESSAGES = 8;
+/** Keep 4,000 unclipped paragraphs before the initial 24-message window. */
+const OVERSIZED_MESSAGES = 32;
 const OVERSIZED_PARAGRAPHS_PER_MESSAGE = 1000;
 
 const userEmail = getE2EUser().email;
@@ -93,11 +93,12 @@ function buildOversizedMessages(): SeedMessage[] {
   let parentMessageId = NO_PARENT;
   for (let i = 0; i < OVERSIZED_MESSAGES; i++) {
     const messageId = randomUUID();
+    const reply = i < 8 ? text : 'Export fixture reply';
     messages.push({
       messageId,
       parentMessageId,
       /** Long user messages collapse by default; keep the oversized content in replies. */
-      text: i % 2 === 0 ? 'Export fixture prompt' : text,
+      text: i % 2 === 0 ? 'Export fixture prompt' : reply,
       isCreatedByUser: i % 2 === 0,
       sender: i % 2 === 0 ? 'User' : 'Assistant',
     });
@@ -178,37 +179,24 @@ test.describe('conversation export', () => {
     await seedMessages(userEmail, conversationId, buildOversizedMessages());
 
     await page.goto(`/c/${conversationId}`, { timeout: 30000 });
-    await expect(messagesView(page).getByText(`${OVERSIZED_PARAGRAPH} 0.`).first()).toBeVisible({
+    await expect(
+      messagesView(page).getByText('Export fixture reply', { exact: true }).first(),
+    ).toBeVisible({
       timeout: 60000,
     });
 
     const target = page.getByTestId('screenshot-target');
-    await expect(target.getByTestId('message-body')).toHaveCount(OVERSIZED_MESSAGES, {
-      timeout: 60_000,
-    });
-    /** Both area and edge limits can make the fixture too large to capture. */
-    await expect
-      .poll(
-        () =>
-          page.evaluate(
-            ({ maxArea, maxEdge }) => {
-              const target = document.querySelector<HTMLElement>(
-                '[data-testid="screenshot-target"]',
-              );
-              if (!target) {
-                return Number.POSITIVE_INFINITY;
-              }
-              const { scrollWidth: width, scrollHeight: height } = target;
-              return Math.min(
-                Math.sqrt(maxArea / (width * height)),
-                maxEdge / Math.max(width, height),
-              );
-            },
-            { maxArea: MAX_CAPTURE_AREA, maxEdge: MAX_CANVAS_EDGE },
-          ),
-        { timeout: 60_000 },
-      )
-      .toBeLessThan(MIN_PIXEL_RATIO);
+    const captureRatio = () =>
+      target.evaluate(
+        (node, { maxArea, maxEdge }) => {
+          const { scrollWidth: width, scrollHeight: height } = node;
+          return Math.min(Math.sqrt(maxArea / (width * height)), maxEdge / Math.max(width, height));
+        },
+        { maxArea: MAX_CAPTURE_AREA, maxEdge: MAX_CANVAS_EDGE },
+      );
+    /** The initial window fits. Export fetches every row before applying the guard. */
+    await expect(target.getByTestId('message-body')).toHaveCount(24);
+    expect(await captureRatio()).toBeGreaterThanOrEqual(MIN_PIXEL_RATIO);
 
     const dialog = await openExportModal(page);
     await selectExportType(page, dialog, 'screenshot (.png)');
@@ -217,7 +205,16 @@ test.describe('conversation export', () => {
     page.on('download', () => {
       downloadFired = true;
     });
+    const fullHistory = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === `/api/messages/${conversationId}` && !url.searchParams.has('history');
+    });
     await dialog.getByRole('button', { name: 'Export', exact: true }).click();
+    const exported = await fullHistory;
+    expect(exported.ok()).toBe(true);
+    expect(await exported.json()).toHaveLength(OVERSIZED_MESSAGES);
+    await expect(target.getByTestId('message-body')).toHaveCount(OVERSIZED_MESSAGES);
+    await expect.poll(captureRatio, { timeout: 60_000 }).toBeLessThan(MIN_PIXEL_RATIO);
 
     await expect(page.getByText('too large to export as a screenshot').first()).toBeVisible({
       timeout: 15000,

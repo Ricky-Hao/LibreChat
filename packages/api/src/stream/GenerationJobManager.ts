@@ -39,9 +39,11 @@ import type {
   EarlyBufferRecoveryFailureReason,
   EarlyBufferRecoveryOutcome,
 } from '../types/earlyBufferRecovery';
+import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
 import type { AgentStartupTelemetry } from '~/agents/startup';
 import type { RecoveredSteerPayload } from './SteerRecovery';
 import type { SteerContentView } from './SteeringLifecycle';
+import type { MessageContentProvenance } from './retained';
 import type { GenerationJobStore } from '~/app/metrics';
 import type * as t from '~/types';
 import {
@@ -99,6 +101,7 @@ import { markAbortedCompactionContent } from '~/agents/compaction';
 import { ApprovalLifecycle, pausePersistenceActionId } from './ApprovalLifecycle';
 import { projectPendingMCPOAuthPrompts } from '~/mcp/oauth/resume';
 import { sanitizeJobMetadata } from './metadata';
+import { projectRetainedMessageContent } from './retained';
 
 /** Terminal error surfaced to a client still attached when its approval window lapses. */
 const APPROVAL_EXPIRED_ERROR = 'Approval expired before a decision was made';
@@ -357,16 +360,6 @@ function buildTerminalPersistenceReconcile(
     generationCreatedAt: job.createdAt,
     conversation: { conversationId: job.conversationId },
   };
-}
-
-function getSteerUserSubmittedPaths(content: readonly TMessageContentParts[]): string[] {
-  const paths: string[] = [];
-  for (let index = 0; index < content.length; index++) {
-    if (content[index]?.type === 'steer') {
-      paths.push(`/content/${index}`);
-    }
-  }
-  return paths;
 }
 
 /** Rewrites `/content/N/...` paths recorded against the unfiltered content onto
@@ -3130,6 +3123,8 @@ class GenerationJobManagerClass {
         userMessage: jobData.userMessage,
         responseMessageId: jobData.responseMessageId,
         isRegenerate: jobData.isRegenerate,
+        retainedContentPending: jobData.retainedContentPending,
+        retainedContent: jobData.retainedContent,
         mcpRequestBody: jobData.mcpRequestBody,
         userSubmittedPaths: jobData.userSubmittedPaths,
         userSubmittedMessageFieldPaths: jobData.userSubmittedMessageFieldPaths,
@@ -4964,8 +4959,15 @@ class GenerationJobManagerClass {
        * tier that produced its bytes, not the one seen before the claim. */
       try {
         const refreshed = await this.jobStore.getJob(streamId);
-        if (refreshed?.createdAt === jobData.createdAt && refreshed.contextMeta != null) {
-          jobData = { ...jobData, contextMeta: refreshed.contextMeta };
+        if (refreshed?.createdAt === jobData.createdAt) {
+          jobData = {
+            ...jobData,
+            contextMeta: refreshed.contextMeta ?? jobData.contextMeta,
+            retainedContent: refreshed.retainedContent ?? jobData.retainedContent,
+            userSubmittedPaths: refreshed.userSubmittedPaths ?? jobData.userSubmittedPaths,
+            userSubmittedMessageFieldPaths:
+              refreshed.userSubmittedMessageFieldPaths ?? jobData.userSubmittedMessageFieldPaths,
+          };
         }
       } catch (metadataError) {
         logger.warn(
@@ -4982,7 +4984,13 @@ class GenerationJobManagerClass {
       // Answer stamps use ordinals from the unfiltered chunk reconstruction.
       // Filter only after the transform so sparse/empty/OAuth parts cannot
       // shift a retained ID-less ask answer onto a different tool call.
-      abortContent = filterPersistableAbortContent(content);
+      /** Decide whether claimed approvals reached the completion before composing the prefix.
+       * Projection then remaps that completion-local provenance through filtering and folding. */
+      const projected = projectRetainedMessageContent(content, jobData, {
+        abort: true,
+        provenance: getPublishedProvenance(jobData, content, content),
+      });
+      abortContent = projected.content;
       // A stopped compaction is unfinished rather than failed, so the row keeps
       // the abort shape, plus the marker that keeps it identifiable as the
       // compaction's own turn instead of an answer to its parent.
@@ -5003,19 +5011,25 @@ class GenerationJobManagerClass {
 
       /** Final event for abort */
       const userMessageId = jobData.userMessage?.messageId;
+      /** Unedited generations retain the existing treatment of paths beyond the snapshot. */
+      const publishedProvenance = jobData.retainedContent
+        ? projected
+        : getPublishedProvenance(jobData, content, abortContent);
+      const userSubmittedPaths = [
+        ...new Set([
+          ...(publishedProvenance.userSubmittedPaths ?? []),
+          ...projected.userSubmittedPaths,
+        ]),
+      ];
+      const userSubmittedMessageFieldPaths =
+        publishedProvenance.userSubmittedMessageFieldPaths ?? [];
       /** The final event and the persisted row (`beforePublish` reads
        * `jobData`) must label the same content, so both take this selection. */
       jobData = {
         ...jobData,
-        ...getPublishedProvenance(jobData, content, abortContent),
+        userSubmittedPaths,
+        userSubmittedMessageFieldPaths,
       };
-      const userSubmittedPaths = [
-        ...new Set([
-          ...(jobData.userSubmittedPaths ?? []),
-          ...getSteerUserSubmittedPaths(abortContent as TMessageContentParts[]),
-        ]),
-      ];
-      const userSubmittedMessageFieldPaths = jobData.userSubmittedMessageFieldPaths ?? [];
 
       const abortFinalEvent: t.ServerSentEvent = {
         final: true,
@@ -5063,6 +5077,8 @@ class GenerationJobManagerClass {
         jobData,
         content: abortContent,
         finalEvent: abortFinalEvent,
+        userSubmittedPaths,
+        userSubmittedMessageFieldPaths,
         text,
         collectedUsage,
         ...(pendingSteers.length > 0 && { pendingSteers }),
@@ -6467,6 +6483,20 @@ class GenerationJobManagerClass {
           }),
           this.jobStore.getJob(streamId),
         ]);
+      }
+
+      if (
+        resumeState == null &&
+        (jobData?.status === 'running' || jobData?.status === 'requires_action')
+      ) {
+        removeCaptureHandler();
+        restoreCapturedEvents();
+        recordGenerationStreamSubscription(this.storeLabel, 'resume_state', 'missing');
+        recordGenerationStreamSubscription(this.storeLabel, 'resume', 'error');
+        if (!options?.signal?.aborted) {
+          onError?.(TERMINAL_PUBLICATION_RECONNECT_ERROR);
+        }
+        return { subscription: null, resumeState: null, pendingEvents: [] };
       }
 
       if (pendingOverflow != null && recoveryStartedAt != null) {
@@ -8261,6 +8291,27 @@ class GenerationJobManagerClass {
     await this.jobStore.updateJob(streamId, updates, generationId);
   }
 
+  async captureRetainedContent(
+    streamId: string,
+    parts: Agents.MessageContentComplex[],
+    type: Agents.RetainedContent['type'],
+    expectedCreatedAt?: number,
+    provenance: MessageContentProvenance = {},
+  ): Promise<void> {
+    if (type !== ContentTypes.TEXT && type !== ContentTypes.THINK) {
+      throw new Error('Invalid retained content type');
+    }
+    const generationId = expectedCreatedAt ?? this.runtimeState.get(streamId)?.createdAt;
+    await this.jobStore.updateJob(
+      streamId,
+      {
+        retainedContent: structuredClone({ ...provenance, parts, type }),
+        retainedContentPending: false,
+      },
+      generationId,
+    );
+  }
+
   /** Stages exact detached terminal evidence in the generation-owned job outbox
    * and verifies the epoch-fenced write before the external result leaves memory. */
   async persistAgentEventDetachedTerminalEvidence(
@@ -8559,12 +8610,13 @@ class GenerationJobManagerClass {
     streamId: string,
     contentParts: Agents.MessageContentComplex[],
     expectedCreatedAt?: number,
+    subagentContent?: SubagentContentBuffer,
   ): void {
     const runtime = this.runtimeState.get(streamId);
     if (!runtime || (expectedCreatedAt != null && runtime.createdAt !== expectedCreatedAt)) {
       return;
     }
-    this.jobStore.setContentParts(streamId, contentParts, runtime.createdAt);
+    this.jobStore.setContentParts(streamId, contentParts, runtime.createdAt, subagentContent);
   }
 
   /**
@@ -8912,6 +8964,12 @@ class GenerationJobManagerClass {
     if (!jobData || (expectedCreatedAt != null && jobData.createdAt !== expectedCreatedAt)) {
       return null;
     }
+    if (
+      jobData.retainedContentPending === true &&
+      (jobData.status === 'running' || jobData.status === 'requires_action')
+    ) {
+      return null;
+    }
     if (jobData.earlyBufferOverflow?.persistencePending === true) {
       const initialCreatedAt = jobData.createdAt;
       jobData = await this.waitForFinalizedEarlyBufferOverflow(streamId, jobData);
@@ -9088,6 +9146,13 @@ class GenerationJobManagerClass {
     return {
       runSteps: effectiveRunSteps,
       aggregatedContent,
+      retainedContent:
+        jobData.retainedContent == null
+          ? undefined
+          : structuredClone({
+              parts: jobData.retainedContent.parts,
+              type: jobData.retainedContent.type,
+            }),
       userMessage: jobData.userMessage,
       responseMessageId: jobData.responseMessageId,
       isRegenerate: jobData.isRegenerate,

@@ -295,25 +295,6 @@ const rows: Row[] = [
     digest: '55ebe9bf5b9df0ea',
   },
   {
-    name: 'continues an edit after its retained prefix',
-    cache: [user()],
-    submission: {
-      editedContent: { index: 0, type: ContentTypes.TEXT, text: 'kept' },
-      editPrefixLength: 1,
-      initialResponse: response({ content: [{ type: ContentTypes.TEXT, text: 'kept' }] }),
-    } as Partial<EventSubmission>,
-    steps: [
-      textStep('s1', 0),
-      text('s1', ' and more'),
-      { frame: true },
-      toolStep('t1', 1, [{ id: 'call-1', name: 'search' }]),
-      textStep('s2', 2),
-      text('s2', 'tail'),
-      { frame: true },
-    ],
-    digest: 'bcf040ec24e470fc',
-  },
-  {
     name: 'streams and settles a summary',
     cache: [user()],
     steps: [
@@ -438,7 +419,7 @@ const rows: Row[] = [
   },
 ];
 
-function run(hook: typeof useStepHandler, row: Row) {
+function run(hook: typeof useStepHandler, row: Omit<Row, 'digest'>) {
   takeRegisteredSubagentProgressKeys();
   const store = createStore();
   let cache: TMessage[] = row.cache ?? [];
@@ -539,5 +520,51 @@ describe('step reducer equivalence', () => {
       log.writes.length + log.callbacks.length + Object.keys(log.atoms).length,
     ).toBeGreaterThan(0);
     expect(digest(log)).toBe(row.digest);
+  });
+
+  it('continues an edit after its retained prefix', () => {
+    const log = run(useStepHandler, {
+      name: 'continues an edit after its retained prefix',
+      cache: [user()],
+      submission: {
+        editedContent: { index: 0, type: ContentTypes.TEXT, text: 'kept' },
+        editPrefixLength: 1,
+        initialResponse: response({ content: [{ type: ContentTypes.TEXT, text: 'kept' }] }),
+      },
+      steps: [
+        textStep('s1', 0),
+        text('s1', ' and more'),
+        { frame: true },
+        toolStep('t1', 1, [{ id: 'call-1', name: 'search' }]),
+        textStep('s2', 2),
+        text('s2', 'tail'),
+        { frame: true },
+      ],
+    });
+    const foldedText = { type: ContentTypes.TEXT, text: 'kept and more' } as const;
+    const search = {
+      type: ContentTypes.TOOL_CALL,
+      tool_call: {
+        id: 'call-1',
+        name: 'search',
+        args: '',
+        stepId: 't1',
+        type: ToolCallTypes.TOOL_CALL,
+      },
+    } as const;
+    // The retained prefix's fold applies to later indices too. Pin every write,
+    // including the tool and tail slots, instead of repinning the old empty-slot digest.
+    const contents: TMessageContentParts[][] = [
+      [{ type: ContentTypes.TEXT, text: 'kept' }],
+      [foldedText],
+      [foldedText, search],
+      [foldedText, search, { type: ContentTypes.TEXT, text: 'tail' }],
+    ];
+    expect(log).toEqual({
+      writes: contents.map((content) => JSON.stringify([user(), response({ content })])),
+      announcements: [JSON.stringify({ message: 'composing', isStatus: true })],
+      callbacks: [],
+      atoms: {},
+    });
   });
 });

@@ -2052,6 +2052,27 @@ test.describe('persisted source-aware content filters', () => {
       fixtures.conversationIds.push(fixtures.messageConversationId);
       await waitForSeedRead(fixtures.messageConversationId);
 
+      // Rendering the seeded reply acknowledges it asynchronously. Finish that
+      // lastSeenAt/unread-marker write before taking the filter's no-write snapshot.
+      await expect
+        .poll(async () =>
+          withMongo(async (db) => {
+            const conversation = await db
+              .collection('conversations')
+              .findOne(
+                { conversationId: fixtures.messageConversationId },
+                { projection: { lastResponseAt: 1, lastSeenAt: 1, isMarkedUnread: 1 } },
+              );
+            return (
+              conversation?.lastResponseAt instanceof Date &&
+              conversation.lastSeenAt instanceof Date &&
+              conversation.lastSeenAt >= conversation.lastResponseAt &&
+              !('isMarkedUnread' in conversation)
+            );
+          }),
+        )
+        .toBe(true);
+
       const storedMessage = await createStoredMessage(
         request,
         token,

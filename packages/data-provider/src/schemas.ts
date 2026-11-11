@@ -1115,6 +1115,8 @@ export type WorkspaceChange = {
 };
 
 export type TAttachmentMetadata = {
+  /** Present only in lightweight display-history responses. */
+  bodyRef?: import('./history').AttachmentBodyRef;
   type?: Tools;
   messageId: string;
   toolCallId: string;

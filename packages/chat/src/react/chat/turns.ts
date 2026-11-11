@@ -221,6 +221,9 @@ export function useTurns(
       return false;
     }
 
+    if (conversationId != null && isExistingConversation) {
+      services.cancelMessagesQuery(conversationId);
+    }
     setShowStopButton(false);
 
     const convoKey = conversationId ?? Constants.NEW_CONVO;
@@ -377,5 +380,5 @@ export function useTurns(
     });
   };
 
-  return { ask, regenerate: createRegenerate(ask, getMessages) };
+  return { ask, regenerate: createRegenerate(ask, getMessages, services.loadRegenerateParent) };
 }

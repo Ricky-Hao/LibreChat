@@ -6,6 +6,7 @@ export const createRegenerate =
   (
     ask: TAskFunction,
     getMessages: (conversationId?: string | null) => TMessage[] | undefined,
+    loadParent?: (messageId: string) => Promise<TMessage | undefined>,
   ): TRegenerateFunction =>
   (message, options) => {
     const messages = getMessages();
@@ -15,29 +16,38 @@ export const createRegenerate =
       message.isCreatedByUser === true ? undefined : message.messageId;
     const parentMessage = messages?.find((element) => element.messageId == parentMessageId);
 
-    if (parentMessage && parentMessage.isCreatedByUser) {
-      ask(
-        { ...parentMessage },
-        {
-          isRegenerate: true,
-          addedConvo: options?.addedConvo ?? undefined,
-          targetResponseMessageId,
-          /** Carry the original user message's manual skill picks forward
-           *  so the regenerated response is primed with the same skills.
-           *  The compose-time atom was drained on the first submit; without
-           *  this the model sees an unprimed turn even though the pills
-           *  still show on the user bubble. */
-          overrideManualSkills: parentMessage.manualSkills,
-          /** Carry the original user message's quoted excerpts forward so the
-           *  regenerated response is sent the same referenced context. */
-          overrideQuotes: parentMessage.quotes,
-          /** Replay the exact request-scoped reasoning selection used by this turn. */
-          overrideReasoning: parentMessage.reasoningOverride ?? null,
-        },
-      );
-    } else {
-      console.error(
-        'Failed to regenerate the message: parentMessage not found or not created by user.',
-      );
+    const submitParent = (parentMessage?: TMessage) => {
+      if (parentMessage && parentMessage.isCreatedByUser) {
+        ask(
+          { ...parentMessage },
+          {
+            isRegenerate: true,
+            addedConvo: options?.addedConvo ?? undefined,
+            targetResponseMessageId,
+            /** Carry the original user message's manual skill picks forward
+             *  so the regenerated response is primed with the same skills.
+             *  The compose-time atom was drained on the first submit; without
+             *  this the model sees an unprimed turn even though the pills
+             *  still show on the user bubble. */
+            overrideManualSkills: parentMessage.manualSkills,
+            /** Carry the original user message's quoted excerpts forward so the
+             *  regenerated response is sent the same referenced context. */
+            overrideQuotes: parentMessage.quotes,
+            /** Replay the exact request-scoped reasoning selection used by this turn. */
+            overrideReasoning: parentMessage.reasoningOverride ?? null,
+          },
+        );
+      } else {
+        console.error(
+          'Failed to regenerate the message: parentMessage not found or not created by user.',
+        );
+      }
+    };
+    if (!parentMessage && parentMessageId && loadParent) {
+      void loadParent(parentMessageId).then((parent) => {
+        if (parent) submitParent(parent);
+      });
+      return;
     }
+    submitParent(parentMessage);
   };

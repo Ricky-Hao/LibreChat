@@ -64,6 +64,7 @@ export default function ChatSettingsProvider({ children }: { children: ReactNode
       retentionMode: ui?.retentionMode,
       feedbackEnabled: startupConfig != null && ui?.feedback !== false,
       canRenameRunningChat: supportsConversationTitleOwnership(startupConfig),
+      terminalRecoveryMaxRetries: startupConfig?.resumableStreams?.terminalRecoveryMaxRetries,
       modelSpecs: startupConfig?.modelSpecs?.list,
       queuedSendLockTimeoutMs: ui?.queuedSendLockTimeoutMs,
       queuedTurnReconciliationTimeoutMs: ui?.queuedTurnReconciliationTimeoutMs,

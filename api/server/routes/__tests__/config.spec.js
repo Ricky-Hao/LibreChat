@@ -126,6 +126,19 @@ afterEach(() => {
 
 describe('GET /api/config', () => {
   describe('unauthenticated (no req.user)', () => {
+    it('does not expose resumable streams config to anonymous callers', async () => {
+      mockGetAppConfig.mockResolvedValue({
+        ...baseAppConfig,
+        config: { resumableStreams: { terminalRecoveryMaxRetries: 8 } },
+      });
+      const app = createApp(null);
+
+      const response = await request(app).get('/api/config');
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toHaveProperty('resumableStreams');
+    });
+
     it('should resolve the __base__ overrides without runtime augmentation when no tenant context', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       mockGetTenantId.mockReturnValue(undefined);
@@ -464,6 +477,26 @@ describe('GET /api/config', () => {
       const anonymous = await request(createApp()).get('/api/config');
       expect(anonymous.statusCode).toBe(200);
       expect(anonymous.body).not.toHaveProperty('ragEnabled');
+    });
+
+    it('exposes the default terminal recovery retry limit', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      const app = createApp(mockUser);
+
+      const response = await request(app).get('/api/config');
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body.resumableStreams).toEqual({ terminalRecoveryMaxRetries: 5 });
+    });
+
+    it.each([0, 2, 8])('exposes the effective terminal recovery retry limit %s', async (limit) => {
+      mockGetAppConfig.mockResolvedValue({
+        ...baseAppConfig,
+        config: { resumableStreams: { terminalRecoveryMaxRetries: limit } },
+      });
+      const response = await request(createApp(mockUser)).get('/api/config');
+      expect(response.statusCode).toBe(200);
+      expect(response.body.resumableStreams).toEqual({ terminalRecoveryMaxRetries: limit });
     });
 
     it('drops a policy link that would run script and keeps the rest of the interface', async () => {

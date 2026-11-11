@@ -11,6 +11,7 @@
  */
 const sharp = require('sharp');
 const { FakeChatModel } = require('@librechat/agents');
+const { setTimeout: delay } = require('node:timers/promises');
 const { ChatGenerationChunk } = require('@langchain/core/outputs');
 const { AIMessageChunk } = require('@langchain/core/messages');
 const { tryBindReplay } = require('./model-replay');
@@ -45,9 +46,11 @@ const THINK_REPLY_MARKER = 'E2E_THINK_REPLY:';
 const LONG_THINK_REPLY_MARKER = 'E2E_LONG_THINK_REPLY:';
 const LONG_THINK_WORDS = 400;
 const SLOW_THINK_REPLY_MARKER = 'E2E_SLOW_THINK_REPLY:';
+const RETAINED_PREFIX_MARKER = 'E2E_RETAINED_PREFIX:';
 const COUNTED_REPLY_MARKER = 'E2E_COUNTED_REPLY:';
 const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
 const SLOW_REPLY_MARKER = 'E2E_SLOW_REPLY:';
+const RUNNING_REPLY_MARKER = 'E2E_RUNNING_REPLY:';
 const EMPTY_SLOW_REPLY_MARKER = 'E2E_EMPTY_SLOW_REPLY:';
 const PRE_TOKEN_REPLY_MARKER = 'E2E_PRE_TOKEN_REPLY:';
 /** A run that completes having produced no content at all: the shape a
@@ -141,6 +144,7 @@ const HANDOFF_MARKER = 'E2E_HANDOFF:';
 const SUBAGENT_RESULT_MARKER = 'E2E_SUBAGENT_RESULT:';
 const SUBAGENT_CHILD_MARKER = 'E2E_SUBAGENT_CHILD:';
 const SUBAGENT_ACTIVITY_MARKER = 'E2E_SUBAGENT_ACTIVITY:';
+const SUBAGENT_ACTIVITY_FINAL_MARKER = 'E2E_SUBAGENT_ACTIVITY_FINAL:';
 const SUBAGENT_ACTIVITY_CHILD_MARKER = 'E2E_SUBAGENT_ACTIVITY_CHILD:';
 const RUN_FILES_MARKER = 'E2E_RUN_FILES:';
 const RUN_FILES_CHILD_MARKER = 'E2E_RUN_FILES_CHILD:';
@@ -872,6 +876,15 @@ function replyResponses(text) {
     };
   }
 
+  const runningName = getMarkerValue(text, RUNNING_REPLY_MARKER);
+  if (runningName) {
+    return {
+      responses: [''],
+      sleep: SLOW_CHUNK_DELAY_MS,
+      resolveInvocation: async () => ({ runningReply: runningName }),
+    };
+  }
+
   const slowName = getMarkerValue(text, SLOW_REPLY_MARKER);
   if (slowName) {
     return slowReplyResponses(slowName);
@@ -950,6 +963,20 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
     this.resolveInvocation = resolveInvocation;
     this.resolveOnStream = resolveOnStream;
     this.streamSleep = sleep ?? CHUNK_DELAY_MS;
+  }
+
+  /** Navigation tests need a live run until Stop, not a finite timing window. */
+  async *streamRunningResponseChunks(label, signal, runManager) {
+    yield* this.streamScriptedResponseChunks({
+      response: `E2E running reply ${label}`,
+      runManager,
+    });
+    for (let index = 0; ; index++) {
+      await delay(this.streamSleep, undefined, { signal });
+      const text = index % 2 === 0 ? ' ' : `chunk-${String((index - 1) / 2).padStart(3, '0')}`;
+      yield this._createResponseChunk(text);
+      void runManager?.handleLLMNewToken(text);
+    }
   }
 
   async *streamScriptedResponseChunks({
@@ -1048,7 +1075,13 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
       ? null
       : await this.resolveOnStream?.(messages, options, runManager);
     let chunkStream;
-    if (scriptedResponse) {
+    if (scriptedResponse?.runningReply) {
+      chunkStream = this.streamRunningResponseChunks(
+        scriptedResponse.runningReply,
+        options.signal,
+        runManager,
+      );
+    } else if (scriptedResponse) {
       chunkStream = this.streamScriptedResponseChunks({
         response: scriptedResponse.response ?? '',
         toolCalls: scriptedResponse.toolCalls,
@@ -2539,7 +2572,8 @@ function runFileVersionsResponses(text) {
 }
 
 function parseSubagentActivityMarker(text) {
-  const value = getMarkerValue(text, SUBAGENT_ACTIVITY_MARKER);
+  const slowFinal = getMarkerValue(text, SUBAGENT_ACTIVITY_FINAL_MARKER);
+  const value = slowFinal || getMarkerValue(text, SUBAGENT_ACTIVITY_MARKER);
   const separator = value.indexOf(':');
   if (separator <= 0 || separator === value.length - 1) {
     return null;
@@ -2553,6 +2587,7 @@ function parseSubagentActivityMarker(text) {
   return {
     childIds,
     label: value.slice(separator + 1),
+    slowFinal: Boolean(slowFinal),
   };
 }
 
@@ -2591,7 +2626,9 @@ function subagentActivityResponses(text) {
           message.tool_call_id.startsWith('call_e2e_subagent_activity_'),
       );
       if (backgroundTaskResults.length >= marker.childIds.length) {
-        return { response: `E2E detached subagents dispatched ${marker.label}` };
+        /** Leave time to edit a child control draft before the first parent FINAL. */
+        const suffix = marker.slowFinal ? ` ${slowChunkPayload()}` : '';
+        return { response: `E2E detached subagents dispatched ${marker.label}${suffix}` };
       }
 
       return {
@@ -3803,6 +3840,20 @@ function resolveResponses({ graph, messages, text, toolNames }) {
   const approvalLabel = getMarkerValue(text, TOOL_APPROVAL_MARKER);
   if (approvalLabel) {
     return approvalToolResponses(approvalLabel, toolNames);
+  }
+
+  const retainedPrefixLabel = getMarkerValue(text, RETAINED_PREFIX_MARKER);
+  if (retainedPrefixLabel) {
+    /** The UI rerun retains the assistant's TEXT after its edited THINK. Detect
+     * that real history, not a process-local counter, and generate TEXT first. */
+    const hasRetainedTail = (messages ?? []).some(
+      (message) =>
+        messageType(message) === 'ai' &&
+        getContentText(message.content).includes(`E2E reply ${retainedPrefixLabel}`),
+    );
+    return replyResponses(
+      `${hasRetainedTail ? RESUME_ICON_REPLY_MARKER : THINK_REPLY_MARKER}${retainedPrefixLabel}`,
+    );
   }
 
   const reply = replyResponses(text);

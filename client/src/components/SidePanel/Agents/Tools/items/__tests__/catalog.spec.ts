@@ -72,6 +72,25 @@ describe('buildCatalog', () => {
     expect(systemDefined?.kind === 'builtin' && systemDefined.userProvidedAuth).toBe(false);
   });
 
+  test('surfaces task callbacks as a capability-gated built-in', () => {
+    const plugin = makePlugin({
+      pluginKey: 'create_task_callback',
+      name: 'External Task Callback',
+    });
+    const inputs = {
+      ...askInputs,
+      regularTools: [plugin],
+      agentsConfig: { capabilities: [AgentCapabilities.task_callbacks] },
+    };
+    const items = buildCatalog(inputs);
+    expect(items.find((item) => item.id === 'create_task_callback')?.kind).toBe('builtin');
+    expect(
+      buildCatalog({ ...inputs, agentsConfig: { capabilities: [AgentCapabilities.tools] } }).some(
+        (item) => item.id === 'create_task_callback',
+      ),
+    ).toBe(false);
+  });
+
   test('surfaces ask_user_question as a BUILTIN (not a plugin) when the server lists it', () => {
     const askPlugin = makePlugin({ pluginKey: 'ask_user_question', name: 'Ask User' });
     const items = buildCatalog({ ...askInputs, regularTools: [askPlugin] });

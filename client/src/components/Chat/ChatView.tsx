@@ -2,8 +2,8 @@ import { memo, useMemo } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
-import { useParams } from 'react-router-dom';
 import { Constants } from 'librechat-data-provider';
+import { useLocation, useParams } from 'react-router-dom';
 import { ChatScreen, QueuedTurnPortalProvider } from '@librechat/chat/components';
 import {
   submissionByIndex,
@@ -82,6 +82,9 @@ function ChatViewPane({
   messages: TMessage[] | null;
   isLoading: boolean;
 }) {
+  const location = useLocation();
+  const targetMessageId =
+    new URLSearchParams(location.search).get('messageId') || location.hash.slice(1) || undefined;
   const rootSubmission = useAtomValue(submissionByIndex(index));
   const { saveDrafts } = useChatSettings();
   const enterToSend = useRecoilValue(store.enterToSend);
@@ -171,7 +174,22 @@ function ChatViewPane({
                               />
                             )}
                             renderBadge={(projectId) => <ProjectBadge projectId={projectId} />}
-                            messagesSlots={messagesSlots}
+                            messagesSlots={{
+                              ...messagesSlots,
+                              scrollNavigation: {
+                                conversationKey: conversationId,
+                                targetMessageId,
+                                ready: !routePending,
+                                explicitSendId:
+                                  rootSubmission &&
+                                  !('resumeStreamId' in rootSubmission) &&
+                                  (rootSubmission.conversation?.conversationId == null ||
+                                    rootSubmission.conversation?.conversationId === conversationId)
+                                    ? (rootSubmission.clientRequestId ??
+                                      rootSubmission.initialResponse?.messageId)
+                                    : undefined,
+                              },
+                            }}
                             landing={<Landing centerFormOnLanding={centerFormOnLanding} />}
                             renderColumn={(column) => (
                               <OwnerTextProvider

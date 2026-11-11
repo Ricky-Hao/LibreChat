@@ -247,7 +247,10 @@ function describeResourceLink(item: t.ResourceLink): string[] {
   return lines;
 }
 
-function parseAsString(result: t.MCPToolCallResponse): string {
+function parseAsString(
+  result: t.MCPToolCallResponse,
+  collectImage: (item: t.ImageContent) => void,
+): string {
   const content = result?.content ?? [];
   if (!content.length) {
     return '(No response)';
@@ -269,8 +272,7 @@ function parseAsString(result: t.MCPToolCallResponse): string {
           if (body.text) {
             resourceText.push(body.text);
           } else if (body.image) {
-            assertImageDataWithinLimit(body.image);
-            resourceText.push(`data:${body.image.mimeType};base64,${body.image.data}`);
+            collectImage(body.image);
           } else if (body.binaryBytes != null) {
             resourceText.push(describeBinaryResource(body.binaryBytes));
           }
@@ -284,7 +286,8 @@ function parseAsString(result: t.MCPToolCallResponse): string {
         return resourceText.join('\n');
       }
       if (isImageContent(item)) {
-        assertImageDataWithinLimit(item);
+        collectImage(item);
+        return '';
       }
       return JSON.stringify(item, null, 2);
     })
@@ -319,7 +322,8 @@ export function isRenderableUiResource(item: t.ToolContentPart): boolean {
 /**
  * Converts MCPToolCallResponse content into a plain-text string plus optional artifacts
  * (images, UI resources). All providers receive string content; images are separated into
- * artifacts and merged back by the agents package via formatArtifactPayload / formatAnthropicArtifactContent.
+ * artifacts for UI attachments regardless of provider. Model-specific artifact merging remains
+ * the agents package's responsibility; preserving an attachment does not imply model vision support.
  *
  * @param provider - Used only to distinguish recognized vs. unrecognized providers.
  * All recognized providers currently produce identical string output;
@@ -348,11 +352,6 @@ export function formatToolContent(
     metadata.toolName &&
     metadata.serverBinding
   );
-  const hasUiResource = result?.content?.some((item) => isUiResource(item));
-  if (!isRecognizedProvider && !hasSyntheticApp && !hasUiResource) {
-    return [parseAsString(result), undefined];
-  }
-
   const content = result?.content ?? [];
   if (!content.length && !hasSyntheticApp) {
     return ['(No response)', undefined];
@@ -361,8 +360,7 @@ export function formatToolContent(
   const imageUrls: t.FormattedContent[] = [];
   const uiResources: UIResource[] = [];
   let placementMarkerCount = 0;
-  // Assistants submits only this string; keep its bounded conversion independent from host UI data.
-  let currentTextBlock = isRecognizedProvider ? '' : parseAsString(result);
+  let currentTextBlock = '';
 
   type ContentHandler = undefined | ((item: t.ToolContentPart) => void);
 
@@ -378,6 +376,11 @@ export function formatToolContent(
       imageUrls.push(formattedImage);
     }
   };
+
+  // String-only consumers keep their text formatting, but image bytes belong in artifacts.
+  if (!isRecognizedProvider) {
+    currentTextBlock = parseAsString(result, collectImage);
+  }
 
   const contentHandlers: {
     text: (item: Extract<t.ToolContentPart, { type: 'text' }>) => void;

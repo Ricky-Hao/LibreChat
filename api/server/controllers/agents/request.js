@@ -19,7 +19,8 @@ const {
   GenerationJobManager,
   createConvoPersistenceSignal,
   recoverTurnMessageReference,
-  filterPersistableAbortContent,
+  projectRetainedMessageContent,
+  getRetainedContentMetadata,
   decrementPendingRequest,
   sanitizeMessageForTransmit,
   checkAndIncrementPendingRequest,
@@ -1729,6 +1730,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
         /** The job record is where the abort paths learn the turn was a
          *  compaction: they run after the request that created the job. */
         ...(isCompaction && { compact: true }),
+        ...getRetainedContentMetadata(editedContent),
         ...(scheduleId
           ? {
               scheduleId,
@@ -1913,57 +1915,63 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
         return;
       }
 
-      const [resumeState, jobRecord] = await Promise.all([
-        GenerationJobManager.getResumeState(streamId, jobCreatedAt),
-        GenerationJobManager.getJobStore().getJob(streamId),
-      ]);
-      if (!resumeState?.userMessage) {
-        logger.debug('[ResumableAgentController] No user message to save partial response for');
-        return;
-      }
-
-      /** Whether and how this snapshot persists is planned in @librechat/api,
-       *  inside the request's tenant context like the write below. */
-      const responseMessageId =
-        resumeState.responseMessageId || `${resumeState.userMessage.messageId}_`;
-      const responseConversationId = resumeState.conversationId || conversationId;
-      const planSnapshot = () =>
-        planDisconnectSnapshot(isCompaction, {
-          content: filterPersistableAbortContent(aggregatedContent),
-          jobRecord,
-          jobCreatedAt,
-          userId,
-          conversationId: responseConversationId,
-          anchorMessageId: resumeState.userMessage.messageId,
-          responseMessageId,
-          liveSaved: partialResponseSaved,
-          getMessages,
-          onReadError: (error) =>
-            logger.error('[ResumableAgentController] Error planning partial response:', error),
-        });
-      const snapshot = tenantId
-        ? await tenantStorage.run({ tenantId, userId }, planSnapshot)
-        : await planSnapshot();
-      if (!snapshot.write) {
-        logger.debug('[ResumableAgentController] No partial response to save on disconnect');
-        return;
-      }
-
-      partialResponseSaved = true;
-      /** The run publishes its calibration and fading tiers onto the job; a
-       * partial response saved on disconnect must carry them like the Stop and
-       * pause paths do, or a turn continued from it re-derives its provider
-       * projection of history and loses the cached prefix. The same-epoch job
-       * record is the source, since the client-facing resume snapshot never
-       * carries server-private state. */
-      const contextMeta = jobRecord?.createdAt === jobCreatedAt ? jobRecord.contextMeta : undefined;
-
       try {
+        const [resumeState, jobRecord] = await Promise.all([
+          GenerationJobManager.getResumeState(streamId, jobCreatedAt),
+          GenerationJobManager.getJobStore().getJob(streamId),
+        ]);
+        if (!resumeState?.userMessage) {
+          logger.debug('[ResumableAgentController] No user message to save partial response for');
+          return;
+        }
+
+        /** Whether and how this snapshot persists is planned in @librechat/api,
+         *  inside the request's tenant context like the write below. */
+        const responseMessageId =
+          resumeState.responseMessageId || `${resumeState.userMessage.messageId}_`;
+        const responseConversationId = resumeState.conversationId || conversationId;
+        const persistedContent = projectRetainedMessageContent(aggregatedContent, jobRecord, {
+          abort: true,
+          expectedCreatedAt: jobCreatedAt,
+        });
+        const planSnapshot = () =>
+          planDisconnectSnapshot(isCompaction, {
+            content: persistedContent.content,
+            jobRecord,
+            jobCreatedAt,
+            userId,
+            conversationId: responseConversationId,
+            anchorMessageId: resumeState.userMessage.messageId,
+            responseMessageId,
+            liveSaved: partialResponseSaved,
+            getMessages,
+            onReadError: (error) =>
+              logger.error('[ResumableAgentController] Error planning partial response:', error),
+          });
+        const snapshot = tenantId
+          ? await tenantStorage.run({ tenantId, userId }, planSnapshot)
+          : await planSnapshot();
+        if (!snapshot.write) {
+          logger.debug('[ResumableAgentController] No partial response to save on disconnect');
+          return;
+        }
+
+        partialResponseSaved = true;
+        /** The run publishes its calibration and fading tiers onto the job; a
+         * partial response saved on disconnect must carry them like the Stop and
+         * pause paths do, or a turn continued from it re-derives its provider
+         * projection of history and loses the cached prefix. The same-epoch job
+         * record is the source, since the client-facing resume snapshot never
+         * carries server-private state. */
+        const contextMeta =
+          jobRecord?.createdAt === jobCreatedAt ? jobRecord.contextMeta : undefined;
+
         const partialMessage = {
           messageId: responseMessageId,
           conversationId: responseConversationId,
           parentMessageId: resumeState.userMessage.messageId,
           sender: client?.sender ?? 'AI',
+          ...persistedContent,
           content: snapshot.content,
           unfinished: snapshot.unfinished,
           error: snapshot.error,
@@ -2192,7 +2200,12 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
 
     // Store reference to client's contentParts - graph will be set when run is created
     if (client?.contentParts) {
-      GenerationJobManager.setContentParts(streamId, client.contentParts, jobCreatedAt);
+      GenerationJobManager.setContentParts(
+        streamId,
+        client.contentParts,
+        jobCreatedAt,
+        client.subagentAggregatorsByToolCallId,
+      );
     }
 
     let userMessage;
@@ -2473,6 +2486,14 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
           isRegenerate,
           isCompaction,
           editedContent,
+          onRetainedContent: (parts, type, provenance) =>
+            GenerationJobManager.captureRetainedContent(
+              streamId,
+              parts,
+              type,
+              jobCreatedAt,
+              provenance,
+            ),
           conversationId,
           parentMessageId,
           abortController: job.abortController,

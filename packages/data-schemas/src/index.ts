@@ -4,6 +4,12 @@ export * from './common';
 export * from './crypto';
 export * from './schema';
 export * from './utils';
+export type {
+  BoundedMessageMethods,
+  MessageReadRow,
+  MessageReadScope,
+  MessageReadPageInput,
+} from './methods/messageReads';
 export { createModels } from './models';
 export {
   createMethods,
@@ -84,6 +90,7 @@ export {
   AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
 } from './types/triggerDelivery';
 export type * from './types';
 export type * from './methods';
@@ -121,6 +128,12 @@ export {
   backfillSearchTokens,
   warnOnMissingSearchTokens,
 } from './migrations';
+export { createTaskCallbackMethods } from './methods/taskCallback';
+export type {
+  TaskCallbackMethods,
+  TaskCallbackRecord,
+  SealTaskCallbackResult,
+} from './methods/taskCallback';
 export type { SearchTokenBackfillResult } from './migrations';
 
 export { createBrowserSetupStore, createBrowserSetupBackend } from './methods/browserSetup';

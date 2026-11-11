@@ -41,6 +41,7 @@ jest.mock('@librechat/api', () => ({
   isCodeSessionToolName: jest.requireActual('@librechat/api').isCodeSessionToolName,
   collectToolCallIds: jest.requireActual('@librechat/api').collectToolCallIds,
   getImageAttachmentContent: jest.requireActual('@librechat/api').getImageAttachmentContent,
+  collectSubagentContent: jest.requireActual('@librechat/api').collectSubagentContent,
   captureSubagentIdentity: jest.requireActual('@librechat/api').captureSubagentIdentity,
   feedSubagentAggregator: jest.requireActual('@librechat/api').feedSubagentAggregator,
   createToolTimingAdapter: jest.requireActual('@librechat/api').createToolTimingAdapter,
@@ -506,7 +507,7 @@ describe('resumable event generation fencing', () => {
       });
     }
     expect(jest.requireMock('@librechat/data-schemas').logger.warn).not.toHaveBeenCalled();
-    expect(aggregators.get('parent-call')?.contentParts[0]?.tool_call).toMatchObject({
+    expect([...aggregators.values()][0]?.contentParts[0]?.tool_call).toMatchObject({
       id: 'child-call',
       toolPreparationStartedAt: 100,
       toolPreparationDurationMs: 400,
@@ -578,7 +579,7 @@ describe('resumable event generation fencing', () => {
         ...update,
       });
     }
-    const aggregator = aggregators.get(base.parentToolCallId);
+    const aggregator = [...aggregators.values()][0];
     expect(aggregator.contentParts).toHaveLength(4);
     expect(aggregator.contentParts[0].tool_call).toMatchObject({
       id: 'query-1',
@@ -608,7 +609,7 @@ describe('resumable event generation fencing', () => {
       phase: 'steer_applied',
       data: { index, part: { type: 'steer', steer: 'guidance' } },
     });
-    expect(aggregators.get('parent-call').contentParts).toEqual([]);
+    expect([...aggregators.values()][0].contentParts).toEqual([]);
   });
 
   it('forwards the originating job epoch with deferred attachments', () => {

@@ -227,6 +227,11 @@ export function retainMessages(
 
   /** Full preview expansions are cheap to refetch and need not occupy the history grace. */
   const releaseToolCallParts = (conversationId: string) => {
+    queryClient.removeQueries([QueryKeys.historyWindow, conversationId]);
+    queryClient.removeQueries({
+      queryKey: [QueryKeys.attachmentBody, conversationId],
+      predicate: (query) => query.getObserversCount() === 0,
+    });
     queryClient.removeQueries({
       queryKey: [QueryKeys.toolCallPart, conversationId],
       predicate: (query) => query.getObserversCount() === 0,

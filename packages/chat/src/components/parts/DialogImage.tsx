@@ -4,6 +4,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X, ArrowDownToLine, RotateCcw } from 'lucide-react';
 import {
   Button,
+  Dialog,
   MorphIcon,
   TooltipAnchor,
   useLocalize,
@@ -266,7 +267,7 @@ export default function DialogImage({
   const getImageMaxWidth = () => (detailsBeside ? 'calc(90vw - 20rem)' : '90vw');
 
   return (
-    <DialogPrimitive.Root open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className="bg-surface-media-overlay/90 fixed inset-0 z-[250]"
@@ -482,6 +483,6 @@ export default function DialogImage({
           )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+    </Dialog>
   );
 }

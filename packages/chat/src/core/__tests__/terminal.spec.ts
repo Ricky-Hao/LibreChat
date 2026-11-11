@@ -11,6 +11,7 @@ import {
   reconcileGenerationLifecycle,
 } from '../resumable';
 import { createHost, createScheduler } from '../__fixtures__/resumable';
+import { getReconnectDelay } from '../resumable/start';
 
 const submission = {
   userMessage: { messageId: 'u-1', conversationId: 'c-1', isCreatedByUser: true } as TMessage,
@@ -56,7 +57,7 @@ describe('authorizeTerminalTeardown', () => {
     fetchStatus.mockResolvedValue({ active: true, createdAt: 2000, generationProtocolVersion: 2 });
     await expect(authorizeTerminalTeardown(ctx, 'c-1', 'error')).resolves.toBe(false);
     expect(ctx.sub.controller.signal.aborted).toBe(true);
-    clock.advance(249);
+    clock.advance(getReconnectDelay(1) - 1);
     expect(host.subscribe).not.toHaveBeenCalled();
     clock.advance(1);
     expect(host.subscribe).toHaveBeenCalledWith(
@@ -76,7 +77,9 @@ describe('authorizeTerminalTeardown', () => {
       'Could not verify FINAL generation status',
       expect.objectContaining({ error: expect.any(StatusReadTimeoutError) }),
     );
-    clock.advance(250);
+    clock.advance(999);
+    expect(host.subscribe).not.toHaveBeenCalled();
+    clock.advance(1);
     expect(host.subscribe).toHaveBeenCalledWith(
       expect.objectContaining({ streamId: 'c-1', isResume: true, generationCreatedAt: 2000 }),
     );
@@ -150,15 +153,39 @@ describe('reconcileGenerationLifecycle', () => {
     expect(run.reconnectAttempt).toBe(0);
   });
 
-  it('reports an error when history could not be read for a completed run', async () => {
-    const { ctx, fetchStatus, host } = setup();
+  it('preserves the run until terminal history can be read', async () => {
+    const { ctx, fetchStatus, host, clock } = setup();
     (host.cache.fetchMessages as jest.Mock).mockRejectedValue(new Error('offline'));
     fetchStatus.mockResolvedValue({ active: false, generationProtocolVersion: 2 });
     await reconcileGenerationLifecycle(ctx, { terminalStatus: 'complete' });
     expect(host.steers.convertLocalToQueued).not.toHaveBeenCalled();
-    expect(host.pane.publishRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: 'error' }),
-    );
+    expect(host.pane.publishRunEnd).not.toHaveBeenCalled();
+    expect(host.pane.setIsSubmitting).not.toHaveBeenCalledWith(false);
+    clock.advance(getReconnectDelay(1));
+    expect(host.subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('pauses terminal retries at the configured budget without clearing accepted work', async () => {
+    const { ctx, fetchStatus, host, run, clock } = setup();
+    host.terminalRecoveryMaxRetries = () => 1;
+    fetchStatus.mockRejectedValue(new Error('offline'));
+    await authorizeTerminalTeardown(ctx, 'c-1', 'FINAL');
+    clock.advance(getReconnectDelay(1));
+    expect(host.subscribe).toHaveBeenCalledTimes(1);
+    await authorizeTerminalTeardown(ctx, 'c-1', 'FINAL');
+    expect(run.terminalRecoveryAttempt).toBe(2);
+    expect(ctx.sub.terminalRecoveryPaused).toBe(true);
+    expect(clock.pending()).toBe(0);
+    expect(host.pane.publishRunEnd).not.toHaveBeenCalled();
+    expect(host.steers.convertLocalToQueued).not.toHaveBeenCalled();
+  });
+
+  it('reads persisted history only after status confirms terminal persistence', async () => {
+    const { ctx, fetchStatus, host } = setup();
+    fetchStatus.mockResolvedValue({ active: true, createdAt: 2000, generationProtocolVersion: 2 });
+    await reconcileGenerationLifecycle(ctx, { terminalStatus: 'complete' });
+    expect(host.cache.fetchMessages).not.toHaveBeenCalled();
+    expect(host.pane.publishRunEnd).not.toHaveBeenCalled();
   });
 
   it('ignores a frame for a different epoch', async () => {

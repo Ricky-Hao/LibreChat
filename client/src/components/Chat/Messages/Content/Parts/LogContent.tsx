@@ -10,6 +10,7 @@ import {
   displayFilename,
   isInternalSandboxArtifact,
   isTextAttachment,
+  isLazyAttachment,
   renderAttachmentKey,
 } from './attachmentTypes';
 import { fileToArtifact, TOOL_ARTIFACT_TYPES } from '~/utils/artifacts';
@@ -17,6 +18,7 @@ import Image from '~/components/Chat/Messages/Content/Image';
 import ToolMermaidArtifact from './ToolMermaidArtifact';
 import ToolArtifactCard from './ToolArtifactCard';
 import { useLocalize } from '~/hooks';
+import Attachment from './Attachment';
 import LogLink from './LogLink';
 
 interface PanelEntry {
@@ -56,12 +58,14 @@ const LogContent: React.FC<LogContentProps> = ({ output = '', renderImages, atta
     panelAttachments,
     mermaidAttachments,
     nonInlineAttachments,
+    deferredAttachments,
   } = useMemo(() => {
     const imageAtts: ImageAttachment[] = [];
     const textAtts: Array<TFile & TAttachmentMetadata> = [];
     const panelAtts: PanelEntry[] = [];
     const mermaidAtts: MermaidEntry[] = [];
     const otherAtts: TAttachment[] = [];
+    const deferredAtts: TAttachment[] = [];
 
     const now = new Date();
     attachments?.forEach((attachment) => {
@@ -90,6 +94,10 @@ const LogContent: React.FC<LogContentProps> = ({ output = '', renderImages, atta
       const isExpired = expiresAt != null && isAfter(now, expiresAt);
       if (isExpired) {
         otherAtts.push(attachment);
+        return;
+      }
+      if (isLazyAttachment(attachment)) {
+        deferredAtts.push(attachment);
         return;
       }
       const artType = artifactTypeForAttachment(attachment);
@@ -134,6 +142,7 @@ const LogContent: React.FC<LogContentProps> = ({ output = '', renderImages, atta
       panelAttachments: panelAtts,
       mermaidAttachments: mermaidAtts,
       nonInlineAttachments: otherAtts,
+      deferredAttachments: deferredAtts,
     };
   }, [attachments, renderImages, artifactPreviewPending]);
 
@@ -169,6 +178,9 @@ const LogContent: React.FC<LogContentProps> = ({ output = '', renderImages, atta
   return (
     <>
       {processedContent && <div>{processedContent}</div>}
+      {deferredAttachments.map((attachment, index) => (
+        <Attachment attachment={attachment} key={renderAttachmentKey('lazy', attachment, index)} />
+      ))}
       {nonInlineAttachments.length > 0 && (
         <div>
           <p>{localize('com_generated_files')}</p>

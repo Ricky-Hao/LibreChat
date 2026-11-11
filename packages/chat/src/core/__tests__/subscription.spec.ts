@@ -11,24 +11,31 @@ import {
   withStatusDeadline,
   ResumableSubscription,
   STATUS_READ_TIMEOUT_MS,
+  StatusReadTimeoutError,
 } from '../resumable';
 import { createScheduler } from '../__fixtures__/resumable';
 
 const createVisibility = () => {
   let visible = true;
   const listeners = new Set<() => void>();
+  const onlineListeners = new Set<() => void>();
   const visibility: PageVisibility = {
     isVisible: () => visible,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    subscribeOnline: (listener) => {
+      onlineListeners.add(listener);
+      return () => onlineListeners.delete(listener);
+    },
   };
   const show = () => {
     visible = true;
     listeners.forEach((listener) => listener());
   };
-  return { visibility, show, listeners };
+  const online = () => onlineListeners.forEach((listener) => listener());
+  return { visibility, show, online, listeners, onlineListeners };
 };
 
 const submission = {
@@ -153,42 +160,47 @@ describe('ResumableSubscription', () => {
     expect(subscribe).toHaveBeenCalledWith(expect.objectContaining({ isResume: true }));
   });
 
-  it('re-attaches on foreground when the status proves an open connection terminal', async () => {
+  it('re-attaches an apparently open connection on foreground without a status preflight', () => {
     const { sub, page, fetchStatus, subscribe } = setup();
     sub.claim();
     sub.connection = { closed: false };
     sub.watchForeground();
-    fetchStatus.mockResolvedValueOnce({ active: true, createdAt: 2000 });
     page.show();
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(subscribe).not.toHaveBeenCalled();
-
-    fetchStatus.mockResolvedValueOnce({ active: false, createdAt: 2000 });
-    page.show();
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(fetchStatus).toHaveBeenLastCalledWith('c-1');
+    expect(fetchStatus).not.toHaveBeenCalled();
     expect(subscribe).toHaveBeenCalledTimes(1);
   });
 
-  it('runs the next foreground check once an unanswered status read reaches its deadline', async () => {
+  it('retries paused terminal recovery when connectivity returns and resets its budget', () => {
+    const { sub, run, page, subscribe } = setup();
+    sub.claim();
+    sub.finalReceived = true;
+    sub.watchForeground();
+    page.online();
+    expect(subscribe).not.toHaveBeenCalled();
+    sub.terminalRecoveryPaused = true;
+    run.terminalRecoveryAttempt = 4;
+    page.online();
+    expect(run.terminalRecoveryAttempt).toBe(0);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-attaches on foreground while a separate status read is still unanswered', async () => {
     const { sub, clock, page, fetchStatus, subscribe } = setup();
     sub.host.fetchStatus = withStatusDeadline(fetchStatus, clock.scheduler);
     sub.claim();
     sub.connection = { closed: false };
     sub.watchForeground();
     fetchStatus.mockReturnValueOnce(new Promise<never>(() => undefined));
+    const status = sub.host.fetchStatus('c-1');
     page.show();
-    await new Promise((resolve) => setImmediate(resolve));
-    page.show();
-    await new Promise((resolve) => setImmediate(resolve));
     expect(fetchStatus).toHaveBeenCalledTimes(1);
+    expect(subscribe).toHaveBeenCalledWith(
+      expect.objectContaining({ isResume: true, generationCreatedAt: 2000 }),
+    );
 
     clock.advance(STATUS_READ_TIMEOUT_MS);
-    await new Promise((resolve) => setImmediate(resolve));
-    fetchStatus.mockResolvedValueOnce({ active: false, createdAt: 2000 });
-    page.show();
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await expect(status).rejects.toBeInstanceOf(StatusReadTimeoutError);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
     expect(subscribe).toHaveBeenCalledTimes(1);
   });
 
@@ -203,6 +215,7 @@ describe('ResumableSubscription', () => {
     });
     second.watchForeground();
     expect(page.listeners.size).toBe(1);
+    expect(page.onlineListeners.size).toBe(1);
   });
 });
 

@@ -57,6 +57,11 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
   );
   sub.replaceSubmission(resumeSubmission);
   sub.userMessage = resumeSubmission.userMessage;
+  const hasServerRetainedContent = data.resumeState?.retainedContent != null;
+  if (hasServerRetainedContent) {
+    run.editPrefixCleared = false;
+    run.editPrefixFirstPartFolded = resumeSubmission.editPrefixFirstPartFolded;
+  }
   if (data.resumeState?.userMessage != null) {
     run.identityConfirmed = true;
   }
@@ -99,7 +104,7 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
   if (data.resumeState?.aggregatedContent && sub.userMessage?.messageId) {
     const messages = host.messages.get() ?? [];
     const userMsgId = sub.userMessage.messageId;
-    const resumedContent = resumeSubmission.initialResponse.content;
+    const resumedContent = resumeSubmission.initialResponse.content ?? [];
     const hasResumedContent = (resumedContent?.length ?? 0) > 0;
     const responseId = resumeSubmission.initialResponse.messageId;
     const messageIndexes = getResumeMessageIndexes(
@@ -130,7 +135,10 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
        *  and leave a bare cursor. Require an existing content array so it is never
        *  swapped for `undefined`. */
       const preserveLoadedContent =
-        !hasResumedContent && Array.isArray(oldContent) && oldContent.length > 0;
+        !hasServerRetainedContent &&
+        !hasResumedContent &&
+        Array.isArray(oldContent) &&
+        oldContent.length > 0;
       /**
        * Replacing the response with `aggregatedContent` drops the
        * prefix an edited resubmission had retained: the snapshot is
@@ -141,7 +149,7 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
        * resolves. Preserving `oldContent` keeps the prefix, and with
        * it the offset. Run steps and labels both read this.
        */
-      if (!preserveLoadedContent) {
+      if (!preserveLoadedContent && !hasServerRetainedContent) {
         run.editPrefixCleared = true;
       }
       const responseMessage = {
@@ -184,7 +192,9 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
        *  later steps and labels must stop offsetting. Setting it
        *  only in the matched branch left this path adding an offset
        *  to indices that were already absolute. */
-      run.editPrefixCleared = true;
+      if (!hasServerRetainedContent) {
+        run.editPrefixCleared = true;
+      }
       const newMessage = {
         ...resumeSubmission.initialResponse,
         messageId: responseId,

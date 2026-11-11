@@ -1,4 +1,5 @@
 import React, { memo, useRef, useEffect } from 'react';
+import { redactTaskCallbackIds } from 'librechat-data-provider';
 import { getRemarkPlugins, getRehypePlugins, getMarkdownComponents } from './markdownConfig';
 import { useMessagePartsHost } from '~/Providers/MessagePartsHostContext';
 import useSmoothStreaming from '~/hooks/Messages/useSmoothStreaming';
@@ -11,7 +12,11 @@ type TContentProps = {
   isLatestMessage: boolean;
 };
 
-const Markdown = memo(function Markdown({ content = '', isLatestMessage }: TContentProps) {
+const Markdown = memo(function Markdown({
+  content: rawContent = '',
+  isLatestMessage,
+}: TContentProps) {
+  const content = redactTaskCallbackIds(rawContent);
   const { useMessage, useLaTeXParsing } = useMessagePartsHost();
   const { isSubmitting = false } = useMessage();
   const smoothStreaming = useSmoothStreaming();

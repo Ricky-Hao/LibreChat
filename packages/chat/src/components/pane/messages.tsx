@@ -9,6 +9,7 @@ import MessagesView from '../messages/MessagesView';
 export type ChatScreenMessagesSlots = Pick<
   MessagesViewProps,
   | 'flatThread'
+  | 'scrollNavigation'
   | 'renderThread'
   | 'renderPendingTurn'
   | 'renderPendingSteers'

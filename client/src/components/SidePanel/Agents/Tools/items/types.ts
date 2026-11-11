@@ -22,6 +22,7 @@ export type BuiltinId =
    * in `selectors.ts` / `mutations.ts`.
    */
   | 'ask_user_question'
+  | 'create_task_callback'
   | `${AgentCapabilities.subagents}`
   | 'handoffs';
 

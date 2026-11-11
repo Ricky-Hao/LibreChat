@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Constants } from 'librechat-data-provider';
-import { cn, useLocalize } from '@librechat/client';
+import { cn, Button, useLocalize } from '@librechat/client';
 import type { RefObject, ReactNode, ReactElement } from 'react';
 import type { TMessage } from 'librechat-data-provider';
+import type { ScrollNavigation } from '../../react/messages/useMessageScrolling';
 import type { MessagesScrollButtonProps } from './ScrollButton';
 import type { MessagesThreadProps } from './thread/Thread';
 import {
@@ -24,6 +25,7 @@ export type { MessagesThreadProps, MessagesScrollButtonProps };
 export type MessagesViewProps = {
   messagesTree?: TMessage[] | null;
   messages?: TMessage[] | null;
+  scrollNavigation?: ScrollNavigation;
   /** The viewer's preference for the scroll-to-bottom control. */
   showScrollButton: boolean;
   /** The viewer's chat-width preference. */
@@ -73,6 +75,7 @@ const renderDefaultNav: NonNullable<MessagesViewProps['renderNav']> = ({
 export default function MessagesView({
   messagesTree,
   messages,
+  scrollNavigation,
   showScrollButton,
   maximizeChatSpace,
   flatThread = true,
@@ -107,6 +110,7 @@ export default function MessagesView({
     handleSmoothToRef,
     debouncedHandleScroll,
     handleNearBottomChange,
+    detachFromBottom,
   } = useMessageScrolling({
     messagesTree,
     conversationId,
@@ -114,6 +118,7 @@ export default function MessagesView({
     abortScroll,
     setAbortScroll,
     autoScroll,
+    navigation: scrollNavigation,
   });
 
   useScrollbarGutter(scrollableRef);
@@ -123,6 +128,14 @@ export default function MessagesView({
    *  unwindowed, then narrow it after the fact, visibly unmounting rows the user is already
    *  reading. An empty tree has no message to name its owner, so the route's key stands in. */
   const treeConversationId = messagesTree?.[0]?.conversationId ?? (messagesKey || conversationId);
+  const history = host.useHistory({
+    conversationId: treeConversationId ?? undefined,
+    messages,
+    messagesTree,
+    scrollableRef,
+    detachFromBottom,
+    targetMessageId: scrollNavigation?.targetMessageId,
+  });
 
   /** Direct measurement for the one trigger the observer cannot serve: after a messages
    *  revalidation commits, the end marker may sit where no threshold was crossed, so no
@@ -173,7 +186,7 @@ export default function MessagesView({
   );
 
   const mountWindow = useProgressiveRowMount({
-    tailDepth: latestMessageDepth,
+    tailDepth: scrollNavigation?.targetMessageId ? undefined : latestMessageDepth,
     anchorBottom: autoScroll || isSubmitting,
     isSubmitting,
     conversationId: treeConversationId,
@@ -191,6 +204,13 @@ export default function MessagesView({
      height. Composer panels that do float (an answer popover, a tool-approval review) are
      handled by the scroll control through `composerOverlayCountFamily`. */
   const overlayConversationId = conversationId ?? Constants.NEW_CONVO;
+  let historyLabel = localize('com_ui_history_older');
+  if (history.isError) {
+    historyLabel = localize('com_ui_history_retry');
+  } else if (history.isLoading) {
+    historyLabel = localize('com_ui_history_loading');
+  }
+
   return (
     <div className="relative flex-1 overflow-hidden overflow-y-auto">
       <div className="relative h-full">
@@ -199,12 +219,27 @@ export default function MessagesView({
         <div
           className={cn(
             'h-full w-full scrollbar-gutter-stable overflow-y-auto',
-            mountWindow != null && '[overflow-anchor:none]',
+            (mountWindow != null || history.isWindowed) && '[overflow-anchor:none]',
           )}
-          onScroll={debouncedHandleScroll}
+          onScroll={(event) => {
+            debouncedHandleScroll();
+            history.onScroll(event);
+          }}
           ref={scrollableRef}
         >
           <div ref={contentRef} className="flex flex-col pt-14 pb-9">
+            {history.hasOlder && (
+              <div className="flex justify-center p-2">
+                <Button
+                  variant="ghost"
+                  onClick={history.load}
+                  disabled={history.isLoading}
+                  aria-busy={history.isLoading}
+                >
+                  {historyLabel}
+                </Button>
+              </div>
+            )}
             {messagesTree === null || messagesTree?.length === 0 ? (
               <div
                 className={cn(

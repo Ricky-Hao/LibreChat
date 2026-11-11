@@ -10,6 +10,8 @@ import ArtifactRow from './ArtifactRow';
 interface ToolArtifactCardProps {
   attachment: TAttachment;
   artifact: Artifact;
+  /** The reader explicitly opened a lazy history card before its body arrived. */
+  openOnMount?: boolean;
 }
 
 /**
@@ -57,7 +59,8 @@ interface ToolArtifactCardProps {
  *     Click-to-open via `handleOpen` works for every bucket regardless
  *     of context.
  */
-const ToolArtifactCard = memo(({ attachment, artifact }: ToolArtifactCardProps) => {
+const ToolArtifactCard = memo((props: ToolArtifactCardProps) => {
+  const { attachment, artifact, openOnMount = false } = props;
   const claimKey = useId();
   const { useMessage, useArtifactPanel, useToolArtifactClaim } = useMessagePartsHost();
   const { isSubmitting, messageId } = useMessage();
@@ -115,6 +118,10 @@ const ToolArtifactCard = memo(({ attachment, artifact }: ToolArtifactCardProps) 
     }
     register(artifact);
   }, [artifact, existingEntry, isMyClaim, register]);
+
+  useEffect(() => {
+    if (openOnMount && isMyClaim) open(artifact.id);
+  }, [openOnMount, isMyClaim, artifact.id, open]);
 
   useEffect(() => {
     if (isCodeOnlyArtifact(artifact.type)) {

@@ -12,12 +12,14 @@ import type { ScheduleMCPOutcome, ScheduledMCPIdentity } from 'librechat-data-pr
 import type { RunStep, StandardGraph } from '@librechat/agents';
 import type { AgentEventDetachedTerminalEvidence } from '~/agents/triggers/types';
 import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
+import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
 import type { ActivityPhaseSnapshot } from '~/agents/activityPhases/runtime';
 import type { ReplayLimits, ReplayPublication } from '../internal/replay';
 import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
 import type { RecoveredSteerPayload } from '../SteerRecovery';
 import type { AuthoredSkillBinding } from '~/agents/authored';
 import type { MCPRuntimeRequestBody } from '~/mcp/types';
+import type { RetainedContent } from '../retained';
 
 /**
  * Detached Event Actor execution guarantee advertised by a generation store.
@@ -176,6 +178,10 @@ export interface SerializableJobData {
   /** Whether this generation is a manual context compaction; the abort paths
    * read it to stamp the stopped row with the compaction's identity. */
   compact?: boolean;
+  /** An edited generation is not resumable until its server-loaded prefix is captured. */
+  retainedContentPending?: boolean;
+  /** Server-loaded response prefix retained outside completion-local stream content. */
+  retainedContent?: RetainedContent;
   /** Exact normalized MCP placeholder identity for this turn. */
   mcpRequestBody?: MCPRuntimeRequestBody;
   /** Exact assistant-message fields authored by the user during this running job. */
@@ -491,6 +497,8 @@ export type JobMetadataPatch = Partial<
     | 'responseMessageId'
     | 'isRegenerate'
     | 'compact'
+    | 'retainedContentPending'
+    | 'retainedContent'
     | 'mcpRequestBody'
     | 'userSubmittedPaths'
     | 'userSubmittedMessageFieldPaths'
@@ -887,6 +895,9 @@ export interface AbortResult {
   content: Agents.MessageContentComplex[];
   /** Final event to send to client */
   finalEvent: unknown;
+  /** Provenance in the persisted content's coordinates, not completion-local job coordinates. */
+  userSubmittedPaths?: string[];
+  userSubmittedMessageFieldPaths?: UserSubmittedMessageFieldPath[];
   /** Concatenated text from all content parts for token counting fallback */
   text: string;
   /** Collected usage metadata from all models for token spending */
@@ -917,6 +928,7 @@ export function isStopConfirmed(result: AbortResult | null | undefined): boolean
 export interface ResumeState {
   runSteps: Agents.RunStep[];
   aggregatedContent: Agents.MessageContentComplex[];
+  retainedContent?: Agents.RetainedContent;
   userMessage?: SerializableJobData['userMessage'];
   responseMessageId?: string;
   conversationId?: string;
@@ -1053,6 +1065,7 @@ export interface IJobStore {
     streamId: string,
     contentParts: Agents.MessageContentComplex[],
     expectedCreatedAt?: number,
+    subagentContent?: SubagentContentBuffer,
   ): void;
   getContentParts(
     streamId: string,
@@ -1368,6 +1381,7 @@ export interface IJobStoreV2 extends IJobStore {
     streamId: string,
     contentParts: Agents.MessageContentComplex[],
     expectedCreatedAt?: number,
+    subagentContent?: SubagentContentBuffer,
   ): void;
 
   /**

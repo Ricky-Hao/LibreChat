@@ -26,6 +26,7 @@ import type {
   ScheduleProviderOwner,
 } from '~/stream/interfaces/IJobStore';
 import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
+import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
 import type { RecoveredSteerPayload } from '~/stream/SteerRecovery';
 import {
   JobStatusTransitionDeadlineError,
@@ -46,6 +47,7 @@ import {
   RecoveredSteerPayloadMismatchError,
 } from '~/stream/SteerRecovery';
 import { retainedScheduleReceipt } from '~/stream/internal/scheduleReceipts';
+import { snapshotSubagentContent } from '~/agents/retainedSubagentContent';
 import { createCheckpointNamespace } from '~/stream/checkpoints';
 import { retainScheduleMCPFailure } from '../scheduleFailure';
 import { toPendingSteer } from '~/stream/SteeringLifecycle';
@@ -135,6 +137,7 @@ function isValidGenerationProtocolMarker(value: unknown): boolean {
  */
 interface ContentState {
   contentParts: Agents.MessageContentComplex[];
+  subagentContent?: SubagentContentBuffer;
   graphRef: WeakRef<StandardGraph> | null;
   collectedUsage: UsageMetadata[];
 }
@@ -1571,6 +1574,7 @@ export class InMemoryJobStore implements IJobStoreV2 {
     streamId: string,
     contentParts: Agents.MessageContentComplex[],
     expectedCreatedAt?: number,
+    subagentContent?: SubagentContentBuffer,
   ): void {
     if (expectedCreatedAt != null && this.jobs.get(streamId)?.createdAt !== expectedCreatedAt) {
       return;
@@ -1578,9 +1582,11 @@ export class InMemoryJobStore implements IJobStoreV2 {
     const existing = this.contentState.get(streamId);
     if (existing) {
       existing.contentParts = contentParts;
+      existing.subagentContent = subagentContent;
     } else {
       this.contentState.set(streamId, {
         contentParts,
+        subagentContent,
         graphRef: null,
         collectedUsage: [],
       });
@@ -1642,7 +1648,7 @@ export class InMemoryJobStore implements IJobStoreV2 {
       return null;
     }
     return {
-      content: state.contentParts,
+      content: snapshotSubagentContent(state.contentParts, state.subagentContent),
       ...(_options?.durableOnly === true && {
         reconstructedEventCount: state.contentParts.length,
         durableEventCount: state.contentParts.length,

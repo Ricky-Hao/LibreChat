@@ -36,6 +36,8 @@ export interface PageVisibility {
   isVisible: () => boolean;
   /** Calls `listener` on every visibility change; returns the unsubscribe. */
   subscribe: (listener: () => void) => () => void;
+  /** Restored connectivity can re-arm a paused terminal recovery. */
+  subscribeOnline?: (listener: () => void) => () => void;
 }
 
 /** The document's own visibility. */
@@ -44,6 +46,10 @@ export const documentVisibility: PageVisibility = {
   subscribe: (listener) => {
     document.addEventListener('visibilitychange', listener);
     return () => document.removeEventListener('visibilitychange', listener);
+  },
+  subscribeOnline: (listener) => {
+    window.addEventListener('online', listener);
+    return () => window.removeEventListener('online', listener);
   },
 };
 
@@ -97,6 +103,8 @@ export interface SubscriptionHost {
   fetchStatus: FetchStreamStatus;
   /** Attaches a fresh subscription to `target`; how a subscription re-attaches itself. */
   subscribe: (target: SubscriptionTarget) => void;
+  /** Read at retry time so policy changes also apply to existing attachments. */
+  terminalRecoveryMaxRetries?: () => number;
 }
 
 /** How steers the run never injected are turned into queued follow-ups. */
@@ -334,12 +342,6 @@ export interface ResumableParts {
     messages: TMessage[],
     event: TActivityLabelEvent,
     fallbackMessageIds?: readonly (string | null | undefined)[],
-  ) => number;
-  /** Shifts a phase label's end boundary past an edit's retained prefix. */
-  offsetActivityPhaseBoundary: (
-    endIndex: number,
-    prefixLength: number,
-    foldedFirstPart: boolean,
   ) => number;
   applyReasoningLabel: (message: TMessage, event: TReasoningLabelEvent) => TMessage;
   findReasoningLabelTarget: (messages: TMessage[], event: TReasoningLabelEvent) => number;

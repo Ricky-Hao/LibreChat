@@ -15,6 +15,7 @@ import { settleStart } from './settled';
  * (navigation must not abort the generation) and drop the pending re-attach.
  */
 export function releaseSubmission(run: ResumableRun, host: ResumableHost): void {
+  run.terminalRecoveryAttempt = 0;
   host.logger.log('ResumableSSE', 'No submission, cleaning up');
   // Clear reconnect timeout if submission is cleared
   run.clearReconnectTimeout();

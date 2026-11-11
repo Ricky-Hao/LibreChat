@@ -132,6 +132,7 @@ export { default as useTimeTick } from './react/tick';
 export { default as useGenerationsByLatest } from './react/messages/generations';
 export type { Generations, TUseGenerations } from './react/messages/generations';
 export { default as useConversationSeen } from './react/messages/useConversationSeen';
+export type { ScrollNavigation } from './react/messages/useMessageScrolling';
 export {
   reconcileMessageContentLayout,
   getRenderedContentMaxScrollTop,
@@ -154,6 +155,7 @@ export type {
   ForkPreferences,
   ForkConversation,
   ActivitySlotProps,
+  MessagesHistory,
   ReportNearBottom,
   SeenReply,
   ReplyProofSource,

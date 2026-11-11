@@ -23,6 +23,7 @@ import type {
 } from '@librechat/chat';
 import type { EventHandlerParams } from '@librechat/chat/react';
 import { clearComposerDrafts, resolveRunEndTarget } from '~/utils';
+import { replaceBrowserUrl } from '~/utils/overlays';
 import { activeRunFamily } from './atoms';
 
 /**
@@ -47,11 +48,7 @@ const replaceNewConversationUrl = (conversationId: string) => {
     return;
   }
 
-  window.history.replaceState(
-    window.history.state,
-    '',
-    `/c/${conversationId}${window.location.search}`,
-  );
+  replaceBrowserUrl(`/c/${conversationId}${window.location.search}`);
 };
 
 /**

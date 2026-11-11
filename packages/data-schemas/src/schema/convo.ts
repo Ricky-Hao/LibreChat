@@ -171,6 +171,11 @@ const convoSchema: Schema<IConversation> = new Schema(
             },
             tokenCount: { type: Number, min: 0, required: true },
             version: { type: Number, min: 1 },
+            coverage: {
+              type: { retainedFromMessageId: { type: String, required: true } },
+              _id: false,
+              default: undefined,
+            },
           },
           _id: false,
           default: undefined,

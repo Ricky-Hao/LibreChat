@@ -1,4 +1,9 @@
-import { Constants, ContentTypes, tMessageSchema } from 'librechat-data-provider';
+import {
+  Constants,
+  ContentTypes,
+  tMessageSchema,
+  mergeEditedMessageContent,
+} from 'librechat-data-provider';
 import type {
   Agents,
   TMessage,
@@ -115,13 +120,20 @@ export const buildResumeEventSubmission = (
     currentSubmission.initialResponse?.messageId ??
     `${userMessage.messageId}_`;
 
+  const resumeContent = restoreSummaryState(resumeState);
+  const retainedContent = resumeState.retainedContent;
+  const mergedResumeContent = retainedContent
+    ? mergeEditedMessageContent(retainedContent.parts, resumeContent ?? [], retainedContent.type)
+    : undefined;
+
   const initialResponse = {
     ...(currentSubmission.initialResponse as TMessage),
     messageId: responseMessageId,
     parentMessageId: userMessage.messageId,
     conversationId,
     content:
-      restoreSummaryState(resumeState) ??
+      mergedResumeContent?.content ??
+      resumeContent ??
       (currentSubmission.initialResponse as TMessage | undefined)?.content,
     sender: resumeState.sender ?? currentSubmission.initialResponse?.sender,
     iconURL: preferDefinedString(currentSubmission.initialResponse?.iconURL, resumeState.iconURL),
@@ -140,6 +152,14 @@ export const buildResumeEventSubmission = (
     /** Carried so every consumer of the resumed submission (the merges below,
      *  the abort-error write) reads the same answer this resolved. */
     ...(anchoredUserMessage && { compact: true }),
+    ...(retainedContent && {
+      editPrefixLength: retainedContent.parts.length,
+      editPrefixType: retainedContent.type,
+      editPrefixFirstPartFolded: resumeState.aggregatedContent?.length
+        ? mergedResumeContent?.firstPartMerged
+        : undefined,
+      editPrefixCleared: false,
+    }),
   } as EventSubmission;
 };
 
@@ -219,15 +239,19 @@ export function buildSubmissionFromResumeState(
           isCreatedByUser: true,
         } as TMessage)));
 
-  // ALWAYS use aggregatedContent from resumeState - it has the latest content from the running job.
-  // DB content may be stale (saved at disconnect, but generation continued).
+  const resumeContent = restoreSummaryState(resumeState);
+  const retainedContent = resumeState.retainedContent;
+  const mergedResumeContent = retainedContent
+    ? mergeEditedMessageContent(retainedContent.parts, resumeContent ?? [], retainedContent.type)
+    : undefined;
+  // Rebuild the full answer from the captured prefix and generation-local output.
   let initialResponse: TMessage = {
     messageId: existingResponseMessage?.messageId ?? responseMessageId,
     parentMessageId: existingResponseMessage?.parentMessageId ?? userMessage.messageId,
     conversationId,
     text: '',
     // aggregatedContent is authoritative - it reflects actual job state
-    content: restoreSummaryState(resumeState) ?? [],
+    content: (mergedResumeContent?.content as TMessage['content']) ?? resumeContent ?? [],
     isCreatedByUser: false,
     role: 'assistant',
     sender: responseMetadataMessage?.sender ?? resumeState.sender,
@@ -266,6 +290,13 @@ export function buildSubmissionFromResumeState(
     ...(regenerateMessages && { regenerateMessages }),
     isTemporary,
     endpointOption: {},
+    ...(retainedContent && {
+      editPrefixLength: retainedContent.parts.length,
+      editPrefixType: retainedContent.type,
+      editPrefixFirstPartFolded: resumeState.aggregatedContent?.length
+        ? mergedResumeContent?.firstPartMerged
+        : undefined,
+    }),
     // Signal to useResumableSSE to subscribe to existing stream instead of starting new
     resumeStreamId: streamId,
     ...(generationCreatedAt != null && { resumeGenerationCreatedAt: generationCreatedAt }),

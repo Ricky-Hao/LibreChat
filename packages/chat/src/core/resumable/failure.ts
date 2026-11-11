@@ -2,13 +2,13 @@ import { ErrorTypes, ViolationTypes } from 'librechat-data-provider';
 import type { ChatEvent, ChatErrorData } from 'librechat-data-provider';
 import type { TerminalContext } from './terminal';
 import {
-  handoffToReplacement,
   authorizeTerminalTeardown,
   clearPendingApprovalForTerminal,
   clearAttachedGenerationCreatedAt,
 } from './terminal';
 import { GENERATION_PROTOCOL_VERSION, supportsGenerationProtocolV2 } from '../protocol';
 import { MAX_RETRIES, getReconnectDelay, getRecoverySteerId } from './start';
+import { reconcileGenerationLifecycle } from './reconcile';
 import { settleAfterRetryCeiling } from './ceiling';
 import { recoverMissingStream } from './missing';
 
@@ -153,14 +153,9 @@ export async function handleTransportFailure(
 
   host.pane.refreshBalance();
 
-  if (responseCode === 409) {
-    const handedOff = await handoffToReplacement(ctx, sub.conversationId());
-    if (!sub.isCurrent()) {
-      return;
-    }
-    if (handedOff) {
-      return;
-    }
+  if (responseCode === 409 && sub.generationProtocolVersion === GENERATION_PROTOCOL_VERSION) {
+    await reconcileGenerationLifecycle(ctx, { reconcileReason: 'generation_replaced' });
+    return;
   }
 
   // 404 → job completed & was cleaned up; messages are persisted in DB.

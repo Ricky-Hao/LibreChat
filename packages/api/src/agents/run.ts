@@ -123,6 +123,7 @@ import { reportSubagentResolutionFailure } from '~/agents/failures/subagent';
 import { createScheduledMCPRunPolicy } from '~/schedules/authorization/run';
 import { CREATE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME } from '~/agents/tools';
 import { buildAgentInitialToolSessions } from '~/agents/codeFilesSession';
+import { createSubagentResolutionFailureHandler } from './initialization';
 import { getDirectDispatcher, getProxyDispatcher } from '~/utils/proxy';
 import { getAzureCredentials, constructAzureURL } from '~/utils/azure';
 import { buildEffectiveToolApprovalPolicy } from '~/agents/hitl/allow';
@@ -3074,6 +3075,9 @@ export async function createRun({
         }
       : customHandlers;
 
+  const classifySubagentFailure = createSubagentResolutionFailureHandler((message, metadata) =>
+    logger.warn(message, metadata),
+  );
   const runConfig = {
     runId: resolvedRunId,
     graphConfig,
@@ -3087,7 +3091,24 @@ export async function createRun({
     subagentUsageSink,
     subagentTasks: activeSubagentTasks,
     // Without it a subagent that cannot start logs nothing beyond the SDK's fixed `cause`.
-    onSubagentResolutionFailure: reportSubagentResolutionFailure,
+    onSubagentResolutionFailure: (
+      detail: Parameters<typeof reportSubagentResolutionFailure>[0],
+      error: unknown,
+    ) => {
+      const cause = classifySubagentFailure(detail, error);
+      // Correlation identifiers are already recorded by the bounded metadata handler above.
+      reportSubagentResolutionFailure(
+        {
+          ...detail,
+          subagentType: 'selected',
+          parentRunId: undefined,
+          childRunId: undefined,
+          taskId: undefined,
+        },
+        error,
+      );
+      return cause;
+    },
     ...(runFilesActive &&
       runFiles != null && {
         subagentContext: { prepare: runFiles.prepare, complete: runFiles.complete },

@@ -4,12 +4,14 @@ import type { StreamStatusResponse } from './host';
 import type { TerminalContext } from './terminal';
 import {
   handoffToReplacement,
+  clearAttachedDrainAfterAbort,
+  retryFencedTerminalAttachment,
   clearAttachedGenerationCreatedAt,
   clearPendingApprovalForTerminal,
 } from './terminal';
 import { completedResponseMessageId, isInitialNewConversation } from './messages';
+import { getRecoverySteerId, toStartGenerationError } from './start';
 import { supportsGenerationProtocolV2 } from '../protocol';
-import { getRecoverySteerId } from './start';
 
 /** A synthesized lifecycle frame: the run ended without an ordinary final payload. */
 export type LifecycleFrame = Pick<
@@ -44,33 +46,34 @@ export async function reconcileGenerationLifecycle(
     return;
   }
 
-  if (event.reconcileReason === 'generation_replaced') {
-    const handedOff = await handoffToReplacement(ctx, reconciliationConvoId);
+  run.reconnectAttempt = Math.max(run.reconnectAttempt, 1);
+  sub.close();
+  // The terminal status is the persistence barrier; history read before it can be stale.
+  let status: StreamStatusResponse;
+  try {
+    status = await host.fetchStatus(reconciliationConvoId);
     if (!sub.isCurrent()) {
       return;
     }
-    if (handedOff) {
+    if (await handoffToReplacement(ctx, reconciliationConvoId, status)) {
       return;
     }
-    // Replacement visibility can lag its notification by a round trip.
-    // Retry the stale epoch; the fenced HTTP endpoint will return the
-    // dedicated replacement response as soon as the new job is visible.
-    run.reconnectAttempt = Math.max(run.reconnectAttempt, 1);
-    sub.close();
-    sub.scheduleReattach(250);
+    if (!supportsGenerationProtocolV2(status) || status.active !== false) {
+      retryFencedTerminalAttachment(ctx, 'synthesized status is not terminal');
+      return;
+    }
+  } catch {
+    retryFencedTerminalAttachment(ctx, 'synthesized terminal status unavailable');
+    return;
+  }
+  if (!sub.isCurrent()) {
     return;
   }
 
-  run.reconnectAttempt = Math.max(run.reconnectAttempt, 1);
-  sub.close();
   host.events.clearStepMaps();
   let persistedMessages: TMessage[] | undefined;
   try {
-    /** Force a fetch through the already-registered messages query and
-     *  use its returned value. Merely awaiting invalidateQueries and
-     *  reading the cache can mistake stale pre-run history for a
-     *  successful reconciliation because React Query normally swallows
-     *  refetch errors. */
+    // Fetch persistence directly; a cache-only query may have no fetching observer.
     await host.cache.invalidateMessages(reconciliationConvoId, 'none');
     if (!sub.isCurrent()) {
       return;
@@ -81,6 +84,8 @@ export async function reconcileGenerationLifecycle(
     }
     if (Array.isArray(fetched)) {
       persistedMessages = fetched;
+      host.messages.set(fetched);
+      run.terminalRecoveryAttempt = 0;
     }
   } catch (error) {
     if (!sub.isCurrent()) {
@@ -90,6 +95,10 @@ export async function reconcileGenerationLifecycle(
       conversationId: reconciliationConvoId,
       error,
     });
+    if (toStartGenerationError(error)?.response?.status !== 404) {
+      retryFencedTerminalAttachment(ctx, 'terminal history unavailable');
+      return;
+    }
   }
   try {
     await host.cache.refreshConversation(reconciliationConvoId);
@@ -112,51 +121,6 @@ export async function reconcileGenerationLifecycle(
       conversationId: reconciliationConvoId,
       error,
     });
-  }
-
-  let status: StreamStatusResponse | undefined;
-  try {
-    status = await host.fetchStatus(reconciliationConvoId);
-    if (!sub.isCurrent()) {
-      return;
-    }
-  } catch (error) {
-    if (!sub.isCurrent()) {
-      return;
-    }
-    host.logger.warn('ResumableSSE', 'Could not inspect synthesized terminal status', {
-      conversationId: reconciliationConvoId,
-      error,
-    });
-  }
-  if (status != null && !supportsGenerationProtocolV2(status)) {
-    /** A v2 control frame cannot be reconciled with a legacy status
-     * snapshot (for example during a rolling deploy). Preserve the
-     * attachment and retry the exact fenced generation. */
-    sub.scheduleReattach(250);
-    return;
-  }
-  if (
-    status?.active === true &&
-    status.createdAt != null &&
-    (generationCreatedAt == null || status.createdAt !== generationCreatedAt)
-  ) {
-    const handedOff = await handoffToReplacement(ctx, reconciliationConvoId, status);
-    if (!sub.isCurrent()) {
-      return;
-    }
-    if (handedOff) {
-      return;
-    }
-  }
-  if (
-    status?.active === true &&
-    (generationCreatedAt == null || status.createdAt === generationCreatedAt)
-  ) {
-    // Durable state still calls this exact epoch active. Prefer another
-    // fenced resume over terminalizing on a racing synthesized frame.
-    sub.scheduleReattach(250);
-    return;
   }
 
   const authoritativeValues = [
@@ -200,15 +164,12 @@ export async function reconcileGenerationLifecycle(
   });
   host.pane.setIsSubmitting(false);
   host.pane.setShowStopButton(false);
-  if (event.reconcileReason === 'abort_persistence_failed') {
+  if (persistedMessages == null || event.reconcileReason === 'abort_persistence_failed') {
     /** Interrupt & send arms an override that drains even an `aborted`
      * run. This terminal frame explicitly says durable persistence is
      * unknown, so consume that override before publishing runEnd; the
      * queued words remain available for a deliberate retry. */
-    host.pane.clearDrainAfterAbort(
-      sub.submission.conversation?.conversationId || String(Constants.NEW_CONVO),
-      generationCreatedAt,
-    );
+    clearAttachedDrainAfterAbort(ctx, reconciliationConvoId);
   }
   let reconciliationOutcome: 'completed' | 'aborted' | 'error' = 'aborted';
   if (event.terminalStatus === 'complete') {

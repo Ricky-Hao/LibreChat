@@ -25,6 +25,7 @@ import { buildToolClassification } from './classification';
 import { getToolDefinition } from './registry/definitions';
 import { toolkitExpansion } from './toolkits/mapping';
 import { isMCPAllPlaceholder } from '~/mcp/utils';
+import { TASK_CALLBACK_TOOL } from '~/agents/callbackDefinition';
 
 export interface MCPServerTool {
   function?: {
@@ -405,6 +406,10 @@ export async function loadToolDefinitions(
       getToolApprovalIdentity(def),
     ),
   ) as unknown as GenericTool[];
+  // Classification must see this binding before deciding whether to add the PTC runner.
+  if (builtInToolDefs.some((definition) => definition.name === TASK_CALLBACK_TOOL)) {
+    loadedTools.push({ name: TASK_CALLBACK_TOOL } as GenericTool);
+  }
 
   const classificationResult = await buildToolClassification({
     userId,

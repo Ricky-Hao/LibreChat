@@ -2,6 +2,51 @@ import { RedisJobStore } from '../implementations/RedisJobStore';
 
 /** Exercise the actual reconstruction method against a durable chunk snapshot, not a live host cache. */
 describe('RedisJobStore tool timing reconstruction', () => {
+  it('recovers provider phases and failed summary status from durable events', async () => {
+    const chunks = [
+      {
+        event: 'on_run_step',
+        data: {
+          id: 'text',
+          index: 0,
+          stepDetails: {
+            type: 'message_creation',
+            message_creation: { message_id: 'text', phase: 'final_answer' },
+          },
+        },
+      },
+      {
+        event: 'on_message_delta',
+        data: { id: 'text', delta: { content: [{ type: 'text', text: 'answer' }] } },
+      },
+      {
+        event: 'on_run_step',
+        data: {
+          id: 'summary',
+          index: 1,
+          stepDetails: { type: 'message_creation', message_creation: { message_id: 'summary' } },
+          summary: { type: 'summary', content: [] },
+        },
+      },
+      {
+        event: 'on_summarize_delta',
+        data: {
+          id: 'summary',
+          delta: { summary: { type: 'summary', content: [{ type: 'text', text: 'partial' }] } },
+        },
+      },
+      { event: 'on_summarize_complete', data: { id: 'summary', error: 'failed' } },
+    ];
+    const store = Object.create(RedisJobStore.prototype) as RedisJobStore;
+    Object.defineProperty(store, 'getChunkSnapshot', {
+      value: async () => ({ chunks, durableEventCount: chunks.length }),
+    });
+    const result = await store.getContentParts('phase-run', undefined, { durableOnly: true });
+    expect(result?.content).toEqual([
+      expect.objectContaining({ type: 'text', text: 'answer', phase: 'final_answer' }),
+      expect.objectContaining({ type: 'summary', outcome: 'failed', failed: true, content: [] }),
+    ]);
+  });
   it('restores preparation, SDK handoff, result time, and the upstream close stamp', async () => {
     const chunks = [
       {

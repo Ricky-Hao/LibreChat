@@ -8,10 +8,12 @@ export type {
 } from './subagentContent';
 import type { ToolApprovalGrantStorage } from 'librechat-data-provider';
 import type { ScheduleMCPConsentStorage } from './scheduleConsent';
+import type { TaskCallbackMethods } from './taskCallback';
 import type { ClearFileCodeEnvRefsParams } from '~/types/file';
 import type { FileStorageMethods } from './fileStorage';
 import { createToolApprovalGrantMethods } from './toolApprovalGrant';
 import { createScheduleMCPConsentStorage } from './scheduleConsent';
+import { createTaskCallbackMethods } from './taskCallback';
 export { createScheduleMCPConsentStorage } from './scheduleConsent';
 export type { ScheduleMCPConsentStorage, ScheduleConsentSnapshot } from './scheduleConsent';
 import type {
@@ -25,6 +27,10 @@ import type {
   ProjectFilesOptions,
 } from './file';
 import type { RoleMethods, RoleDeps } from './role';
+import { createHistoryMethods } from './history';
+import type { HistoryMethods } from './history';
+export { createHistoryMethods } from './history';
+export type { HistoryMethods, HistoryScope } from './history';
 import {
   createOpenIDRefreshFlightMethods,
   type OpenIDRefreshFlightMethods,
@@ -311,6 +317,7 @@ export type AllMethods = SubagentContentMethods &
   ConversationTagMethods &
   ConversationImportMethods &
   MessageMethods &
+  HistoryMethods &
   ConversationMethods &
   ChatProjectMethods &
   TxMethods &
@@ -322,6 +329,7 @@ export type AllMethods = SubagentContentMethods &
   SkillLifecycleMethods &
   AgentTriggerDeliveryMethods &
   AgentQueuedTurnMethods &
+  TaskCallbackMethods &
   ScheduleMCPConsentStorage &
   ScheduleMethods &
   AgentMethods &
@@ -382,12 +390,15 @@ export function createMethods(
   });
 
   const agentQueuedTurnMethods = createAgentQueuedTurnMethods(mongoose);
+  const taskCallbackMethods = createTaskCallbackMethods(mongoose);
   const agentTriggerDeliveryMethods = createAgentTriggerDeliveryMethods(mongoose, {
     releaseBatchProjections: messageMethods.releaseBackgroundToolResultClaims,
-    purgeQueuedTurnsForUser: (user) =>
-      agentQueuedTurnMethods.deleteAllAgentQueuedTurnsForUser({
+    purgeQueuedTurnsForUser: async (user) => {
+      await taskCallbackMethods.deleteTaskCallbacks(user.toString());
+      await agentQueuedTurnMethods.deleteAllAgentQueuedTurnsForUser({
         user: typeof user === 'string' ? new mongoose.Types.ObjectId(user) : user,
-      }),
+      });
+    },
   });
 
   const conversationMethods = createConversationMethods(mongoose, {
@@ -399,6 +410,10 @@ export function createMethods(
     prepareAgentTriggerConversationResultErasure:
       agentTriggerDeliveryMethods.prepareAgentTriggerConversationResultErasure,
     deleteAgentQueuedTurns: async (user, conversations) => {
+      await taskCallbackMethods.deleteTaskCallbacks(
+        user,
+        conversations.map((c) => c.conversationId),
+      );
       /** Queued-turn ownership is ObjectId-backed. Conversation methods also
        * support synthetic/non-ObjectId owners in embedded integrations and
        * tests; those owners cannot have queued-turn rows to retire. */
@@ -560,6 +575,7 @@ export function createMethods(
     ...createConversationTagMethods(mongoose),
     ...createConversationImportMethods(mongoose),
     ...messageMethods,
+    ...createHistoryMethods(mongoose),
     ...conversationMethods,
     ...createChatProjectMethods(mongoose),
     /* Tier 3 */
@@ -572,6 +588,7 @@ export function createMethods(
     ...createSkillLifecycleMethods(mongoose),
     ...agentTriggerDeliveryMethods,
     ...agentQueuedTurnMethods,
+    ...taskCallbackMethods,
     ...createScheduleMethods(mongoose),
     ...createScheduleMCPConsentStorage(mongoose),
     /* Tier 5 */

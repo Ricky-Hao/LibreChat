@@ -1,0 +1,26 @@
+{
+  "name": "@librechat/agents",
+  "version": "4.2.2-ricky.1",
+  "artifact": "vendor/librechat-agents-4.2.2-ricky.1.tgz",
+  "sha256": "57e3622cfeead811a46e6c34606d05dba016c6c873bc0185dd810b50de949368",
+  "source": {
+    "repository": "https://github.com/Ricky-Hao/agents",
+    "commit": "1559d8661120b77acd7a6189bf5ba24b82cf6f50",
+    "tree": "11535ca225857425e7253d428f8cbfcc4e450ccd",
+    "baseCommit": "7ea84fc4db98ec9cf373b6927a3cee9549661f28",
+    "dirty": false,
+    "buildState": "clean-commit",
+    "patch": "vendor/agents-4.2.2-ricky.1.patch",
+    "patchSha256": "6ffb7b907dcf961b5b68170146845aaa12a8e7edcbac521e2fb2d172c069d66a"
+  },
+  "build": {
+    "node": "24.22.1",
+    "npm": "11.13.0",
+    "commands": [
+      "npm ci --ignore-scripts --no-audit --no-fund",
+      "npm run build",
+      "npm pack --ignore-scripts --json --pack-destination <artifact-directory>"
+    ]
+  },
+  "consumers": ["api", "packages/api"]
+}

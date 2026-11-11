@@ -40,6 +40,8 @@ import {
   scheduledMCPResourceBindingSchema,
   scheduledMCPReadOnlyPolicySchema,
 } from './types/scheduleConsent';
+import { DEFAULT_HISTORY_WINDOW_SIZE, MAX_HISTORY_PAGE_SIZE } from './history';
+import { taskCallbackConfigSchema } from './taskCallbacks';
 import { partialWithoutDefaults } from './zod';
 
 export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_DEFAULT = 24 * 1024;
@@ -877,6 +879,7 @@ export enum AgentCapabilities {
   skills = 'skills',
   memory = 'memory',
   ask_user_question = 'ask_user_question',
+  task_callbacks = 'task_callbacks',
   tools = 'tools',
   /** @deprecated Retained for legacy configuration. Chain authoring is retired. */
   chain = 'chain',
@@ -2197,6 +2200,7 @@ export const agentsEndpointSchema = baseEndpointSchema
           sharedCacheSlots: z.number().int().min(64).max(1_000_000).optional().default(65_536),
         })
         .optional(),
+      taskCallbacks: taskCallbackConfigSchema.optional(),
       /** Conversational background-task delivery policy. Automatic completion wakeups are
        * enabled unless an administrator explicitly restores poll-only behavior. */
       backgroundTasks: z
@@ -3424,6 +3428,14 @@ export const interfaceSchema = z
     /** How many of the most recently left conversations keep that grace; older ones are
      *  released at the next conversation switch. */
     historyCacheRecent: z.number().int().min(0).max(20).default(DEFAULT_HISTORY_CACHE_RECENT),
+    /** Recent messages requested on open when the user's auto-scroll preference is enabled.
+     *  Zero keeps full-history loading. Older pages use the same size. */
+    historyWindowSize: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_HISTORY_PAGE_SIZE)
+      .default(DEFAULT_HISTORY_WINDOW_SIZE),
     /** Aggregate estimated payload budget for histories kept during the grace period.
      *  Oversized histories reload on return; observed, running and Assistants histories stay.
      *  Zero disables the inactive-history grace. This is not a browser heap limit. */
@@ -3524,6 +3536,7 @@ export const interfaceSchema = z
     composerRecentFiles: DEFAULT_COMPOSER_RECENT_FILES,
     historyCacheTtlMs: DEFAULT_HISTORY_CACHE_TTL_MS,
     historyCacheRecent: DEFAULT_HISTORY_CACHE_RECENT,
+    historyWindowSize: DEFAULT_HISTORY_WINDOW_SIZE,
     historyCacheMaxBytes: DEFAULT_HISTORY_CACHE_MAX_BYTES,
   });
 
@@ -3738,6 +3751,7 @@ export type TStartupConfig = {
    * is advertised. */
   codeWorkspaceInheritanceVersion?: typeof CODE_WORKSPACE_INHERITANCE_VERSION;
   interface?: TInterfaceConfig;
+  resumableStreams?: z.infer<typeof resumableStreamsSchema>;
   turnstile?: TTurnstileConfig;
   balance?: TBalanceConfig;
   transactions?: TTransactionsConfig;
@@ -4474,6 +4488,29 @@ export const toolCallPreviewsConfigSchema = z.object({
 
 export type TToolCallPreviewsConfig = z.infer<typeof toolCallPreviewsConfigSchema>;
 
+/** Serialized UTF-8 JSON ceilings for the additive, owner-only stored-message reader. */
+export const messageReadsConfigSchema = z.object({
+  responseBytes: z.number().int().min(4096).max(65_536).default(65_536),
+  bodyBytes: z.number().int().min(256).max(32_768).default(16_384),
+  pageSize: z.number().int().min(1).max(100).default(25),
+  tokenTtlSeconds: z.number().int().min(60).max(86_400).default(3600),
+});
+export type TMessageReadsConfig = z.infer<typeof messageReadsConfigSchema>;
+
+export const DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES = 5;
+
+export const resumableStreamsSchema = z
+  .object({
+    /** Automatic terminal history recovery retries, independent of transport reconnects. */
+    terminalRecoveryMaxRetries: z
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .default(DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES),
+  })
+  .prefault({});
+
 export const configSchema = z.object({
   version: z.string(),
   telemetry: telemetrySchema.optional(),
@@ -4487,6 +4524,7 @@ export const configSchema = z.object({
     .optional(),
   cache: z.boolean().default(true),
   projects: chatProjectsConfigSchema,
+  resumableStreams: resumableStreamsSchema,
   ocr: ocrSchema.optional(),
   webSearch: webSearchSchema.optional(),
   githubCompare: z
@@ -4527,6 +4565,7 @@ export const configSchema = z.object({
   toolCallPreviews: toolCallPreviewsConfigSchema.default(() =>
     toolCallPreviewsConfigSchema.parse({}),
   ),
+  messageReads: messageReadsConfigSchema.default(() => messageReadsConfigSchema.parse({})),
   includedTools: z.array(z.string()).optional(),
   filteredTools: z.array(z.string()).optional(),
   mcpServers: MCPServersSchema.optional(),

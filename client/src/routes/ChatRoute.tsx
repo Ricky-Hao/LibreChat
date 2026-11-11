@@ -73,6 +73,14 @@ export default function ChatRoute() {
   } else if (routeState.pending && conversation?.conversationId === conversationId) {
     setRouteState({ conversationId, pending: false });
   }
+  /** Start the visible conversation before startup's speech and model catalogs compete
+   *  for the browser's per-origin connections. Its messages cannot mount until it answers. */
+  const initialConvoQuery = useGetConvoIdQuery(conversationId, {
+    enabled:
+      isAuthenticated &&
+      conversationId !== Constants.NEW_CONVO &&
+      (!hasSetConversation.current || routeState.pending),
+  });
   useAppStartup({ startupConfig, user });
   const { newConversation } = useNewConvo();
   const { showToast } = useToastContext();
@@ -127,12 +135,6 @@ export default function ChatRoute() {
     );
   }, [projectScopeMissing, setSearchParams]);
 
-  const initialConvoQuery = useGetConvoIdQuery(conversationId, {
-    enabled:
-      isAuthenticated &&
-      conversationId !== Constants.NEW_CONVO &&
-      (!hasSetConversation.current || routeState.pending),
-  });
   const endpointsQuery = useGetEndpointsQuery({ enabled: isAuthenticated });
   // Capture stored intent once per route/account, before startup writes defaults.
   const storedSelection = useMemo(

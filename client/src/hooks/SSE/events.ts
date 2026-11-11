@@ -82,13 +82,16 @@ export default function useResumableEvents({
    */
   const stepHandler = useCallback(
     (...[event, submission]: Parameters<typeof rawStepHandler>) => {
-      const eventSubmission = run.editPrefixCleared
-        ? ({ ...submission, editPrefixCleared: true } as EventSubmission)
-        : submission;
+      const eventSubmission =
+        run.editPrefixCleared || run.editPrefixFirstPartFolded != null
+          ? {
+              ...submission,
+              editPrefixCleared: run.editPrefixCleared,
+              editPrefixFirstPartFolded: run.editPrefixFirstPartFolded,
+            }
+          : submission;
       rawStepHandler(event, eventSubmission);
-      if (eventSubmission.editPrefixFirstPartFolded === true) {
-        run.editPrefixFirstPartFolded = true;
-      }
+      run.editPrefixFirstPartFolded = eventSubmission.editPrefixFirstPartFolded;
     },
     [rawStepHandler, run],
   );

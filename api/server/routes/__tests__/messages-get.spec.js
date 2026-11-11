@@ -51,6 +51,7 @@ jest.mock('@librechat/api', () => {
   };
 
   return {
+    ...jest.requireActual('../../../../packages/api/src/messages/history'),
     prepareToolCallPreviews: jest.fn(() => (messages) => Promise.resolve(messages)),
     createToolCallPartHandler: jest.fn(() => (_req, res) => res.status(404).end()),
     createSubagentAttachmentCallsHandler: jest.fn(() => (_req, res) => res.status(404).end()),
@@ -161,6 +162,7 @@ jest.mock('~/models', () => ({
   getMessage: jest.fn(),
   saveMessage: jest.fn(),
   getMessages: jest.fn(),
+  getDisplayMessages: jest.fn(),
   getConvoOwnership: jest.fn(),
   updateMessage: jest.fn(),
   deleteMessages: jest.fn(),
@@ -180,14 +182,11 @@ jest.mock('~/server/middleware/requireJwtAuth', () => (req, res, next) => next()
 jest.mock('~/server/middleware', () => {
   const validateMessageReq = jest.fn((req, res, next) => next());
   const canReadActiveJobConversation = jest.fn().mockResolvedValue(false);
-  const prepareMessageRequestValidation = jest.fn((req, res, next) => {
-    req.messageRequestValidation = {
-      conversationId: 'convo-1',
-      shouldFetchMessages: true,
-      promise: Promise.resolve({ ok: true }),
-    };
-    next();
-  });
+  const createMessageRequestValidation = jest.fn(() => ({
+    conversationId: 'convo-1',
+    shouldFetchMessages: true,
+    promise: Promise.resolve({ ok: true }),
+  }));
   const sendValidationResponse = jest.fn((res, result) => {
     if (result.send) {
       return res.status(result.status).send(result.body);
@@ -200,7 +199,7 @@ jest.mock('~/server/middleware', () => {
     validateMessageReq,
     canReadActiveJobConversation,
     sendValidationResponse,
-    prepareMessageRequestValidation,
+    createMessageRequestValidation,
     configMiddleware: (req, res, next) => {
       req.config = {
         filters: {
@@ -233,6 +232,7 @@ describe('message route conversation ownership filters', () => {
     getConvoOwnership,
     getMessage,
     getMessages,
+    getDisplayMessages,
     getMessagesByCursor,
     getConvosQueried,
     searchMessages,
@@ -258,7 +258,7 @@ describe('message route conversation ownership filters', () => {
   } = require('~/server/services/Artifacts/update');
   const {
     canReadActiveJobConversation,
-    prepareMessageRequestValidation,
+    createMessageRequestValidation,
   } = require('~/server/middleware');
   let storedMessageFilterOptions;
 
@@ -280,14 +280,11 @@ describe('message route conversation ownership filters', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     canReadActiveJobConversation.mockResolvedValue(false);
-    prepareMessageRequestValidation.mockImplementation((req, res, next) => {
-      req.messageRequestValidation = {
-        conversationId: 'convo-1',
-        shouldFetchMessages: true,
-        promise: Promise.resolve({ ok: true }),
-      };
-      next();
-    });
+    createMessageRequestValidation.mockImplementation(() => ({
+      conversationId: 'convo-1',
+      shouldFetchMessages: true,
+      promise: Promise.resolve({ ok: true }),
+    }));
   });
 
   it('preflights opaque content from the direct stored-message request body', () => {
@@ -591,15 +588,22 @@ describe('message route conversation ownership filters', () => {
   });
 
   it('should filter conversation message reads by authenticated user', async () => {
-    getMessages.mockResolvedValue([{ messageId: 'message-1', conversationId: 'convo-1' }]);
+    getDisplayMessages.mockResolvedValue({
+      messages: [{ messageId: 'message-1', conversationId: 'convo-1' }],
+      start: null,
+      nextCursor: null,
+    });
 
     const response = await request(app).get('/api/messages/convo-1');
 
     expect(response.status).toBe(200);
-    expect(getMessages).toHaveBeenCalledWith(
-      { conversationId: 'convo-1', user: authenticatedUserId },
-      CLIENT_MESSAGE_SELECT,
-    );
+    expect(getDisplayMessages).toHaveBeenCalledWith({
+      conversationId: 'convo-1',
+      user: authenticatedUserId,
+      tenantId: undefined,
+      lazyAttachments: false,
+      page: undefined,
+    });
   });
 
   it.each([
@@ -817,22 +821,23 @@ describe('message route conversation ownership filters', () => {
     const validationPromise = new Promise((resolve) => {
       resolveValidation = resolve;
     });
-    prepareMessageRequestValidation.mockImplementationOnce((req, res, next) => {
-      req.messageRequestValidation = {
-        conversationId: 'convo-1',
-        shouldFetchMessages: true,
-        promise: validationPromise,
-      };
-      next();
-    });
+    createMessageRequestValidation.mockImplementationOnce(() => ({
+      conversationId: 'convo-1',
+      shouldFetchMessages: true,
+      promise: validationPromise,
+    }));
     let resolveMessagesStarted;
     const messagesStartedPromise = new Promise((resolve) => {
       resolveMessagesStarted = resolve;
     });
-    getMessages.mockImplementation(() => {
+    getDisplayMessages.mockImplementationOnce(() => {
       events.push('messages-started');
       resolveMessagesStarted();
-      return Promise.resolve([{ messageId: 'message-1', conversationId: 'convo-1' }]);
+      return Promise.resolve({
+        messages: [{ messageId: 'message-1', conversationId: 'convo-1' }],
+        start: null,
+        nextCursor: null,
+      });
     });
 
     const responsePromise = new Promise((resolve, reject) => {
@@ -850,36 +855,43 @@ describe('message route conversation ownership filters', () => {
     const response = await responsePromise;
 
     expect(eventsBeforeValidation).toEqual(['messages-started']);
-    expect(getMessages).toHaveBeenCalledWith(
-      { conversationId: 'convo-1', user: authenticatedUserId },
-      CLIENT_MESSAGE_SELECT,
-    );
+    expect(getDisplayMessages).toHaveBeenCalledWith({
+      conversationId: 'convo-1',
+      user: authenticatedUserId,
+      tenantId: undefined,
+      lazyAttachments: false,
+      page: undefined,
+    });
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual([{ messageId: 'message-1', conversationId: 'convo-1' }]);
   });
 
   it('should not return fetched messages when conversation validation fails', async () => {
-    prepareMessageRequestValidation.mockImplementationOnce((req, res, next) => {
-      req.messageRequestValidation = {
-        conversationId: 'convo-1',
-        shouldFetchMessages: true,
-        promise: Promise.resolve({
-          ok: false,
-          status: 404,
-          body: { error: 'Conversation not found' },
-        }),
-      };
-      next();
+    createMessageRequestValidation.mockImplementationOnce(() => ({
+      conversationId: 'convo-1',
+      shouldFetchMessages: true,
+      promise: Promise.resolve({
+        ok: false,
+        status: 404,
+        body: { error: 'Conversation not found' },
+      }),
+    }));
+    getDisplayMessages.mockResolvedValue({
+      messages: [{ messageId: 'secret-message', conversationId: 'convo-1' }],
+      start: null,
+      nextCursor: null,
     });
-    getMessages.mockResolvedValue([{ messageId: 'secret-message', conversationId: 'convo-1' }]);
 
     const response = await request(app).get('/api/messages/convo-1');
 
-    expect(getMessages).toHaveBeenCalledWith(
-      { conversationId: 'convo-1', user: authenticatedUserId },
-      CLIENT_MESSAGE_SELECT,
-    );
+    expect(getDisplayMessages).toHaveBeenCalledWith({
+      conversationId: 'convo-1',
+      user: authenticatedUserId,
+      tenantId: undefined,
+      lazyAttachments: false,
+      page: undefined,
+    });
     expect(response.status).toBe(404);
     expect(response.body).toEqual({ error: 'Conversation not found' });
   });

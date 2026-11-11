@@ -108,14 +108,7 @@ export default function useResumableCache(
           queryKey: [QueryKeys.messages, conversationId],
           refetchType: refetch,
         }),
-      fetchMessages: (conversationId, fallback) =>
-        queryClient.fetchQuery<TMessage[]>({
-          queryKey: [QueryKeys.messages, conversationId],
-          ...(fallback === true && {
-            // The first stream can finish before CREATED mounts the saved-chat query.
-            queryFn: () => fetchConversationMessages(conversationId),
-          }),
-        }),
+      fetchMessages: (conversationId) => fetchConversationMessages(conversationId, queryClient),
       refreshConversation: (conversationId) =>
         queryClient.invalidateQueries({
           queryKey: [QueryKeys.conversation, conversationId],

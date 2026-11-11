@@ -1,3 +1,6 @@
+import { z } from 'zod';
+import { executeTools, Constants } from '@librechat/agents';
+import { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
 import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
 import type { PtcToolCallEvent } from 'librechat-data-provider';
 import { instrumentPtcToolMap, summarizePtcArgs } from './ptc';
@@ -84,6 +87,38 @@ describe('instrumentPtcToolMap', () => {
     const events: PtcToolCallEvent[] = [];
     return { events, emit: (event: PtcToolCallEvent) => events.push(event) };
   };
+
+  it.each([Constants.PROGRAMMATIC_TOOL_CALLING, Constants.BASH_PROGRAMMATIC_TOOL_CALLING])(
+    'keeps UI intent separate while %s invokes the strict execution schema',
+    async (caller) => {
+      const { events, emit } = collect();
+      const received: Array<{ id: string; expanded: boolean }> = [];
+      const tool = new DynamicStructuredTool({
+        name: 'agents_get',
+        description: 'fixture',
+        schema: z.object({ id: z.string(), expanded: z.boolean() }).strict(),
+        func: async (input) => {
+          received.push(input);
+          return 'ok';
+        },
+      });
+      const toolMap = instrumentPtcToolMap({
+        toolMap: new Map([[tool.name, tool]]),
+        toolCallId: 'outer',
+        emit,
+      });
+      const input = Object.freeze({ intent: 'Inspecting agent', id: 'agent', expanded: false });
+      const results = await executeTools(
+        [{ id: 'inner', name: tool.name, input }],
+        toolMap,
+        caller,
+      );
+      expect(results[0].is_error).toBe(false);
+      expect(received).toEqual([{ id: 'agent', expanded: false }]);
+      expect(events[0].args).toContain('Inspecting agent');
+      expect(input.intent).toBe('Inspecting agent');
+    },
+  );
 
   it('emits a running event and a success event around an inner call', async () => {
     const { events, emit } = collect();

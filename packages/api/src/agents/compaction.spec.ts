@@ -15,6 +15,7 @@ import {
   dropUnusableSummaryParts,
   findCheckpointSummaryPart,
   getSummaryPartText,
+  getConversationHistory,
   markAbortedCompactionContent,
   markCompactionOutcome,
   persistFinalizedCompactionTurn,
@@ -263,6 +264,22 @@ describe('resolveFailedTurnContent', () => {
 });
 
 describe('resolveCheckpointMessage', () => {
+  it('rejects exact legacy stubs without rejecting summaries quoting them', () => {
+    const stub = '[Metadata summary: 2 messages (1 human, 1 ai)]\n[Tools used: lookup]';
+    expect(resolveCheckpointMessage({ summary: stub })).toBeNull();
+    expect(resolveCheckpointMessage({ summary: `The failure returned ${stub}` })).not.toBeNull();
+    expect(
+      resolveCheckpointMessage({
+        content: [
+          {
+            type: ContentTypes.SUMMARY,
+            content: [{ type: 'text', text: stub }],
+            boundary: { messageId: 'boundary', contentIndex: 0 },
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
   const summaryPart = {
     type: ContentTypes.SUMMARY,
     content: [{ type: ContentTypes.TEXT, text: 'Earlier context' }],
@@ -329,6 +346,137 @@ describe('resolveCheckpointMessage', () => {
     expect(
       resolveCheckpointMessage({ content: [{ type: ContentTypes.TEXT, text: 'x' }] }),
     ).toBeNull();
+  });
+});
+
+describe('getConversationHistory coverage checkpoints', () => {
+  const summary = {
+    type: ContentTypes.SUMMARY,
+    content: [{ type: ContentTypes.TEXT, text: 'Latest context' }],
+    boundary: { messageId: 'response', contentIndex: 1 },
+    coverage: { retainedFromMessageId: 'retained' },
+  };
+  const older = { messageId: 'older', parentMessageId: null, content: [] };
+  const retained = { messageId: 'retained', parentMessageId: 'older', content: [] };
+  const response = {
+    messageId: 'response',
+    parentMessageId: 'retained',
+    tokenCount: 90,
+    content: [
+      { type: ContentTypes.TEXT, text: 'Before the summary' },
+      summary,
+      { type: ContentTypes.TEXT, text: 'After the summary' },
+    ],
+  };
+  const newest = { messageId: 'newest', parentMessageId: 'response', content: [] };
+  const messages = [older, retained, response, newest];
+
+  it('keeps complete rows from the anchor, including content before the summary', () => {
+    const result = getConversationHistory({ messages, parentMessageId: 'newest', summary: true });
+    expect(result).toEqual([retained, response, newest]);
+    expect(result[1]).toBe(response);
+  });
+
+  it('accepts the summary row itself as the retained anchor', () => {
+    const sameRow = {
+      ...response,
+      content: [
+        response.content[0],
+        { ...summary, coverage: { retainedFromMessageId: 'response' } },
+      ],
+    };
+    expect(
+      getConversationHistory({
+        messages: [older, retained, sameRow],
+        parentMessageId: 'response',
+        summary: true,
+      }),
+    ).toEqual([sameRow]);
+  });
+
+  it.each([
+    undefined,
+    null,
+    {},
+    { retainedFromMessageId: 12 },
+    { retainedFromMessageId: ' ' },
+    { retainedFromMessageId: 'missing' },
+    { retainedFromMessageId: 'other-branch' },
+    { retainedFromMessageId: 'newest' },
+  ])('uses positional replay for unavailable or invalid coverage %j', (coverage) => {
+    const checkpoint = {
+      ...response,
+      content: [response.content[0], { ...summary, coverage }, response.content[2]],
+    };
+    const otherBranch = { messageId: 'other-branch', parentMessageId: 'older', content: [] };
+    expect(
+      getConversationHistory({
+        messages: [older, retained, checkpoint, otherBranch, newest],
+        parentMessageId: 'newest',
+        summary: true,
+      }),
+    ).toEqual([
+      { ...checkpoint, content: checkpoint.content.slice(1), tokenCount: undefined },
+      newest,
+    ]);
+  });
+
+  it('uses the last usable summary and passes through older checkpoints to its anchor', () => {
+    const oldCheckpoint = { ...retained, content: [{ ...summary, coverage: undefined }] };
+    const checkpoint = {
+      ...response,
+      content: [
+        { ...summary, coverage: { retainedFromMessageId: 'response' } },
+        { ...summary, coverage: { retainedFromMessageId: ' retained ' } },
+        { ...summary, failed: true, coverage: { retainedFromMessageId: 'older' } },
+      ],
+    };
+    expect(
+      getConversationHistory({
+        messages: [older, oldCheckpoint, checkpoint, newest],
+        parentMessageId: 'newest',
+        summary: true,
+      }),
+    ).toEqual([oldCheckpoint, checkpoint, newest]);
+  });
+
+  it.each([{ failed: true }, { summarizing: true }, { outcome: 'failed' }])(
+    'does not stop at an unsuccessful summary %j',
+    (flags) => {
+      const unsuccessful = { ...response, content: [{ ...summary, ...flags }] };
+      expect(
+        getConversationHistory({
+          messages: [older, retained, unsuccessful],
+          parentMessageId: 'response',
+          summary: true,
+        }),
+      ).toEqual([older, retained, unsuccessful]);
+    },
+  );
+
+  it('falls back without mapping discarded rows when the anchor cannot be reached through a cycle', () => {
+    const checkpoint = {
+      ...response,
+      content: [
+        response.content[0],
+        { ...summary, coverage: { retainedFromMessageId: 'missing' } },
+      ],
+    };
+    const cyclic = { ...retained, parentMessageId: 'response' };
+    const mapMethod = jest.fn((message: (typeof messages)[number]) => message.messageId);
+    expect(
+      getConversationHistory({
+        messages: [cyclic, checkpoint, newest],
+        parentMessageId: 'newest',
+        summary: true,
+        mapMethod,
+      }),
+    ).toEqual(['response', 'newest']);
+    expect(mapMethod.mock.calls.map(([message]) => message.messageId)).toEqual([
+      'newest',
+      'response',
+    ]);
+    expect(mapMethod.mock.calls[1][0].content).toEqual(checkpoint.content.slice(1));
   });
 });
 
@@ -955,6 +1103,14 @@ describe('getLatestEventActorSummary', () => {
       tokenCount: 9,
       version: AGENT_EVENT_ACTOR_SUMMARY_VERSION,
     });
+  });
+
+  it('keeps the SDK retained-history boundary on actor state', () => {
+    expect(
+      getLatestEventActorSummary([
+        part('Checkpoint', { coverage: { retainedFromMessageId: 'retained-user' } }),
+      ]),
+    ).toMatchObject({ coverage: { retainedFromMessageId: 'retained-user' } });
   });
 
   /** A later round that failed, is still running, or never recorded a boundary

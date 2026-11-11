@@ -37,6 +37,8 @@ export class ResumableRun {
    *  is registered at a time. */
   stopForegroundReattach: (() => void) | null = null;
   reconnectAttempt = 0;
+  /** A successful HTTP attachment does not prove that terminal history was recovered. */
+  terminalRecoveryAttempt = 0;
   reconnectTimeout: TimerHandle | null = null;
   /** The submission this pane serves; a subscription whose submission is no longer this one is
    *  stale. */
@@ -66,7 +68,7 @@ export class ResumableRun {
    * are absolute and `editPrefixLength` must no longer be applied, by run steps or labels.
    */
   editPrefixCleared = false;
-  editPrefixFirstPartFolded = false;
+  editPrefixFirstPartFolded: boolean | undefined;
   /** Generation the cleared-prefix state above belongs to, so it is dropped when a new
    *  generation starts rather than when a subscribe happens to be live. */
   prefixStateGenerationId: string | null = null;
@@ -115,13 +117,13 @@ export class ResumableRun {
    * previous one must not carry over. Keyed on the submission's `clientRequestId`, which is new
    * per edit attempt and stable across reconnects.
    */
-  bindPrefixState(generationId: string): void {
+  bindPrefixState(generationId: string, firstPartFolded?: boolean): void {
     if (this.prefixStateGenerationId === generationId) {
       return;
     }
     this.prefixStateGenerationId = generationId;
     this.editPrefixCleared = false;
-    this.editPrefixFirstPartFolded = false;
+    this.editPrefixFirstPartFolded = firstPartFolded;
   }
 
   /** Forgets a stream once its run has ended. */

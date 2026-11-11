@@ -8,6 +8,7 @@ const {
   isLangfuseFanoutEnabled,
   getBalanceConfig,
   getCloudFrontConfig,
+  getResumableStreamsConfig,
   getAppConfigOptionsFromUser,
   resolveBuildInfo,
   resolveTitleTiming,
@@ -322,6 +323,7 @@ router.get('/', async function (req, res) {
       socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
       projects: appConfig?.projects,
       interface: withSafePolicyLinks(appConfig?.interfaceConfig),
+      resumableStreams: getResumableStreamsConfig(appConfig),
       titleGenerationTiming: resolveTitleTiming({
         appConfig,
         endpoint: EModelEndpoint.agents,

@@ -461,7 +461,7 @@ test.describe('unseen replies', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as Window & { __notificationPermissionCalls: string[] })
+            (window as typeof window & { __notificationPermissionCalls: string[] })
               .__notificationPermissionCalls,
         ),
       )
@@ -476,7 +476,7 @@ test.describe('unseen replies', () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as Window & { __notificationPermissionCalls: string[] })
+            (window as typeof window & { __notificationPermissionCalls: string[] })
               .__notificationPermissionCalls,
         ),
       )
@@ -546,7 +546,7 @@ test.describe('unseen replies', () => {
         .poll(() =>
           page.evaluate(
             () =>
-              (window as Window & { __notificationPermissionCalls: string[] })
+              (window as typeof window & { __notificationPermissionCalls: string[] })
                 .__notificationPermissionCalls,
           ),
         )
@@ -575,18 +575,19 @@ test.describe('unseen replies', () => {
             response.request().method() === 'POST',
         );
         await sendMessageAndWaitForCompletion(second, `E2E_REPLY:withheld-${id.slice(0, 8)}`);
-        /* The reply tab acknowledges the reply it just rendered. Restoring the unread baseline
-         * before that write lands is overwritten by it, and the first tab then polls a
-         * conversation the server considers read, so its dot never appears. */
+        /* Let the sender acknowledge its rendered reply and leave the conversation before
+         * restoring unread state, so a late seen write cannot overwrite the fixture. */
         await acknowledged;
+        await second.goto(NEW_CHAT_PATH);
         const completed = await readConversation(id);
         if (completed?.lastResponseAt == null) throw new Error('Reply timestamp was not saved');
         completedReplyAt = new Date(completed.lastResponseAt);
-        await restoreUnreadBaseline(id, completedReplyAt, replyAt);
       } finally {
-        await second.evaluate(() => window.dispatchEvent(new Event('blur'))).catch(() => {});
         await second.close();
       }
+      await page.bringToFront();
+      await unfocus(page);
+      await restoreUnreadBaseline(id, completedReplyAt, replyAt);
       /* The reply tab may collapse the shared sidebar; observe the arrival before granting. */
       await openSidebar(page);
       await expect(row.locator('span[aria-hidden="true"].bg-status-info')).toBeVisible({
@@ -596,7 +597,7 @@ test.describe('unseen replies', () => {
         .poll(() =>
           page.evaluate(
             () =>
-              (window as Window & { __notificationConstructions: string[] })
+              (window as typeof window & { __notificationConstructions: string[] })
                 .__notificationConstructions,
           ),
         )
@@ -604,7 +605,7 @@ test.describe('unseen replies', () => {
 
       await page.evaluate(() => {
         (
-          window as Window & { __grantNotificationPermission: () => void }
+          window as typeof window & { __grantNotificationPermission: () => void }
         ).__grantNotificationPermission();
       });
       await restoreUnreadBaseline(id, completedReplyAt, replyAt);
@@ -614,7 +615,7 @@ test.describe('unseen replies', () => {
           page.evaluate(
             (conversationId) =>
               (
-                window as Window & { __notificationConstructions: string[] }
+                window as typeof window & { __notificationConstructions: string[] }
               ).__notificationConstructions.filter((tag) => tag === conversationId),
             id,
           ),

@@ -11,9 +11,18 @@ import type {
   TUpdateFeedbackRequest,
   TUpdateFeedbackResponse,
 } from 'librechat-data-provider';
-import type { Dispatch, ReactNode, MouseEvent, RefObject, SetStateAction } from 'react';
+import type { Dispatch, ReactNode, MouseEvent, RefObject, SetStateAction, UIEvent } from 'react';
 import type { WakeupDisplay } from '../../core/parts/wakeup';
 import type { TAskFunction } from '../../core';
+
+export type MessagesHistory = {
+  hasOlder: boolean;
+  isWindowed: boolean;
+  isLoading: boolean;
+  isError: boolean;
+  load: () => void;
+  onScroll: (event: UIEvent<HTMLDivElement>) => void;
+};
 
 /** What a row's text body renders from. */
 export type MessageBodySlotProps = {
@@ -185,6 +194,15 @@ export type MessageAudioProps = {
  * yet, by augmenting `@librechat/chat/react`.
  */
 export interface MessagesHost {
+  /** Pages older history and selects the branch containing a navigation target. */
+  useHistory: (options: {
+    conversationId: string | undefined;
+    messages: TMessage[] | null | undefined;
+    messagesTree: TMessage[] | null | undefined;
+    scrollableRef: RefObject<HTMLDivElement>;
+    detachFromBottom: () => void;
+    targetMessageId?: string;
+  }) => MessagesHistory;
   /** The viewer's clock preference as `hour12`; `undefined` follows the locale's convention. */
   useHour12: () => boolean | undefined;
   /** Renders the files attached to a user message, above its text. */
@@ -279,6 +297,14 @@ const noMessages = (): TMessage[] | undefined => undefined;
 /** The host rows read outside any provider before an app registers one: locale clock, no slots,
  *  no forking, no copying, no thread, no queued turn, no read-aloud, no read state. */
 const fallbackHost: MessagesHost = {
+  useHistory: () => ({
+    hasOlder: false,
+    isWindowed: false,
+    isLoading: false,
+    isError: false,
+    load: noop,
+    onScroll: noop,
+  }),
   useHour12: () => undefined,
   renderFiles: () => null,
   useForkPreferences: () => fallbackForkPreferences,

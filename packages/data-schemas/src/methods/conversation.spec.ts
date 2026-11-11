@@ -7005,7 +7005,12 @@ describe('Conversation Operations', () => {
       };
       const skillManifest = [{ id: 'skill-1', name: 'analysis', version: 3 }];
       const discoveredToolNames = ['deferred_lookup', 'deferred_write'];
-      const summary = { text: 'Earlier compacted context.', tokenCount: 12 };
+      const summary = {
+        text: 'Earlier compacted context.',
+        tokenCount: 12,
+        version: 1,
+        coverage: { retainedFromMessageId: 'retained-user' },
+      };
       const contextMeta = { calibrationRatio: 1.25, encoding: 'o200k_base' };
       const compactionSemanticIndex = {
         version: 1 as const,

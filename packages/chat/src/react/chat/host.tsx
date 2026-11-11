@@ -86,6 +86,11 @@ export type TurnServices = {
   getEphemeralAgent: (conversationId: string) => TEphemeralAgent | null;
   /** The stored user key expiry of the pane's endpoint, sent with non-agent endpoints. */
   getUserKey: () => string | undefined;
+  /** Cancels history refetching without reverting newer optimistic cache writes. */
+  cancelMessagesQuery: (conversationId: string) => void;
+  /** Loads a regenerate parent outside the current history window. Handles fetch errors in the UI
+   * and returns no parent after navigation away from the conversation. */
+  loadRegenerateParent: (messageId: string) => Promise<TMessage | undefined>;
   /** The project the route scopes a new chat to. */
   getRouteProjectId: () => string | null;
   /**

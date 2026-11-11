@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilState, useRecoilValue } from 'recoil';
+import { focusHistory, focusHistoryTree } from '@librechat/chat';
 import { EventSubagentActivityGroup } from '@librechat/chat/components';
 import { useUpdateFeedbackMutation } from 'librechat-data-provider/react-query';
 import {
@@ -35,6 +36,7 @@ import { PrivateText } from '~/components/Chat/Messages/PrivateText';
 import MessageAudio from '~/components/Chat/Messages/MessageAudio';
 import { useAssistantsMapContext } from './AssistantsMapContext';
 import MessageIcon from '~/components/Chat/Messages/MessageIcon';
+import useHistoryPaging from '~/hooks/Messages/useHistoryPaging';
 import Wakeup from '~/components/Chat/Messages/Content/Wakeup';
 import { useFileMapContext } from '~/Providers/FileMapContext';
 import Files from '~/components/Chat/Messages/Content/Files';
@@ -132,6 +134,26 @@ function AppMessageAudio(props: MessageAudioProps) {
   return <MessageAudio {...props} />;
 }
 
+const useHistory: MessagesHost['useHistory'] = ({
+  conversationId,
+  messages,
+  messagesTree,
+  scrollableRef,
+  detachFromBottom,
+  targetMessageId,
+}) => {
+  const history = useHistoryPaging(conversationId, messages, scrollableRef, detachFromBottom);
+  const focusedBoundary = useRef('');
+  const focusId = targetMessageId ?? history.focusId;
+  const boundary = `${conversationId}:${messages?.[0]?.messageId}:${targetMessageId ?? ''}`;
+  if (messages?.length && focusId && focusedBoundary.current !== boundary) {
+    focusedBoundary.current = boundary;
+    focusHistory(messages, focusId);
+    focusHistoryTree(messages, messagesTree ?? null);
+  }
+  return history;
+};
+
 /** What the message list reads from the app: the viewer's clock format and fork defaults, the
  *  fork request, the rich-text copy, its auto-scroll preference, screenshot and seen reporting, the thread's
  *  file map, and the row pieces that still live here: the message body, wake-up card, owner's text, step
@@ -142,6 +164,7 @@ export const appMessagesHost: MessagesHost = {
   renderFiles: (message) => <Files message={message} />,
   useForkPreferences: useAppForkPreferences,
   useForkConversation: useAppForkConversation,
+  useHistory,
   useMessageCopy: useAppMessageCopy,
   useGetMessages: useAppGetMessages,
   useHasPendingTurn: useAppHasPendingTurn,

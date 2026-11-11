@@ -6,6 +6,14 @@ import type { MessagesHost } from '@librechat/chat/react';
 /** A messages host for specs whose subject is not the rows: inert scrolling, no forking,
  *  copying or read-aloud, and rows that render nothing. */
 export const testMessagesHost: MessagesHost = {
+  useHistory: () => ({
+    hasOlder: false,
+    isWindowed: false,
+    isLoading: false,
+    isError: false,
+    load: () => undefined,
+    onScroll: () => undefined,
+  }),
   useHour12: () => undefined,
   renderFiles: () => null,
   useForkPreferences: () => ({

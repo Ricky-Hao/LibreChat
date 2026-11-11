@@ -148,7 +148,7 @@ describe('steps', () => {
         0,
       );
 
-      expect(result).toEqual({ message: response, updated: false, foldedEditPrefix: false });
+      expect(result).toEqual({ message: response, updated: false, foldedEditPrefix: undefined });
       expect(result.message).toBe(response);
     });
 
@@ -329,7 +329,14 @@ describe('steps', () => {
 
     it('folds the first continued text into the last prefix part and reports it', () => {
       const step = messageStep('step-text', 0);
-      const result = applyMessageDelta(createResponse(prefix), step, textDelta(step.id, '!'), 2);
+      const result = applyMessageDelta(
+        createResponse(prefix),
+        step,
+        textDelta(step.id, '!'),
+        2,
+        undefined,
+        ContentTypes.TEXT,
+      );
 
       expect(result.foldedEditPrefix).toBe(true);
       expect(result.message.content).toEqual([
@@ -339,9 +346,82 @@ describe('steps', () => {
     });
 
     it('does not fold across a phase boundary', () => {
-      expect(calculateContentIndex(0, 2, ContentTypes.TEXT, prefix, 'final_answer')).toBe(2);
-      expect(calculateContentIndex(0, 2, ContentTypes.TEXT, prefix)).toBe(1);
+      expect(
+        calculateContentIndex(
+          0,
+          2,
+          ContentTypes.TEXT,
+          prefix,
+          'final_answer',
+          undefined,
+          ContentTypes.TEXT,
+        ),
+      ).toBe(2);
+      expect(
+        calculateContentIndex(
+          0,
+          2,
+          ContentTypes.TEXT,
+          prefix,
+          undefined,
+          undefined,
+          ContentTypes.TEXT,
+        ),
+      ).toBe(1);
       expect(calculateContentIndex(0, 2, ContentTypes.TOOL_CALL, prefix)).toBe(2);
+    });
+
+    it.each([undefined, false, true])(
+      'keeps a %s fold decision consistent across multi-part and subsequent deltas',
+      (decision) => {
+        const step = messageStep('step-text', 0);
+        const offset = decision === true ? 1 : 2;
+        const first = applyMessageDelta(
+          createResponse(prefix),
+          step,
+          {
+            id: step.id,
+            delta: {
+              content: [
+                { type: ContentTypes.TEXT, text: 'a' },
+                { type: ContentTypes.TEXT, text: 'b' },
+              ],
+            },
+          },
+          offset,
+          decision,
+          ContentTypes.TEXT,
+        );
+        const folded = decision !== false;
+        const second = applyMessageDelta(
+          first.message,
+          step,
+          textDelta(step.id, 'c'),
+          folded ? 1 : 2,
+          first.foldedEditPrefix,
+          ContentTypes.TEXT,
+        );
+        expect(second.foldedEditPrefix).toBe(folded);
+        expect(second.message.content).toEqual(
+          folded
+            ? [prefix[0], { type: ContentTypes.TEXT, text: 'kept tailabc' }]
+            : [...prefix, { type: ContentTypes.TEXT, text: 'abc' }],
+        );
+      },
+    );
+
+    it('forbids folding when the edit type differs from the retained tail', () => {
+      const step = messageStep('step-text', 0);
+      const result = applyMessageDelta(
+        createResponse(prefix),
+        step,
+        textDelta(step.id, 'new'),
+        2,
+        undefined,
+        ContentTypes.THINK,
+      );
+      expect(result.foldedEditPrefix).toBe(false);
+      expect(result.message.content).toEqual([...prefix, { type: ContentTypes.TEXT, text: 'new' }]);
     });
 
     it('places later steps after the prefix', () => {

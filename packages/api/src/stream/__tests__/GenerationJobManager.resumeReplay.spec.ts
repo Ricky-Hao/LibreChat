@@ -1,10 +1,16 @@
-import { StepEvents } from 'librechat-data-provider';
+import { StepEvents, ContentTypes } from 'librechat-data-provider';
 import type { StandardGraph } from '@librechat/agents';
 import type { Agents } from 'librechat-data-provider';
+import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
+import type { AbortResult } from '../interfaces/IJobStore';
 import type { ServerSentEvent } from '~/types';
+import {
+  GenerationJobManagerClass,
+  TERMINAL_PUBLICATION_RECONNECT_ERROR,
+} from '~/stream/GenerationJobManager';
 import { InMemoryEventTransport } from '~/stream/implementations/InMemoryEventTransport';
 import { InMemoryJobStore } from '~/stream/implementations/InMemoryJobStore';
-import { GenerationJobManagerClass } from '~/stream/GenerationJobManager';
+import { collectSubagentContent } from '~/agents/retainedSubagentContent';
 import { createToolTimingTracker } from '~/agents/toolTiming';
 
 jest.spyOn(console, 'log').mockImplementation();
@@ -69,6 +75,40 @@ describe('GenerationJobManager resume replay events', () => {
     manager = undefined;
   });
 
+  test('same-instance reconnect includes a finished child before parent finalization', async () => {
+    manager = createInMemoryManager();
+    const job = await manager.createJob('child-reconnect', 'user-1', 'child-reconnect');
+    const content: Agents.MessageContentComplex[] = [
+      { type: ContentTypes.TOOL_CALL, tool_call: { id: 'call', name: 'subagent', args: '{}' } },
+    ];
+    const buffer: SubagentContentBuffer = new Map();
+    manager.setContentParts('child-reconnect', content, job.createdAt, buffer);
+    const base = {
+      runId: 'parent',
+      subagentRunId: 'child',
+      parentToolCallId: 'call',
+      subagentType: 'self',
+      subagentAgentId: 'child-agent',
+      timestamp: '',
+    };
+    collectSubagentContent(buffer, content, {
+      ...base,
+      phase: 'run_step',
+      data: { id: 'child-text', index: 0, stepDetails: { type: 'message_creation' } },
+    });
+    collectSubagentContent(buffer, content, {
+      ...base,
+      phase: 'message_delta',
+      data: { id: 'child-text', delta: { content: [{ type: 'text', text: 'Recovered work' }] } },
+    });
+    collectSubagentContent(buffer, content, { ...base, phase: 'stop' });
+    const state = await manager.getResumeState('child-reconnect', job.createdAt);
+    expect(state?.aggregatedContent).toMatchObject([
+      { tool_call: { subagent_content: [{ text: 'Recovered work', subagentStatus: 'stop' }] } },
+    ]);
+    expect(buffer.size).toBe(1);
+  });
+
   test('projects regeneration ownership into resume state', async () => {
     manager = createInMemoryManager();
     const streamId = `regenerate-resume-${Date.now()}`;
@@ -124,6 +164,167 @@ describe('GenerationJobManager resume replay events', () => {
       toolExecutionDurationMs: 60,
     });
   });
+
+  test('withholds an edited generation snapshot until its retained content is captured', async () => {
+    manager = createInMemoryManager();
+    const streamId = `pending-retained-content-${Date.now()}`;
+    const job = await manager.createJob(streamId, 'user-1', streamId, {
+      initialMetadata: {
+        responseMessageId: 'edited-response',
+        isRegenerate: true,
+        retainedContentPending: true,
+      },
+    });
+
+    await expect(manager.getResumeState(streamId, job.createdAt)).resolves.toBeNull();
+  });
+
+  test('reconnects an early resume instead of activating it without a retained snapshot', async () => {
+    manager = createInMemoryManager();
+    const streamId = 'early-retained-subscription';
+    const job = await manager.createJob(streamId, 'user-1', streamId, {
+      initialMetadata: { retainedContentPending: true, responseMessageId: 'edited-response' },
+    });
+    const onChunk = jest.fn();
+    const onError = jest.fn();
+    const early = await manager.subscribeWithResume(streamId, onChunk, undefined, onError, {
+      expectedCreatedAt: job.createdAt,
+    });
+    expect(early.subscription).toBeNull();
+    expect(onError).toHaveBeenCalledWith(TERMINAL_PUBLICATION_RECONNECT_ERROR);
+
+    const retained = [{ type: 'text', text: 'Retained' }];
+    await manager.captureRetainedContent(streamId, retained, ContentTypes.TEXT, job.createdAt);
+    retained[0].text = 'Mutated source';
+    const resumed = await manager.subscribeWithResume(streamId, onChunk, undefined, onError, {
+      expectedCreatedAt: job.createdAt,
+    });
+    expect(resumed.resumeState?.retainedContent?.parts).toEqual([
+      { type: 'text', text: 'Retained' },
+    ]);
+    expect(resumed.subscription).not.toBeNull();
+    resumed.subscription?.activate();
+    await manager.emitChunk(streamId, { event: 'test-live', data: { value: 'suffix' } });
+    expect(onChunk).toHaveBeenCalledWith({ event: 'test-live', data: { value: 'suffix' } });
+    resumed.subscription?.unsubscribe();
+  });
+
+  test('does not capture an old generation prefix into its replacement', async () => {
+    manager = createInMemoryManager();
+    const streamId = 'replaced-retained-capture';
+    const first = await manager.createJob(streamId, 'user-1', streamId);
+    const replacement = await manager.createJob(streamId, 'user-1', streamId, {
+      initialMetadata: { retainedContentPending: true },
+    });
+    await manager.captureRetainedContent(
+      streamId,
+      [{ type: 'text', text: 'Old prefix' }],
+      ContentTypes.TEXT,
+      first.createdAt,
+    );
+    expect(await manager.getJobStore().getJob(streamId)).toMatchObject({
+      createdAt: replacement.createdAt,
+      retainedContentPending: true,
+    });
+    expect((await manager.getJobStore().getJob(streamId))?.retainedContent).toBeUndefined();
+  });
+
+  test('returns captured retained content beside completion-local generation content', async () => {
+    manager = createInMemoryManager();
+    const streamId = `retained-content-${Date.now()}`;
+    const job = await manager.createJob(streamId, 'user-1', streamId, {
+      initialMetadata: {
+        responseMessageId: 'edited-response',
+        isRegenerate: true,
+        retainedContentPending: true,
+      },
+    });
+    const retainedContent = [{ type: 'text', text: 'Edited prefix' }];
+    const generatedContent = [{ type: 'text', text: ' generated suffix' }];
+
+    manager.setContentParts(streamId, generatedContent, job.createdAt);
+    await manager.captureRetainedContent(
+      streamId,
+      retainedContent,
+      ContentTypes.TEXT,
+      job.createdAt,
+    );
+
+    await expect(manager.getResumeState(streamId, job.createdAt)).resolves.toMatchObject({
+      aggregatedContent: generatedContent,
+      retainedContent: {
+        parts: retainedContent,
+        type: 'text',
+      },
+    });
+  });
+
+  test.each([false, true])(
+    'persists the complete edited abort before its replayable FINAL (save failure=%s)',
+    async (saveFails) => {
+      manager = new GenerationJobManagerClass({
+        jobStore: new InMemoryJobStore({ ttlAfterComplete: 60_000 }),
+        eventTransport: new InMemoryEventTransport(),
+        cleanupOnComplete: false,
+      });
+      manager.initialize();
+      const streamId = `retained-abort-${saveFails}`;
+      const job = await manager.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: {
+          responseMessageId: 'edited-response',
+          userMessage: { messageId: 'user-message', text: 'Question' },
+          retainedContentPending: true,
+        },
+      });
+      await manager.captureRetainedContent(
+        streamId,
+        [{ type: 'text', text: 'Prefix' }],
+        ContentTypes.TEXT,
+        job.createdAt,
+        {
+          userSubmittedPaths: ['/content/0/text'],
+        },
+      );
+      const generated = [{ type: 'text', text: ' suffix' }];
+      manager.setContentParts(streamId, generated, job.createdAt);
+      const beforePublish = jest.fn(async (result: AbortResult) => {
+        expect(result.content).toEqual([{ type: 'text', text: 'Prefix suffix' }]);
+        expect(result.userSubmittedPaths).toEqual(['/content/0/text']);
+        expect(result.finalEvent).toMatchObject({ responseMessage: { content: result.content } });
+        if (saveFails) {
+          throw new Error('Database unavailable');
+        }
+      });
+      const result = await manager.abortJob(streamId, {
+        expectedCreatedAt: job.createdAt,
+        beforePublish,
+      });
+      expect(beforePublish).toHaveBeenCalledTimes(1);
+      expect(generated).toEqual([{ type: 'text', text: ' suffix' }]);
+      expect(await manager.getJobStore().getJob(streamId)).toMatchObject({
+        status: 'aborted',
+        finalEvent: JSON.stringify(result.finalEvent),
+      });
+      const onDone = jest.fn();
+      const onError = jest.fn();
+      const resumed = await manager.subscribeWithResume(streamId, jest.fn(), onDone, onError, {
+        expectedCreatedAt: job.createdAt,
+      });
+      expect(resumed.subscription).not.toBeNull();
+      resumed.subscription?.activate();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(onError).not.toHaveBeenCalled();
+      expect(onDone).toHaveBeenCalledWith(result.finalEvent);
+      if (saveFails) {
+        expect(result.finalEvent).toMatchObject({ final: true, reconcile: true });
+      } else {
+        expect(result.finalEvent).toMatchObject({
+          responseMessage: { content: [{ type: 'text', text: 'Prefix suffix' }] },
+        });
+      }
+      resumed.subscription?.unsubscribe();
+    },
+  );
 
   test('includes OAuth run step and delta replay events in resume state', async () => {
     manager = createInMemoryManager();

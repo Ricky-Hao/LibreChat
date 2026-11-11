@@ -84,6 +84,14 @@ function MessagesView({
 
 /** Rows render as their message id, so a spec can tell which messages the thread rendered. */
 const host: MessagesHost = {
+  useHistory: () => ({
+    hasOlder: false,
+    isWindowed: false,
+    isLoading: false,
+    isError: false,
+    load: () => undefined,
+    onScroll: () => undefined,
+  }),
   useHour12: () => undefined,
   renderFiles: () => null,
   useForkPreferences: () => ({

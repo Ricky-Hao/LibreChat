@@ -11,12 +11,7 @@ const {
   getRunStepDurationMs,
   getRunStepCloseMetadata,
 } = require('librechat-data-provider');
-const {
-  GraphEvents,
-  GraphNodeKeys,
-  createContentAggregator,
-  summarizeEvent,
-} = require('@librechat/agents');
+const { GraphEvents, GraphNodeKeys, summarizeEvent } = require('@librechat/agents');
 const {
   sendEvent,
   getModelEndUsage,
@@ -33,8 +28,7 @@ const {
   getModelRefusalInfo,
   shouldSignalSandboxStart,
   getToolInputValidationDetails,
-  captureSubagentIdentity,
-  feedSubagentAggregator,
+  collectSubagentContent,
   getAttachmentOwnership,
   getImageAttachmentContent,
   collectToolCallIds,
@@ -715,22 +709,7 @@ function getDefaultHandlers({
           toolCall.mcpServerName = serverName;
         }
       }
-      if (subagentAggregatorsByToolCallId && data?.parentToolCallId) {
-        const key = data.parentToolCallId;
-        let aggregator = subagentAggregatorsByToolCallId.get(key);
-        if (!aggregator) {
-          aggregator = createContentAggregator();
-          subagentAggregatorsByToolCallId.set(key, aggregator);
-        }
-        try {
-          captureSubagentIdentity(aggregator, data);
-          feedSubagentAggregator(aggregator, data, toolTiming.child);
-        } catch (err) {
-          logger.warn(
-            `[ON_SUBAGENT_UPDATE] Failed to aggregate phase "${data?.phase}" for tool_call ${key}: ${err?.message ?? err}`,
-          );
-        }
-      }
+      collectSubagentContent(subagentAggregatorsByToolCallId, contentParts, data, stepMap);
       await emitForJob({ event, data });
     },
   };

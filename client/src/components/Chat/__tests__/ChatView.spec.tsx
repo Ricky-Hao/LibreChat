@@ -1,5 +1,8 @@
 import React from 'react';
+import { Provider, createStore } from 'jotai';
+import { submissionByIndex, isSubmittingFamily } from '@librechat/chat/react';
 import '@testing-library/jest-dom';
+import type { TMessage, TSubmission } from 'librechat-data-provider';
 import { ChatSettingsContext, defaultChatSettings } from '~/Providers/ChatSettingsContext';
 import { render, screen } from 'test/layout-test-utils';
 import ChatView from '../ChatView';
@@ -7,7 +10,14 @@ import ChatView from '../ChatView';
 const mockParams = jest.fn();
 const mockConversation = jest.fn();
 const mockChatFormProps = jest.fn();
+const mockMessagesViewProps = jest.fn();
+let mockSessionMessages: TMessage[] | null = null;
 const mockAskHostSaveDrafts = jest.fn();
+
+beforeEach(() => {
+  mockSessionMessages = null;
+  mockMessagesViewProps.mockClear();
+});
 
 jest.mock('react-router-dom', () => ({
   ...jest.requireActual('react-router-dom'),
@@ -41,11 +51,26 @@ jest.mock('@librechat/chat/react', () => {
     ChatSessionProvider: ({
       children,
     }: {
-      children: (session: { messages: null; isLoading: boolean }) => React.ReactNode;
+      children: (session: { messages: TMessage[] | null; isLoading: boolean }) => React.ReactNode;
     }) => (
-      <actual.ChatContext.Provider value={{ conversation: mockConversation() }}>
-        {children({ messages: null, isLoading: false })}
-      </actual.ChatContext.Provider>
+      <actual.ChatSurfaceProvider
+        value={{
+          enterToSend: true,
+          maximizeChatSpace: false,
+          showScrollButton: true,
+          composerBindings: {
+            shortcutsEnabled: true,
+            submitOverride: undefined,
+            yieldedChords: new Set<string>(),
+          },
+          claimForeground: () => undefined,
+          handOffComposerText: () => undefined,
+        }}
+      >
+        <actual.ChatContext.Provider value={{ conversation: mockConversation() }}>
+          {children({ messages: mockSessionMessages, isLoading: false })}
+        </actual.ChatContext.Provider>
+      </actual.ChatSurfaceProvider>
     ),
   };
 });
@@ -71,7 +96,22 @@ jest.mock('../Footer', () => ({
   useLandingFooter: () => mockLandingFooter,
 }));
 jest.mock('../Landing', () => ({ __esModule: true, default: () => <div /> }));
+/** The session is stubbed above; pending steer actions belong to the full session host. */
+jest.mock('../Messages/Content/Parts/PendingSteers', () => ({
+  __esModule: true,
+  default: () => null,
+}));
 jest.mock('~/components/Lia', () => ({ __esModule: true, default: () => null }));
+jest.mock('@librechat/chat/components', () => {
+  const actual = jest.requireActual('@librechat/chat/components');
+  return {
+    ...actual,
+    ChatScreen: (props: React.ComponentProps<typeof actual.ChatScreen>) => {
+      mockMessagesViewProps(props.messagesSlots);
+      return <actual.ChatScreen {...props} />;
+    },
+  };
+});
 jest.mock('../Input/ChatForm', () => ({
   __esModule: true,
   default: (props: Record<string, unknown>) => {
@@ -215,6 +255,47 @@ describe('ChatView composer column', () => {
     expect(composerColumn).toHaveClass('[view-transition-name:chat-form]');
     expect(composerColumn).toHaveClass('relative', 'z-10');
   });
+});
+
+describe('ChatView scroll navigation', () => {
+  test.each(['explicit', 'resume', 'outgoing', 'cleared'])(
+    'identifies %s submissions without inferring send intent from isSubmitting',
+    (kind) => {
+      mockParams.mockReturnValue({ conversationId: 'convo-1' });
+      mockConversation.mockReturnValue({ conversationId: 'convo-1' });
+      mockSessionMessages = [
+        { messageId: 'response', conversationId: 'convo-1', parentMessageId: null },
+      ] as TMessage[];
+      const submission = (
+        kind === 'cleared'
+          ? {}
+          : {
+              conversation: { conversationId: kind === 'outgoing' ? 'convo-2' : 'convo-1' },
+              initialResponse: { messageId: 'response' },
+              clientRequestId: 'request',
+              ...(kind === 'resume' ? { resumeStreamId: 'convo-1' } : {}),
+            }
+      ) as TSubmission;
+      const jotaiStore = createStore();
+      jotaiStore.set(submissionByIndex(0), submission);
+      jotaiStore.set(isSubmittingFamily(0), true);
+      render(
+        <Provider store={jotaiStore}>
+          <ChatView routePending />
+        </Provider>,
+      );
+      expect(mockMessagesViewProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          scrollNavigation: {
+            conversationKey: 'convo-1',
+            ready: false,
+            targetMessageId: undefined,
+            explicitSendId: kind === 'explicit' ? 'request' : undefined,
+          },
+        }),
+      );
+    },
+  );
 });
 
 describe('ChatView draft saving', () => {

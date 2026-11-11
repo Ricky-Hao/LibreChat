@@ -72,13 +72,18 @@ export function getEditPrefix(submission: EventSubmission): {
   initialContent: TMessageContentParts[];
   editPrefixOffset: number;
 } {
-  if (submission?.editedContent == null || submission?.editPrefixCleared === true) {
+  if (
+    (submission?.editedContent == null && submission?.editPrefixLength == null) ||
+    submission?.editPrefixCleared === true
+  ) {
     return { initialContent: [], editPrefixOffset: 0 };
   }
   const initialContent = submission?.initialResponse?.content ?? [];
+  const length = submission?.editPrefixLength ?? initialContent.length;
   return {
     initialContent,
-    editPrefixOffset: submission?.editPrefixLength ?? initialContent.length,
+    editPrefixOffset:
+      length > 0 && submission.editPrefixFirstPartFolded === true ? length - 1 : length,
   };
 }
 
@@ -93,10 +98,16 @@ export function calculateContentIndex(
   incomingContentType: string,
   existingContent?: TMessageContentParts[],
   incomingPhase?: TextPhase,
+  firstPartFolded?: boolean,
+  editedType?: string,
 ): number {
-  /** Only apply -1 adjustment for TEXT or THINK types when they match existing content */
+  /** A populated SYNC has already decided. Live index 0 uses the same
+   * edit-type and phase eligibility as mergeEditedMessageContent. */
   if (
+    firstPartFolded === undefined &&
+    serverIndex === 0 &&
     editPrefixOffset > 0 &&
+    incomingContentType === editedType &&
     (incomingContentType === ContentTypes.TEXT || incomingContentType === ContentTypes.THINK)
   ) {
     const targetIndex = serverIndex + editPrefixOffset - 1;

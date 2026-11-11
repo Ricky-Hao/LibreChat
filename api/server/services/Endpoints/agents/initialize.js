@@ -56,6 +56,7 @@ const {
   getScheduleMCPExecution,
   getMCPRequestContext,
   createSubagentCodeRouting,
+  validateSelectedSubagent,
   hasEntityEmbeddings,
 } = require('@librechat/api');
 const {
@@ -1384,20 +1385,19 @@ const initializeClientWithProvider = async ({
     viewAccessChecked = false,
   }) => {
     throwIfAborted(context.signal);
-    if (!agent || getLazySubagentConfigId(agent) !== configId) {
-      throw new Error(`Subagent ${agentId} changed before it could be initialized.`);
-    }
-    if (!viewAccessChecked && !(await hasSubagentViewAccess(agent, agentId, context.signal))) {
-      throw new Error(`You no longer have access to subagent ${agentId}.`);
-    }
-    const validation = await waitForAbort(
-      validateAgentModel({ req, res, agent, modelsConfig, logViolation }),
-      context.signal,
-    );
-    throwIfAborted(context.signal);
-    if (!validation.isValid) {
-      throw new Error(validation.error?.message ?? `Subagent ${agentId} failed model validation.`);
-    }
+    await validateSelectedSubagent({
+      agent,
+      configId,
+      getConfigId: getLazySubagentConfigId,
+      viewAccessChecked,
+      canView: () => hasSubagentViewAccess(agent, agentId, context.signal),
+      validateModel: () =>
+        waitForAbort(
+          validateAgentModel({ req, res, agent, modelsConfig, logViolation }),
+          context.signal,
+        ),
+      signal: context.signal,
+    });
     const placement = await waitForAbort(
       subagentCodeRouting.place({
         agent,

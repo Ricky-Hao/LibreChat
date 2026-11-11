@@ -53,6 +53,7 @@ import { useHealthCheck } from '~/data-provider';
 import Settings from '~/components/Nav/Settings';
 import { Banner } from '~/components/Banners';
 import ChatRecord from './Record';
+import History from './History';
 import store from '~/store';
 
 /** Isolates the unseen-reply subscription so its updates re-render only this node, not `Root`. */
@@ -225,7 +226,9 @@ function RootLayout() {
                         ready={isConfigReady && configError == null}
                         userId={user?.id}
                       >
-                        <Outlet />
+                        <History size={config?.interface?.historyWindowSize}>
+                          <Outlet />
+                        </History>
                       </MCPAppsPolicyProvider>
                     </div>
                     {/* Without the strip the scrim exists only for the travel:

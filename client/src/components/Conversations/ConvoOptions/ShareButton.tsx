@@ -65,7 +65,7 @@ export default function ShareButton({
     if (!selectedMessageId) {
       await queryClient.fetchQuery(
         [QueryKeys.messages, conversationId],
-        () => fetchConversationMessages(conversationId),
+        () => fetchConversationMessages(conversationId, queryClient),
         { staleTime: 0 },
       );
       selectedMessageId = getActiveLatestMessage()?.messageId ?? null;

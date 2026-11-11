@@ -65,7 +65,11 @@ type MessageValidationLogger = {
 };
 
 export type MessageValidationDeps = {
-  getConvo: (userId: string, conversationId?: string) => Promise<ConversationRecord>;
+  getConvo: (
+    userId: string,
+    conversationId?: string,
+    tenantId?: string | null,
+  ) => Promise<ConversationRecord>;
   getJob: (conversationId?: string) => Promise<GenerationJobRecord>;
   isPendingActionStale: (job: { pendingAction?: PendingActionRecord }) => boolean;
   logger: MessageValidationLogger;
@@ -78,6 +82,8 @@ export type MessageRequestValidationOptions = {
    * before its first save stays readable to the job's owner, as the conversation read is.
    */
   activeJobMessageRead?: boolean;
+  /** Bounded audit reads require an explicit tenantless predicate too. */
+  explicitTenantScope?: boolean;
 };
 
 export type MessageRequestMiddleware = {
@@ -162,7 +168,9 @@ export function createMessageRequestMiddleware(
     conversationId?: string,
     options?: MessageRequestValidationOptions,
   ): Promise<MessageValidationResult> {
-    const conversation = await deps.getConvo(req.user.id, conversationId);
+    const conversation = await (options?.explicitTenantScope
+      ? deps.getConvo(req.user.id, conversationId, req.user.tenantId ?? null)
+      : deps.getConvo(req.user.id, conversationId));
 
     if (!conversation) {
       if (await canReadActiveJobConversation(req, conversationId, options)) {

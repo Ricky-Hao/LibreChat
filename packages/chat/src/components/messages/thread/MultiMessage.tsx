@@ -7,6 +7,7 @@ import { useRowMountWindow } from '../../../react/messages/useProgressiveRowMoun
 import { siblingIdxFamily, siblingKey } from '../../../react/thread';
 import { activityParentMessageIds } from '../../../core/activity';
 import { useMessagesHost } from '../../../react/messages/host';
+import { historySiblingFocus } from '../../../core/history';
 import { hasParallelLanes } from '../../../core/lanes';
 import ThreadMessage from './Message';
 
@@ -45,6 +46,9 @@ function MultiMessage({
   const displayedRef = useRef<{ newestId?: string; viewedId?: string }>({});
   const treeRef = useRef<typeof messagesTree | null>(null);
   const parentRef = useRef<string | null | undefined | typeof UNBOUND_PARENT>(UNBOUND_PARENT);
+  const pageFocus =
+    treeRef.current !== messagesTree ? historySiblingFocus(messagesTree) : undefined;
+  const effectiveSiblingIdx = pageFocus ?? siblingIdx;
 
   /**
    * Sibling selection is positional (reversed index), so a change to the
@@ -81,6 +85,14 @@ function MultiMessage({
     }
     const newestId = messagesTree[length - 1]?.messageId;
     const currentIdx = siblingIdxRef.current;
+    if (treeChanged && pageFocus != null) {
+      setSiblingIdx(pageFocus);
+      displayedRef.current = {
+        newestId,
+        viewedId: messagesTree[length - pageFocus - 1]?.messageId,
+      };
+      return;
+    }
 
     if (parentChanged) {
       /** Recursive instances are deliberately unkeyed and get REUSED across
@@ -138,13 +150,13 @@ function MultiMessage({
       newestId,
       viewedId: messagesTree[length - nextSiblingIdx - 1]?.messageId,
     };
-  }, [messageId, messagesTree, siblingIdx, setSiblingIdx]);
+  }, [messageId, messagesTree, siblingIdx, setSiblingIdx, pageFocus]);
 
   if (!(messagesTree && messagesTree.length)) {
     return null;
   }
 
-  const currentSiblingIdx = messagesTree.length - siblingIdx - 1;
+  const currentSiblingIdx = messagesTree.length - effectiveSiblingIdx - 1;
   const message = messagesTree[currentSiblingIdx] as TMessage | undefined;
 
   if (!message) {

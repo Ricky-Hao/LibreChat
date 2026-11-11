@@ -4,12 +4,14 @@ import type { TerminalContext } from './terminal';
 import {
   restoreLiveStatus,
   handoffToReplacement,
+  clearAttachedDrainAfterAbort,
+  retryFencedTerminalAttachment,
   clearPendingApprovalForTerminal,
   clearAttachedGenerationCreatedAt,
 } from './terminal';
 import { GENERATION_PROTOCOL_VERSION, supportsGenerationProtocolV2 } from '../protocol';
+import { getRecoverySteerId, toStartGenerationError } from './start';
 import { completedResponseMessageId } from './messages';
-import { getRecoverySteerId } from './start';
 
 /**
  * The connection failed past the last retry. The transport gave up, not necessarily the
@@ -106,6 +108,8 @@ export async function settleAfterRetryCeiling(ctx: TerminalContext): Promise<voi
     }
     if (Array.isArray(fetched)) {
       persistedMessages = fetched;
+      host.messages.set(fetched);
+      run.terminalRecoveryAttempt = 0;
     }
   } catch (error) {
     if (!sub.isCurrent()) {
@@ -115,6 +119,10 @@ export async function settleAfterRetryCeiling(ctx: TerminalContext): Promise<voi
       conversationId: recoveryConvoId,
       error,
     });
+    if (toStartGenerationError(error)?.response?.status !== 404 || status.active !== false) {
+      retryFencedTerminalAttachment(ctx, 'disconnected terminal history unavailable');
+      return;
+    }
   }
 
   const authoritativeValues = [
@@ -174,6 +182,9 @@ export async function settleAfterRetryCeiling(ctx: TerminalContext): Promise<voi
           status?.resumeState?.responseMessageId ?? sub.submission.initialResponse?.messageId,
         )
       : undefined;
+  if (persistedMessages == null) {
+    clearAttachedDrainAfterAbort(ctx, recoveryConvoId);
+  }
   host.pane.publishRunEnd({
     conversationId: recoveryConvoId,
     outcome: recoveryOutcome,

@@ -7,7 +7,7 @@ import {
   type CodeEnvRef,
   type CodeEnvRefMap,
 } from 'librechat-data-provider';
-import type { CodeEnvFile, ToolSessionMap, CodeSessionContext } from '@librechat/agents';
+import type { CodeEnvFile, ToolSessionMap, CodeSessionContext, SkillBody } from '@librechat/agents';
 import type { Types } from 'mongoose';
 import type { ServerRequest } from '~/types';
 import {
@@ -734,7 +734,7 @@ export interface PrimeInvokedSkillsResult {
   initialSessions?: ToolSessionMap;
   /** Pre-resolved skill bodies keyed by skill name. Passed to formatAgentMessages
    *  so it can reconstruct HumanMessages at the right position in the message sequence. */
-  skills?: Map<string, string>;
+  skills?: Map<string, SkillBody>;
   /** Exact records resolved under the current request's ACL. */
   skillManifest?: Array<{
     id: string;
@@ -772,7 +772,7 @@ export async function primeInvokedSkills(
     return {};
   }
 
-  const skills = new Map<string, string>();
+  const skills = new Map<string, SkillBody>();
 
   // Phase 1: Resolve all skills in parallel (DB lookups)
   const resolveResults = await Promise.allSettled(
@@ -793,7 +793,11 @@ export async function primeInvokedSkills(
   for (const r of resolveResults) {
     if (r.status === 'fulfilled' && r.value) {
       assertStoredSkillBodyAllowed(r.value, deps.req);
-      skills.set(r.value.name, r.value.body);
+      skills.set(r.value.name, {
+        body: r.value.body,
+        skillId: r.value._id.toString(),
+        skillVersion: r.value.version,
+      });
       resolvedSkills.push(r.value);
     } else if (r.status === 'rejected') {
       logger.warn('[primeInvokedSkills] Skill resolution failed:', getSafeErrorMetadata(r.reason));
@@ -1037,7 +1041,7 @@ export async function primeInvokedSkillsForProfiles(
   );
 
   let initialSessions: ToolSessionMap | undefined;
-  const skills = new Map<string, string>();
+  const skills = new Map<string, SkillBody>();
   const skillManifestByName = new Map<
     string,
     NonNullable<PrimeInvokedSkillsResult['skillManifest']>[number]
@@ -1056,7 +1060,7 @@ export async function primeInvokedSkillsForProfiles(
       if (
         (existingIdentity != null &&
           JSON.stringify(existingIdentity) !== JSON.stringify(identity)) ||
-        (existingBody != null && existingBody !== body)
+        (existingBody != null && JSON.stringify(existingBody) !== JSON.stringify(body))
       ) {
         throw new Error(`Skill "${name}" changed while execution profiles were initialized`);
       }

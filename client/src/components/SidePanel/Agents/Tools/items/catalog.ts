@@ -180,6 +180,19 @@ export function buildCatalog(inputs: BuildCatalogInputs): AgentItem[] {
     });
   }
 
+  if (
+    enabled.has(AgentCapabilities.task_callbacks) &&
+    inputs.regularTools.some((plugin) => plugin.pluginKey === 'create_task_callback')
+  ) {
+    items.push({
+      kind: 'builtin',
+      id: 'create_task_callback',
+      iconKey: 'create_task_callback',
+      name: 'com_ui_task_callback',
+      description: 'com_agents_task_callback_info',
+    });
+  }
+
   if (inputs.showMemory) {
     items.push({
       kind: 'builtin',
@@ -212,7 +225,7 @@ export function buildCatalog(inputs: BuildCatalogInputs): AgentItem[] {
 
   if (enabled.has(AgentCapabilities.tools)) {
     for (const plugin of inputs.regularTools) {
-      if (plugin.pluginKey === 'ask_user_question') {
+      if (plugin.pluginKey === 'ask_user_question' || plugin.pluginKey === 'create_task_callback') {
         continue; // surfaced as a builtin above — don't double-list as a plugin
       }
       items.push({

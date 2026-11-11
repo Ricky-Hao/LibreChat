@@ -9,6 +9,8 @@ export const createTestTurnServices = (): TurnServices => ({
   getEphemeralAgent: () => null,
   getUserKey: () => undefined,
   getRouteProjectId: () => null,
+  cancelMessagesQuery: jest.fn(),
+  loadRegenerateParent: jest.fn(async () => undefined),
   readCodeInputs: () => ({
     workspace: {
       conversation: null,

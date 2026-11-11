@@ -1,10 +1,11 @@
-import { Constants } from 'librechat-data-provider';
+import { Constants, DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES } from 'librechat-data-provider';
 import type { Agents, TPendingSteer } from 'librechat-data-provider';
 import type { ResumableHost, StreamStatusResponse } from './host';
 import type { GenerationProtocolVersion } from '../protocol';
 import type { ResumableSubscription } from './subscription';
 import type { ResponsePatcher } from './patches';
 import { GENERATION_PROTOCOL_VERSION, supportsGenerationProtocolV2 } from '../protocol';
+import { getReconnectDelay } from './start';
 
 /** One subscription's terminal handling: the attachment, the app around it, and how a pending
  *  action lands on the response it streams. */
@@ -46,6 +47,17 @@ export function clearAttachedGenerationCreatedAt({ sub, host }: TerminalContext)
   host.pane.setGenerationEpoch(sub.streamId, null, sub.generationCreatedAt);
   if (sub.startedAsNewConversation) {
     host.pane.setGenerationEpoch(Constants.NEW_CONVO, null, sub.generationCreatedAt);
+  }
+}
+
+/** Missing terminal history cannot authorize an armed follow-up under either chat alias. */
+export function clearAttachedDrainAfterAbort(
+  { sub, host }: TerminalContext,
+  conversationId: string,
+): void {
+  host.pane.clearDrainAfterAbort(conversationId, sub.generationCreatedAt);
+  if (sub.startedAsNewConversation) {
+    host.pane.clearDrainAfterAbort(Constants.NEW_CONVO, sub.generationCreatedAt);
   }
 }
 
@@ -187,10 +199,23 @@ export function retryFencedTerminalAttachment(
   const { run } = sub;
   run.reconnectAttempt = Math.max(run.reconnectAttempt, 1);
   sub.close();
-  if (run.reconnectTimeout) {
-    run.scheduler.clearTimeout(run.reconnectTimeout);
+  run.clearReconnectTimeout();
+  const attempt = ++run.terminalRecoveryAttempt;
+  const retryLimit = () =>
+    host.terminalRecoveryMaxRetries?.() ?? DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES;
+  if (attempt > retryLimit()) {
+    sub.terminalRecoveryPaused = true;
+    return;
   }
-  sub.scheduleReattach(250);
+  run.reconnectTimeout = run.scheduler.setTimeout(() => {
+    run.reconnectTimeout = null;
+    if (!sub.isCurrent() || !run.submission) return;
+    if (attempt > retryLimit()) {
+      sub.terminalRecoveryPaused = true;
+      return;
+    }
+    sub.reattach();
+  }, getReconnectDelay(attempt));
 }
 
 /** Whether a terminal frame may tear the pane down, per a fresh status read. */

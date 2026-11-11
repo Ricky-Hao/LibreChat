@@ -1,14 +1,13 @@
 import { GraphEvents } from '@librechat/agents';
 import { ContentTypes } from 'librechat-data-provider';
-import type { Agents, TSteerAppliedEvent } from 'librechat-data-provider';
+import type { Agents, TSteerAppliedEvent, SubagentUpdateEvent } from 'librechat-data-provider';
 import type { createContentAggregator } from '@librechat/agents';
-import type { SubagentActivityUpdateEvent } from './subagentActivity';
 import type { ToolTimingAdapter } from './toolTiming';
 
 type SubagentAggregator = ReturnType<typeof createContentAggregator>;
 type AggregateInput = Parameters<SubagentAggregator['aggregateContent']>[0];
 
-function subagentPhaseToGraphEvent(event: SubagentActivityUpdateEvent): GraphEvents | null {
+function subagentPhaseToGraphEvent(event: SubagentUpdateEvent): GraphEvents | null {
   switch (event?.phase) {
     case 'run_step':
       // Tool-execute batch requests share this phase but are not run steps.
@@ -31,7 +30,7 @@ function subagentPhaseToGraphEvent(event: SubagentActivityUpdateEvent): GraphEve
 /** Consume already-public child updates; host indices already include steering offsets. */
 export function feedSubagentAggregator(
   aggregator: SubagentAggregator,
-  event: SubagentActivityUpdateEvent,
+  event: SubagentUpdateEvent,
   applyChildTiming: ToolTimingAdapter['child'],
 ): void {
   if (event.phase === 'steer_applied') {

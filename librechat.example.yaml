@@ -51,6 +51,11 @@ projects:
 #   outputChars: 512   # characters of each output kept, half from the start and half from the end
 #   argsChars: 512     # characters of serialized arguments kept; JSON stays valid JSON
 
+# Automatic terminal history recovery retries, separate from transport reconnects.
+# Non-negative safe integer; 0 disables automatic terminal history recovery retries.
+# resumableStreams:
+#   terminalRecoveryMaxRetries: 5
+
 # Stored user credentials (tool and web search keys, MCP custom user variables) are
 # written with a random IV per value ("v3", the default). Both formats are always read.
 # During a rolling upgrade of a multi-replica deployment, set "legacy" until every
@@ -225,6 +230,9 @@ interface:
   # and how many of the most recently left conversations keep that grace (default: 1). Older ones are refetched.
   # historyCacheTtlMs: 60000
   # historyCacheRecent: 1
+  # Recent messages on open when Auto-Scroll to latest message is enabled; 0 loads all.
+  # Older messages load when scrolling upward or selecting Load older messages.
+  # historyWindowSize: 24
   # Deployment theme applied to every user, in both light and dark mode (default: unset).
   # It is not saved to the browser, outranks REACT_APP_THEME_* colors and stored themes,
   # and yields to the high-contrast modes. Either a bundled theme name (librechat, clickhouse):
@@ -1020,6 +1028,19 @@ endpoints:
   #   # uses its own bound listener; override only for an internal TLS/front-door route.
   #   eventDriven:
   #     # selfUrl: 'https://librechat.internal'
+  #   # External executor results can resume the original Agent conversation.
+  #   # Also opt in to "task_callbacks" in capabilities and attach create_task_callback.
+  #   # See docs/task-callbacks.md. The callback ID goes only in the POST body.
+  #   taskCallbacks:
+  #     enabled: false
+  #     publicUrl: 'https://chat.example/api/agents/task-callbacks'
+  #     ttlMs: 86400000
+  #     receiptRetentionMs: 604800000
+  #     maxOutputBytes: 32768
+  #     requestsPerMinute: 60
+  #     recoveryIntervalMs: 30000
+  #     recoveryBatchSize: 25
+  #     branchMessageLimit: 2000
   #   # (optional) Automatic conversational delivery for supported completed background tasks.
   #   # Enabled by default; set false to keep background tools and subagents poll-only.
   #   backgroundTasks:

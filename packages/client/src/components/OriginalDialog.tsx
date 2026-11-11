@@ -5,6 +5,7 @@ import { cx } from 'class-variance-authority';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import type { FocusOutline } from './Focus';
 import { focusOutlineVariants } from './Focus';
+import DialogRoot from './DialogRoot';
 import { cn } from '~/utils';
 
 const DialogDepthContext = React.createContext(0);
@@ -116,9 +117,9 @@ const Dialog: React.ForwardRefExoticComponent<OGDialogProps & React.RefAttribute
 
       return (
         <DialogDepthContext.Provider value={currentDepth}>
-          <DialogPrimitive.Root {...props} onOpenChange={handleOpenChange}>
+          <DialogRoot {...props} onOpenChange={handleOpenChange}>
             {children}
-          </DialogPrimitive.Root>
+          </DialogRoot>
         </DialogDepthContext.Provider>
       );
     },

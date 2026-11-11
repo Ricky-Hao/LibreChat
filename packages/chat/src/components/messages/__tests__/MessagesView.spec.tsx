@@ -165,7 +165,7 @@ describe('MessagesView', () => {
     expect(first.isConnected).toBe(false);
   });
 
-  it('wires the scroll control to the end marker and to both near-bottom listeners', () => {
+  it('wires the scroll control to the container bottom and to both near-bottom listeners', () => {
     const { host } = createHost();
     let button: MessagesScrollButtonProps | undefined;
     const { container } = renderView(
@@ -185,13 +185,18 @@ describe('MessagesView', () => {
       container.querySelector('#messages-end')?.closest('.scrollbar-gutter-stable'),
     );
 
-    const end = container.querySelector<HTMLElement>('#messages-end');
-    const scrollIntoView = jest.fn();
-    if (end) {
-      end.scrollIntoView = scrollIntoView;
-    }
+    const scrollable = button!.scrollableRef.current!;
+    Object.defineProperties(scrollable, {
+      clientHeight: { value: 400, configurable: true },
+      scrollHeight: { value: 1000, configurable: true },
+    });
+    scrollable.scrollTop = 0;
+    const scrollTo = jest.fn();
+    scrollable.scrollTo = scrollTo;
     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 600, behavior: 'smooth' });
+    fireEvent(scrollable, new Event('scrollend'));
+    expect(scrollable.scrollTop).toBe(600);
   });
 
   describe('seen reporting', () => {

@@ -51,6 +51,7 @@ async function handleFinal(ctx: StreamContext, data: ChatFinalFrame): Promise<vo
   run.cancelSteerRetryFrames();
   run.clearReconnectTimeout();
   run.reconnectAttempt = 0;
+  run.terminalRecoveryAttempt = 0;
   host.logger.log('ResumableSSE', 'Received FINAL event', {
     aborted: data.aborted,
     conversationId: data.conversation?.conversationId,

@@ -199,9 +199,13 @@ export class ResponsePatcher {
    */
   private editPrefixLength(): number {
     const { sub } = this;
-    return sub.submission.editedContent != null && !sub.run.editPrefixCleared
-      ? (sub.submission.editPrefixLength ?? sub.submission.initialResponse?.content?.length ?? 0)
-      : 0;
+    if (sub.run.editPrefixCleared) return 0;
+    const length =
+      sub.submission.editPrefixLength ??
+      (sub.submission.editedContent != null
+        ? (sub.submission.initialResponse?.content?.length ?? 0)
+        : 0);
+    return length > 0 && sub.run.editPrefixFirstPartFolded === true ? length - 1 : length;
   }
 
   /** Writes `updated` over the message at `index`, in the cache and the step handler's map. */
@@ -341,29 +345,11 @@ export class ResponsePatcher {
         phasePart.activity_label_type === 'phase' &&
         typeof phasePart.activity_start_index === 'number'
       ) {
-        let activityStartIndex = phasePart.activity_start_index + prefixLength;
-        const foldedFirstPart = run.editPrefixFirstPartFolded;
-        const targetContent = messages[index]?.content;
-        /** The step handler records an actual server-index-zero text/think
-         *  merge. An empty +prefix slot is insufficient evidence because
-         *  a delayed tool may not have materialized there yet. */
-        if (
-          phasePart.activity_start_index === 0 &&
-          activityStartIndex > 0 &&
-          foldedFirstPart &&
-          targetContent?.[activityStartIndex - 1] != null
-        ) {
-          activityStartIndex -= 1;
-        }
         offsetPart = {
           ...phasePart,
-          activity_start_index: activityStartIndex,
+          activity_start_index: phasePart.activity_start_index + prefixLength,
           ...(typeof phasePart.activity_end_index === 'number' && {
-            activity_end_index: host.parts.offsetActivityPhaseBoundary(
-              phasePart.activity_end_index,
-              prefixLength,
-              foldedFirstPart,
-            ),
+            activity_end_index: phasePart.activity_end_index + prefixLength,
           }),
         };
       }
@@ -406,15 +392,7 @@ export class ResponsePatcher {
       return;
     }
     const prefixLength = this.editPrefixLength();
-    let contentIndex = event.index + prefixLength;
-    if (
-      prefixLength > 0 &&
-      event.index === 0 &&
-      run.editPrefixFirstPartFolded &&
-      messages[messageIndex]?.content?.[contentIndex - 1]?.type === ContentTypes.THINK
-    ) {
-      contentIndex -= 1;
-    }
+    const contentIndex = event.index + prefixLength;
     const updated = host.parts.applyReasoningLabel(messages[messageIndex], {
       ...event,
       index: contentIndex,

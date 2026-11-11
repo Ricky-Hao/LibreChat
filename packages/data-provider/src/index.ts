@@ -13,7 +13,9 @@ export * from './file-config';
 export * from './resolve-llm-delivery-path';
 /* messages  */
 export * from './messages';
+export * from './history';
 export * from './previews';
+export * from './messageReads';
 export * from './errors';
 /* run steps */
 export * from './runSteps';
@@ -111,5 +113,6 @@ export * from './code/workspace';
 export * from './types/scheduleConsent';
 
 export * from './approval';
+export * from './taskCallbacks';
 
 export * from './codeSetup';

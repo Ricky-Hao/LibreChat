@@ -4,6 +4,8 @@ import type { TerminalContext } from './terminal';
 import {
   restoreLiveStatus,
   handoffToReplacement,
+  clearAttachedDrainAfterAbort,
+  retryFencedTerminalAttachment,
   clearPendingApprovalForTerminal,
   clearAttachedGenerationCreatedAt,
 } from './terminal';
@@ -40,36 +42,8 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void> 
   });
   host.events.clearStepMaps();
   let persistedMessages: TMessage[] | undefined;
-  if (convoId) {
-    try {
-      await host.cache.invalidateMessages(convoId, 'none');
-      if (!sub.isCurrent()) {
-        return;
-      }
-      // The first stream can finish before CREATED mounts the saved-chat query.
-      const fetched = await host.cache.fetchMessages(convoId, true);
-      if (!sub.isCurrent()) {
-        return;
-      }
-      if (Array.isArray(fetched)) {
-        persistedMessages = fetched;
-      }
-    } catch (error) {
-      if (!sub.isCurrent()) {
-        return;
-      }
-      host.logger.warn('ResumableSSE', 'Could not reconcile persisted messages after 404', {
-        conversationId: convoId,
-        error,
-      });
-    }
-    host.cache.removeStreamStatus(convoId);
-  }
   const recoveryConvoId = convoId ?? currentStreamId;
-  const reconciledIds = new Set(persistedMessages ? host.steers.appliedIds(persistedMessages) : []);
-  if (persistedMessages) {
-    host.steers.settleApplied(recoveryConvoId, persistedMessages);
-  }
+  const reconciledIds = new Set<string>();
 
   // The status replay is owner-gated and non-destructive; creating a
   // recovered follow-up consumes its exact source. Prefer these
@@ -84,7 +58,7 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void> 
       generationProtocolVersion === GENERATION_PROTOCOL_VERSION &&
       !supportsGenerationProtocolV2(status)
     ) {
-      sub.scheduleReattach(1_000);
+      retryFencedTerminalAttachment(ctx, 'expired stream status was unnegotiated');
       return;
     }
     if (
@@ -128,6 +102,42 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void> 
       sub.scheduleReattach(1_000, activeStreamId, status.createdAt);
       return;
     }
+    if (status.active !== false) {
+      retryFencedTerminalAttachment(ctx, 'expired stream status inconclusive');
+      return;
+    }
+    // Read history after terminal status proves the persistence barrier has passed.
+    if (convoId) {
+      try {
+        await host.cache.invalidateMessages(convoId, 'none');
+        if (!sub.isCurrent()) return;
+        const fetched = await host.cache.fetchMessages(convoId, true);
+        if (!sub.isCurrent()) return;
+        if (Array.isArray(fetched)) {
+          persistedMessages = fetched;
+        }
+      } catch (error) {
+        if (!sub.isCurrent()) return;
+        host.logger.warn('ResumableSSE', 'Could not reconcile persisted messages after 404', {
+          conversationId: convoId,
+          error,
+        });
+        // A first turn stopped before persistence has no history to recover.
+        if (toStartGenerationError(error)?.response?.status !== 404) {
+          retryFencedTerminalAttachment(ctx, 'expired stream history unavailable');
+          return;
+        }
+      }
+      host.cache.removeStreamStatus(convoId);
+    }
+    if (persistedMessages) {
+      host.messages.set(persistedMessages);
+      run.terminalRecoveryAttempt = 0;
+      host.steers.settleApplied(recoveryConvoId, persistedMessages);
+      for (const id of host.steers.appliedIds(persistedMessages)) {
+        reconciledIds.add(id);
+      }
+    }
     confirmedV2Terminal =
       generationProtocolVersion === GENERATION_PROTOCOL_VERSION &&
       supportsGenerationProtocolV2(status);
@@ -156,6 +166,8 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void> 
       conversationId: recoveryConvoId,
       error,
     });
+    retryFencedTerminalAttachment(ctx, 'expired stream status unavailable');
+    return;
   }
 
   host.cache.removeActiveJob(currentStreamId);
@@ -194,9 +206,6 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void> 
     void host.cache.refreshConversationLists();
     void host.cache.refreshPinnedConversations();
   }
-  if (persistedMessages) {
-    host.messages.set(persistedMessages);
-  }
   sub.retired = true;
   host.pane.setIsSubmitting(false);
   host.pane.setShowStopButton(false);
@@ -223,6 +232,9 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void> 
   const detached = host.pane.resolveDetachedEnd(recoveryConvoId, persistedMessages);
   const detachedResolvable = detached.resolvable;
   const detachedEnd = detached.end;
+  if (persistedMessages == null) {
+    clearAttachedDrainAfterAbort(ctx, recoveryConvoId);
+  }
   host.pane.publishRunEnd(
     {
       conversationId: recoveryConvoId,

@@ -28,6 +28,8 @@ export const createTurnServices = (overrides: Partial<TurnServices> = {}): TurnS
   getEphemeralAgent: () => null,
   getUserKey: () => undefined,
   getRouteProjectId: () => null,
+  cancelMessagesQuery: jest.fn(),
+  loadRegenerateParent: jest.fn(async () => undefined),
   readCodeInputs: () => createTurnCodeInputs(),
   openNewChat: jest.fn(),
   releaseFiles: jest.fn(),

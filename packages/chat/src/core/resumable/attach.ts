@@ -75,9 +75,10 @@ export function attachResumableStream(
    */
   const generationId =
     sub.submission.clientRequestId ??
+    (generationCreatedAt != null ? `${streamId}:${generationCreatedAt}` : undefined) ??
     (sub.submission.initialResponse as TMessage | undefined)?.messageId ??
     streamId;
-  run.bindPrefixState(generationId);
+  run.bindPrefixState(generationId, sub.submission.editPrefixFirstPartFolded);
   host.usage.bindResponse(sub.submission);
   const patcher = new ResponsePatcher(sub, host);
   const ctx: StreamContext = {

@@ -1,6 +1,8 @@
 import { useCallback, useRef } from 'react';
 import { useStore } from 'jotai';
+import { Constants, ContentTypes } from 'librechat-data-provider';
 import type {
+  FullToolCall,
   TMessage,
   EventSubmission,
   SubagentUpdateEvent,
@@ -12,6 +14,7 @@ import {
   closeParentSubagentProgress,
   listRegisteredSubagentProgressKeys,
   reduceSubagentProgress,
+  recoverSubagentProgress,
   registerSubagentProgressKey,
   removeSubagentProgressAtoms,
   subagentParentStreamOpenByToolCallId,
@@ -409,13 +412,31 @@ export function useStepHandler({
    */
   const syncStepMessage = useCallback(
     (message: TMessage) => {
+      for (const [index, part] of (message?.content ?? []).entries()) {
+        if (
+          part?.type !== ContentTypes.TOOL_CALL ||
+          !('name' in part.tool_call) ||
+          part.tool_call.name !== Constants.SUBAGENT
+        )
+          continue;
+        const key = subagentProgressKey(message.messageId, part.tool_call.id ?? '', index);
+        const recovered = recoverSubagentProgress(
+          subagentStore.get(subagentProgressByToolCallId(key)),
+          (part.tool_call as FullToolCall).subagent_content,
+        );
+        if (recovered == null) continue;
+        registerSubagentProgressKey(key);
+        subagentStore.set(subagentProgressByToolCallId(key), recovered);
+        stream.current.subagentInvocations.set(recovered.subagentRunId, key);
+        stream.current.claimedInvocations.add(key);
+      }
       for (const effect of syncStreamMessage(stream.current, message)) {
         if (effect.type === 'subagent') {
           applySubagentProgress(effect.invocationKey, effect.events);
         }
       }
     },
-    [applySubagentProgress],
+    [applySubagentProgress, subagentStore],
   );
 
   return {

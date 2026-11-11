@@ -45,6 +45,7 @@ const MAX_STRIP_DEPTH = 6;
 const PRESERVED_ERROR_PROPS = ['message', 'stack', 'name', 'code'] as const;
 
 const sensitiveKeys: RegExp[] = [
+  /\b(tcb_)[A-Za-z0-9_-]+/g,
   /\b(sk-)[a-zA-Z0-9_-]+/g, // OpenAI API key pattern
   /\b(Bearer )[^\s"']+/g, // Header: Bearer token pattern
   /\b(api-key:? )[^\s"']+/gi, // Header: API key pattern
@@ -75,7 +76,7 @@ const REDACTION_WINDOW_SLACK = 1024;
 const REDACTED_EMAIL_VALUE = '[REDACTED_EMAIL]';
 
 const sensitiveMetadataKey =
-  /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|appid|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|assertion|client[-_]?assertion|client[-_]?secret|code[-_]?verifier|credential|signature|connection[-_]?string)$/i;
+  /^(callback_id|encryptedId|authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|appid|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|assertion|client[-_]?assertion|client[-_]?secret|code[-_]?verifier|credential|signature|connection[-_]?string)$/i;
 const errorStringProperties = new Set(['name', 'message', 'stack']);
 
 /**

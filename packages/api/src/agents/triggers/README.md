@@ -116,6 +116,14 @@ migration is needed; optional activity reporting preserves the existing numeric/
 
 ## Remote event ingress
 
+Generic external executors use the separately gated
+[external task callback tool and webhook](../../../../../docs/task-callbacks.md).
+That adapter seals a bounded terminal result and recoverable outbox handoff before
+202, then publishes a `task_callback_v1` capability-fenced internal continuation.
+It revalidates the original conversation branch at dispatch and needs no producer
+heartbeat. The bearer is neither a Remote Agents key nor a public child binding;
+the existing event-driven child actor semantics below are unchanged.
+
 Authenticated controllers and source adapters can enqueue the same durable envelope through
 `POST /api/agents/v1/events`. The endpoint uses Remote Agents API-key authentication, the remote
 agents feature permission, and the target agent's existing remote-view ACL. Send exactly one

@@ -102,6 +102,8 @@ function useMessages(
     {
       enabled: enabled && !!conversationId && conversationId !== Constants.SEARCH,
       refetchOnMount: refetchMessagesOnMount,
+      refetchOnWindowFocus: !isStreaming,
+      refetchOnReconnect: !isStreaming,
     },
     { isStreaming },
   );

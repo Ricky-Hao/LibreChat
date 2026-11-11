@@ -7,6 +7,7 @@ import { useUpdateMessageMutation } from 'librechat-data-provider/react-query';
 import type { TEditProps } from '~/common';
 import { useMessagePartsHost } from '~/Providers/MessagePartsHostContext';
 import useGetAddedConvo from '~/hooks/Conversations/useGetAddedConvo';
+import { useRerunParent, ParentError } from './parent';
 import { cn, isSubmittableMessage } from '~/utils';
 import { useLocalize } from '~/hooks';
 import EditFiles from './EditFiles';
@@ -36,7 +37,12 @@ const EditMessage = ({
    *  user turn behind it — chained onto another model turn, or left at the root by an
    *  import — has none. The action is withheld rather than offered and silently
    *  refused, the footer says why, and Save still applies. */
-  const canRerun = isUserTurn || findRerunParent(getMessages(), parentMessageId) != null;
+  const { parent, query: parentQuery } = useRerunParent(
+    getMessages(),
+    conversationId,
+    isUserTurn ? undefined : parentMessageId,
+  );
+  const canRerun = isUserTurn || parent != null;
   /** The files the rerun will carry. Removing one only shapes the new version of the turn: the
    *  message as it was keeps its files on its own branch, and nothing is deleted. */
   const [keptFiles, setKeptFiles] = useState(message.files);
@@ -112,7 +118,7 @@ const EditMessage = ({
   const rerunResponse = () => {
     /** The same resolution the withheld button is gated on, so a rendered Rerun and
      *  the submission it runs cannot disagree about the turn being replayed. */
-    const parentMessage = findRerunParent(getMessages(), parentMessageId);
+    const parentMessage = findRerunParent(getMessages(), parentMessageId) ?? parent;
     if (!parentMessage) {
       return;
     }
@@ -219,6 +225,7 @@ const EditMessage = ({
    *  an unsaved draft first, because Cancel discards it, then why the footer offers
    *  no rerun — the question a Save-only editor otherwise leaves unanswered. */
   const getStatusMessage = () => {
+    if (parentQuery.isFetching) return localize('com_ui_loading');
     if (filesRemoved) {
       return localize('com_ui_edit_files_removed');
     }
@@ -253,6 +260,12 @@ const EditMessage = ({
         className="mt-2 flex w-full flex-col gap-2"
       >
         {saveError && <Alert variant="error">{localize('com_ui_save_message_error')}</Alert>}
+        <ParentError
+          error={parentQuery.isError}
+          retry={() => {
+            void parentQuery.refetch();
+          }}
+        />
         {isUserTurn && (
           <EditFiles
             files={keptFiles ?? []}

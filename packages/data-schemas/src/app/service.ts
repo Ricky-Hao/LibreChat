@@ -6,6 +6,7 @@ import {
   filtersConfigSchema,
   conversationListConfigSchema,
   toolCallPreviewsConfigSchema,
+  messageReadsConfigSchema,
   hasActiveFiltersConfig,
   getConfigDefaults,
   langfuseConfigSchema,
@@ -252,6 +253,7 @@ export const AppService = async (params?: {
     credentials: { writeFormat: config.credentials?.writeFormat ?? 'v3' },
     conversationList: loadConversationListConfig(config),
     toolCallPreviews: loadToolCallPreviewsConfig(config),
+    messageReads: messageReadsConfigSchema.parse(config.messageReads ?? {}),
   };
 
   const agentsDefaults = agentsConfigSetup(config);

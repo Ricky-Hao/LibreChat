@@ -1,8 +1,9 @@
 import { useRef, useEffect } from 'react';
 import { useStore } from 'jotai';
 import { useNavigate } from 'react-router-dom';
-import { QueryKeys } from 'librechat-data-provider';
+import { useToastContext } from '@librechat/client';
 import { useQueryClient } from '@tanstack/react-query';
+import { QueryKeys, dataService } from 'librechat-data-provider';
 import { launchedConversationFamily } from '@librechat/chat/react';
 import type { ChatTurnsParams, TurnServices } from '@librechat/chat/react';
 import type { TEndpointsConfig } from 'librechat-data-provider';
@@ -22,7 +23,9 @@ import { useChatSettings } from '~/Providers/ChatSettingsContext';
 import useCodeWorkspace from '~/hooks/Agents/useCodeWorkspace';
 import { cancelUploads } from '~/hooks/Files/useFileHandling';
 import useUserKey from '~/hooks/Input/useUserKey';
+import { NotificationSeverity } from '~/common';
 import { isTargetReady } from './ask/guards';
+import { useLocalize } from '~/hooks';
 
 /** The app's side of a pane's turns: its catalogs, router, composer files, code workspace and
  *  logger, for the package's `useTurns`. */
@@ -32,6 +35,8 @@ export default function useTurnServices({
 }: Pick<ChatTurnsParams, 'index' | 'conversation'>): TurnServices {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { showToast } = useToastContext();
+  const localize = useLocalize();
   const discardFiles = useDiscardPastedFiles(index, conversation?.conversationId);
   const setFilesToDelete = useSetFilesToDelete();
   const agentsMap = useAgentsMapContext();
@@ -78,6 +83,30 @@ export default function useTurnServices({
     getEphemeralAgent,
     getUserKey: getExpiry,
     getRouteProjectId: getRouteChatProjectId,
+    cancelMessagesQuery: (conversationId) => {
+      void queryClient.cancelQueries(
+        { queryKey: [QueryKeys.messages, conversationId], exact: true },
+        { revert: false },
+      );
+    },
+    loadRegenerateParent: async (messageId) => {
+      const conversationId = getConversation()?.conversationId;
+      if (!conversationId || !queryClient.getQueryData([QueryKeys.historyWindow, conversationId])) {
+        return;
+      }
+      try {
+        const page = await queryClient.fetchQuery(
+          [QueryKeys.historyWindow, conversationId, 'parent', messageId],
+          () => dataService.getConversationHistory(conversationId, { messageId, limit: 1 }),
+        );
+        if (getConversation()?.conversationId === conversationId) return page.messages[0];
+      } catch {
+        showToast({
+          message: localize('com_ui_history_parent_error'),
+          severity: NotificationSeverity.ERROR,
+        });
+      }
+    },
     canSubmit: (submitted) => {
       const { config, addedConversation } = readiness.current;
       return (

@@ -10,6 +10,7 @@ import {
   useFocusTrap,
   useMediaQuery,
   ControlCombobox,
+  OverlayBack,
   useToastContext,
 } from '@librechat/client';
 import type {
@@ -1602,7 +1603,7 @@ export default function SubagentThreadPanel({
     );
   }
 
-  return (
+  const panel = (
     <aside
       ref={panelRef}
       tabIndex={-1}
@@ -1774,6 +1775,11 @@ export default function SubagentThreadPanel({
         </div>
       )}
     </aside>
+  );
+  return (
+    <OverlayBack open={isMobile} onClose={close}>
+      {panel}
+    </OverlayBack>
   );
 }
 

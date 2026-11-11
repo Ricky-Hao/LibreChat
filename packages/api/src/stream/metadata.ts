@@ -6,6 +6,12 @@ import type { JobMetadataPatch } from './interfaces/IJobStore';
 import type { GenerationJobMetadata } from '~/types';
 import { parseScheduleMCPCompletion } from '~/schedules/authorization/continuation';
 
+export function getRetainedContentMetadata(
+  editedContent: object | null | undefined,
+): Pick<JobMetadataPatch, 'retainedContentPending'> {
+  return editedContent == null ? {} : { retainedContentPending: true };
+}
+
 export function sanitizeJobMetadata(metadata: Partial<GenerationJobMetadata>): JobMetadataPatch {
   const patch: JobMetadataPatch = {};
   if (metadata.responseMessageId) {
@@ -16,6 +22,12 @@ export function sanitizeJobMetadata(metadata: Partial<GenerationJobMetadata>): J
   }
   if (metadata.compact !== undefined) {
     patch.compact = metadata.compact;
+  }
+  if (metadata.retainedContentPending !== undefined) {
+    patch.retainedContentPending = metadata.retainedContentPending;
+  }
+  if (metadata.retainedContent !== undefined) {
+    patch.retainedContent = metadata.retainedContent;
   }
   if (metadata.mcpRequestBody) {
     patch.mcpRequestBody = metadata.mcpRequestBody;

@@ -10,12 +10,13 @@ import {
   replyText,
   replyPrompt,
   sendMessage,
+  loadAllHistory,
   MOCK_ENDPOINTS,
   selectMockEndpoint,
 } from '../helpers';
 import { getE2EUser } from '../../../setup/user';
 
-/** Past the row count at which the thread mounts progressively instead of all at once. */
+/** Spans multiple history windows and progressive row mounts. */
 const TURNS = 60;
 
 async function seedLongChat(): Promise<string> {
@@ -59,7 +60,12 @@ test.describe('long conversations', () => {
   }) => {
     await page.goto(`/c/${conversationId}`);
 
-    const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
+    const thread = page.getByTestId('screenshot-target');
+    await expect(thread.locator('.message-render')).toHaveCount(24);
+    await loadAllHistory(page, conversationId, TURNS);
+    await thread
+      .getByText('Turn 1 of the long conversation', { exact: true })
+      .scrollIntoViewIfNeeded();
     await expect(
       thread.getByText('Turn 1 of the long conversation', { exact: true }),
     ).toBeVisible();
@@ -75,8 +81,8 @@ test.describe('long conversations', () => {
   }) => {
     await page.goto(`/c/${conversationId}`);
 
-    const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
-    await expect(thread.locator('.message-render')).toHaveCount(TURNS);
+    const thread = page.getByTestId('screenshot-target');
+    await loadAllHistory(page, conversationId, TURNS);
     const latest = thread.getByText(`Turn ${TURNS} of the long conversation`, { exact: true });
     await thread
       .getByText('Turn 1 of the long conversation', { exact: true })
@@ -100,7 +106,7 @@ test.describe('long conversations', () => {
     await page.goto(`/c/${conversationId}`);
 
     const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
-    await expect(thread.locator('.message-render')).toHaveCount(TURNS);
+    await expect(thread.locator('.message-render')).toHaveCount(24);
 
     await expect(
       thread.getByText(`Turn ${TURNS} of the long conversation`, { exact: true }),
@@ -116,7 +122,7 @@ test.describe('long conversations', () => {
     await page.goto(`/c/${conversationId}`);
 
     const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
-    await expect(thread.locator('.message-render')).toHaveCount(TURNS);
+    await loadAllHistory(page, conversationId, TURNS);
     await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
     const first = thread.getByText('Turn 1 of the long conversation', { exact: true });
     await first.scrollIntoViewIfNeeded();
@@ -140,10 +146,12 @@ test.describe('long conversations', () => {
       await page.goto(`/c/${conversationId}`);
 
       const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
-      await expect(thread.locator('.message-render')).toHaveCount(TURNS);
+      await expect(thread.locator('.message-render')).toHaveCount(24);
       const first = thread.getByText('Turn 1 of the long conversation', { exact: true });
       const latest = thread.getByText(`Turn ${TURNS} of the long conversation`, { exact: true });
       await expect(latest).toBeInViewport();
+      await loadAllHistory(page, conversationId, TURNS);
+      await latest.scrollIntoViewIfNeeded();
 
       const rail = page.getByRole('navigation', { name: 'Message navigation' });
       await expect(rail.getByRole('button', { name: 'Navigate to next message' })).toBeDisabled();

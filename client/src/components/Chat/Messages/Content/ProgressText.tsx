@@ -16,13 +16,11 @@ import { cn, getRunStepDurationLabels } from '~/utils';
 import { useLocalize } from '~/hooks';
 
 const wrapperClass =
-  'progress-text-wrapper text-text-secondary relative -mt-[0.046875rem] h-5 w-full leading-5';
+  'progress-text-wrapper text-text-secondary relative -mt-[0.046875rem] min-h-5 min-w-0 w-full leading-5';
 
-/** `right-0` and `max-w-full` cap the absolutely-positioned line at the message
- *  column; the label span truncates itself, so overflow stays visible for the
- *  button's focus ring. */
-const contentClass =
-  'progress-text-content absolute left-0 right-0 top-0 max-w-full overflow-visible whitespace-nowrap';
+/** Stay in flow so wrapped intents and metadata also size the caller's row.
+ *  Overflow remains visible for the disclosure's focus ring. */
+const contentClass = 'progress-text-content max-w-full overflow-visible';
 
 const Wrapper = ({
   popover,
@@ -157,7 +155,7 @@ export default function ProgressText({
     toolExecutionDurationMs != null &&
     Number.isFinite(toolExecutionDurationMs) &&
     toolExecutionDurationMs >= 50;
-  /** Pinned beside the chevron: "2.4s (prepared in 0.3s)". */
+  /** Compact intervals: "2.4s (prepared in 0.3s)". */
   const durationParts =
     phase !== 'completed'
       ? []
@@ -190,13 +188,16 @@ export default function ProgressText({
               ]
             : []),
         ];
+  const showTimer = isRunning && phaseStartAt != null && localPhaseStart != null;
+  const hasMetadata =
+    subtitle || errorSuffix || timer != null || showTimer || durationParts.length > 0;
 
   return (
     <Wrapper popover={popover} rootRef={rootRef}>
       <Button
         type="button"
         variant="disclosure"
-        className="group/disclosure"
+        className="group/disclosure items-start text-left whitespace-normal"
         disabled={!hasInput}
         tabIndex={hasInput ? 0 : -1}
         onClick={hasInput ? onClick : undefined}
@@ -207,69 +208,48 @@ export default function ProgressText({
             {icon}
           </span>
         )}
-        {/* The label names the card and stays whole; a subtitle can be
-            arbitrary authored text (a question, an error line), so it takes
-            ALL of the shrink and ellipsizes instead of pushing the line past
-            the message column. All, not most: a weighted share left the label
-            a fraction of a pixel short of its text, and that fraction is
-            enough for `truncate` to swap its last letters for an ellipsis.
-            The pair sits in its own shrinking box so the verdict, the
-            duration and the chevron after it never lose width: the box gives
-            up the subtitle first, and a label wider than the box truncates at
-            the box (`max-w-full`), not past the row. */}
-        <span className="flex min-w-0 items-center gap-2">
+        {/* Phones give the intent its own full-width line. Larger layouts
+            stay inline when they fit, but can wrap inside nested panels too. */}
+        <span className="flex min-w-0 flex-1 flex-col gap-x-2 gap-y-1 sm:flex-initial sm:flex-row sm:flex-wrap sm:items-baseline">
           <span
             className={cn(
               showShimmer ? 'shimmer' : '',
-              'max-w-full min-w-0 truncate font-medium',
-              subtitle && 'shrink-0',
+              'max-w-full min-w-0 font-medium [overflow-wrap:anywhere]',
             )}
           >
             {text}
           </span>
-          {subtitle && (
-            <span className="text-text-secondary min-w-0 shrink truncate font-normal">
-              {subtitle}
+          {hasMetadata && (
+            <span className="text-text-secondary flex max-w-full min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 font-normal [overflow-wrap:anywhere]">
+              {subtitle && <span>{subtitle}</span>}
+              {errorSuffix && <span className="text-status-error">· {verdict || errorSuffix}</span>}
+              {timer}
+              {timer == null && showTimer && <ElapsedTimer start={localPhaseStart} />}
+              {durationParts.map(({ label, phrase, duration }) => (
+                <span key={label} className="text-xs tabular-nums">
+                  <span aria-hidden="true">
+                    {phrase
+                      ? localize(phrase, { 0: localize(duration.key, duration.values) })
+                      : localize(duration.key, duration.values)}
+                  </span>
+                  <span className="sr-only">
+                    {label && `${label} `}
+                    {localize(duration.announcedKey, duration.announcedValues)}
+                  </span>
+                </span>
+              ))}
             </span>
           )}
         </span>
-        {/* A reason ("timed out", "exit code 2") already says the call failed,
-            so it replaces the generic word instead of following it. */}
-        {errorSuffix && (
-          <span className="text-status-error shrink-0 font-normal">· {verdict || errorSuffix}</span>
+        {hasInput && (
+          <ChevronDown
+            className={cn(
+              disclosureChevronVariants({ expanded: isExpanded }),
+              'size-4 shrink-0 translate-y-[0.0625rem]',
+            )}
+            aria-hidden="true"
+          />
         )}
-        {/* Pinned to the row's end so every row's time and chevron line up. */}
-        <span className="ms-auto flex shrink-0 items-center gap-2">
-          {timer}
-          {timer == null && isRunning && phaseStartAt != null && localPhaseStart != null && (
-            <ElapsedTimer start={localPhaseStart} />
-          )}
-          {durationParts.map(({ label, phrase, duration }) => (
-            <span
-              key={label}
-              className="text-text-secondary shrink-0 text-xs font-normal tabular-nums"
-            >
-              <span aria-hidden="true">
-                {phrase
-                  ? localize(phrase, { 0: localize(duration.key, duration.values) })
-                  : localize(duration.key, duration.values)}
-              </span>
-              <span className="sr-only">
-                {label && `${label} `}
-                {localize(duration.announcedKey, duration.announcedValues)}
-              </span>
-            </span>
-          ))}
-          {hasInput && (
-            <ChevronDown
-              className={cn(
-                disclosureChevronVariants({ expanded: isExpanded }),
-                'size-4 shrink-0 translate-y-[0.0625rem]',
-              )}
-              aria-hidden="true"
-            />
-          )}
-        </span>
       </Button>
     </Wrapper>
   );

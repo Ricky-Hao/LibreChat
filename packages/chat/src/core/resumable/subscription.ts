@@ -50,7 +50,7 @@ export class ResumableSubscription {
   /** Step events that arrived before `created` named the turn, replayed once it does. */
   readonly preCreatedStepEvents: StepEvent[] = [];
   connection: ChatStreamConnection | null = null;
-  private foregroundStatusCheckInFlight = false;
+  terminalRecoveryPaused = false;
 
   constructor(
     readonly run: ResumableRun,
@@ -190,13 +190,10 @@ export class ResumableSubscription {
      *  supersedes it rather than waiting the delay out; its callback finds a superseded
      *  subscription and does nothing. */
     this.run.clearReconnectTimeout();
+    this.run.terminalRecoveryAttempt = 0;
     this.run.reconnectAttempt = Math.max(this.run.reconnectAttempt, 1);
     this.close();
     this.reattach();
-  }
-
-  private isSettled(): boolean {
-    return this.finalReceived || this.retired || this.run.replacementHandoff;
   }
 
   /**
@@ -207,69 +204,33 @@ export class ResumableSubscription {
    * conversation while the pane stays mounted, which is why the response the run finished
    * writing only appears after a reload.
    *
-   * Some mobile WebViews leave the XHR marked OPEN even after the suspended request stopped
-   * delivering events. In that case the durable run status is the only authority that
-   * distinguishes a healthy live attachment from a terminal one holding stale partial content.
-   * A terminal status forces the same resume path as a closed transport; it returns the
-   * synthesized terminal frame or 404 that reconciles persisted messages.
+   * Some mobile WebViews leave XHR marked OPEN after it stops delivering events. The fenced
+   * resume endpoint adjudicates live, terminal and replaced generations without a status preflight.
    */
-  private handleForegroundReattach(): void {
-    const { visibility, fetchStatus, logger } = this.host;
-    if (!visibility.isVisible() || this.isSettled() || !this.isCurrent() || !this.run.submission) {
+  private handleForegroundReattach(online = false): void {
+    if (
+      !this.host.visibility.isVisible() ||
+      ((online || this.finalReceived) && !this.terminalRecoveryPaused) ||
+      this.retired ||
+      this.run.replacementHandoff ||
+      !this.isCurrent() ||
+      !this.run.submission
+    ) {
       return;
     }
-
-    if (this.connection?.closed === true) {
-      this.reattachOnForeground();
-      return;
-    }
-
-    if (this.foregroundStatusCheckInFlight) {
-      return;
-    }
-    this.foregroundStatusCheckInFlight = true;
-    const foregroundConvoId = this.conversationId();
-    const { generationCreatedAt } = this;
-    void fetchStatus(foregroundConvoId)
-      .then((status) => {
-        if (
-          status.active !== false ||
-          (status.createdAt != null &&
-            generationCreatedAt != null &&
-            status.createdAt !== generationCreatedAt) ||
-          !this.isCurrent() ||
-          this.isSettled() ||
-          !visibility.isVisible()
-        ) {
-          return;
-        }
-        logger.log(
-          'ResumableSSE',
-          'Apparently open stream is terminal - reconciling on foreground',
-          { conversationId: foregroundConvoId, generationCreatedAt },
-        );
-        this.reattachOnForeground();
-      })
-      .catch((error) => {
-        if (!this.isCurrent()) {
-          return;
-        }
-        logger.warn('ResumableSSE', 'Could not verify stream on foreground', {
-          conversationId: foregroundConvoId,
-          generationCreatedAt,
-          error,
-        });
-      })
-      .finally(() => {
-        this.foregroundStatusCheckInFlight = false;
-      });
+    this.reattachOnForeground();
   }
 
   /** Replaces the pane's foreground listener with this subscription's. */
   watchForeground(): void {
     this.run.stopForegroundReattach?.();
-    this.run.stopForegroundReattach = this.host.visibility.subscribe(() =>
-      this.handleForegroundReattach(),
+    const stopVisibility = this.host.visibility.subscribe(() => this.handleForegroundReattach());
+    const stopOnline = this.host.visibility.subscribeOnline?.(() =>
+      this.handleForegroundReattach(true),
     );
+    this.run.stopForegroundReattach = () => {
+      stopVisibility();
+      stopOnline?.();
+    };
   }
 }

@@ -142,6 +142,7 @@ export interface AppConfig {
   conversationList?: TConversationListConfig;
   /** Bounds for the tool-call previews sent on conversation loads */
   toolCallPreviews?: TToolCallPreviewsConfig;
+  messageReads?: TCustomConfig['messageReads'];
   /** Processed model specifications */
   modelSpecs?: TCustomConfig['modelSpecs'];
   /** Available tools */

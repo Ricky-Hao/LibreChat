@@ -60,6 +60,7 @@ const BUILTIN_ICONS: Record<string, ItemIcon> = {
     Icon: MessageCircleQuestion,
     colorClass: 'bg-series-3/15 text-series-3',
   },
+  create_task_callback: { Icon: Layers, colorClass: 'bg-series-7/15 text-series-7' },
 };
 
 const KIND_FALLBACK_ICONS: Record<AgentItem['kind'], ItemIcon> = {

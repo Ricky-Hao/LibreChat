@@ -191,7 +191,11 @@ export function createSSETransport({ token }: { token?: string }): ChatTransport
         onEvent(event);
       };
 
-      sse.addEventListener('open', () => {
+      sse.addEventListener('open', (event: StreamErrorEvent) => {
+        /** sse.js announces error response headers as open before emitting error. */
+        if (event.responseCode == null || event.responseCode < 200 || event.responseCode >= 300) {
+          return;
+        }
         failureSeen = false;
         dispatch({ type: 'open' });
       });

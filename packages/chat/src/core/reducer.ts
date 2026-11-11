@@ -196,12 +196,24 @@ export function reduceStep(state: StreamState, event: StepEvent, ctx: StepContex
     }
     const result =
       event.event === StepEvents.ON_MESSAGE_DELTA
-        ? applyMessageDelta(response, runStep, event.data, editPrefixOffset)
-        : applyReasoningDelta(response, runStep, event.data, editPrefixOffset);
-    if (result.foldedEditPrefix && submission != null) {
-      submission.editPrefixFirstPartFolded = true;
-    }
+        ? applyMessageDelta(
+            response,
+            runStep,
+            event.data,
+            editPrefixOffset,
+            submission.editPrefixFirstPartFolded,
+            submission.editPrefixType ?? submission.editedContent?.type,
+          )
+        : applyReasoningDelta(
+            response,
+            runStep,
+            event.data,
+            editPrefixOffset,
+            submission.editPrefixFirstPartFolded,
+            submission.editPrefixType ?? submission.editedContent?.type,
+          );
     if (result.updated) {
+      submission.editPrefixFirstPartFolded = result.foldedEditPrefix;
       state.messages.set(responseMessageId, result.message);
       effects.push({ type: 'flush', messageId: responseMessageId, messages });
     }
