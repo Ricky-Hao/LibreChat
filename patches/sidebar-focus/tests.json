@@ -1,0 +1,49 @@
+{
+  "checks": [
+    {
+      "name": "client focused tests",
+      "tier": "focused",
+      "cwd": "client",
+      "requires": [
+        "client/package.json",
+        "client/src/components/Chat/Menus/__tests__/OpenSidebar.spec.tsx"
+      ],
+      "runner": "jest",
+      "files": [
+        "client/src/components/Chat/Menus/__tests__/OpenSidebar.spec.tsx"
+      ]
+    },
+    {
+      "name": "client tsc --noEmit",
+      "tier": "types",
+      "cwd": "client",
+      "requires": [
+        "client/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    }
+  ]
+}

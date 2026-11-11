@@ -1,0 +1,157 @@
+diff --git a/packages/api/src/agents/ptc.spec.ts b/packages/api/src/agents/ptc.spec.ts
+index 3a3f04179ae5b046854b729b55246c1dc2d455e0..8e9c32c16c69b4ebadf551ccf1b79350cc6832c7 100644
+--- a/packages/api/src/agents/ptc.spec.ts
++++ b/packages/api/src/agents/ptc.spec.ts
+@@ -1,3 +1,6 @@
++import { z } from 'zod';
++import { executeTools, Constants } from '@librechat/agents';
++import { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
+ import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
+ import type { PtcToolCallEvent } from 'librechat-data-provider';
+ import { instrumentPtcToolMap, summarizePtcArgs } from './ptc';
+@@ -85,6 +88,38 @@ describe('instrumentPtcToolMap', () => {
+     return { events, emit: (event: PtcToolCallEvent) => events.push(event) };
+   };
+ 
++  it.each([Constants.PROGRAMMATIC_TOOL_CALLING, Constants.BASH_PROGRAMMATIC_TOOL_CALLING])(
++    'keeps UI intent separate while %s invokes the strict execution schema',
++    async (caller) => {
++      const { events, emit } = collect();
++      const received: Array<{ id: string; expanded: boolean }> = [];
++      const tool = new DynamicStructuredTool({
++        name: 'agents_get',
++        description: 'fixture',
++        schema: z.object({ id: z.string(), expanded: z.boolean() }).strict(),
++        func: async (input) => {
++          received.push(input);
++          return 'ok';
++        },
++      });
++      const toolMap = instrumentPtcToolMap({
++        toolMap: new Map([[tool.name, tool]]),
++        toolCallId: 'outer',
++        emit,
++      });
++      const input = Object.freeze({ intent: 'Inspecting agent', id: 'agent', expanded: false });
++      const results = await executeTools(
++        [{ id: 'inner', name: tool.name, input }],
++        toolMap,
++        caller,
++      );
++      expect(results[0].is_error).toBe(false);
++      expect(received).toEqual([{ id: 'agent', expanded: false }]);
++      expect(events[0].args).toContain('Inspecting agent');
++      expect(input.intent).toBe('Inspecting agent');
++    },
++  );
++
+   it('emits a running event and a success event around an inner call', async () => {
+     const { events, emit } = collect();
+     const toolMap = new Map([['read_file', createTool('read_file', async () => 'file contents')]]);
+diff --git a/packages/api/src/agents/ptc.ts b/packages/api/src/agents/ptc.ts
+index 249355b2590aa8857784dd8afc482692d0521a48..f06b8bf24cf898257cee72cef2b9fb378a8b5e1c 100644
+--- a/packages/api/src/agents/ptc.ts
++++ b/packages/api/src/agents/ptc.ts
+@@ -1,4 +1,5 @@
+ import { PROGRAMMATIC_TOOL_INPUT } from '@librechat/agents';
++import { normalizeProgrammaticToolResponse } from '@librechat/agents';
+ import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
+ import type { PtcToolCallEvent } from 'librechat-data-provider';
+ 
+@@ -171,11 +172,16 @@ export function instrumentPtcToolMap({
+               const result = await (
+                 target.invoke as (input: unknown, config?: unknown) => Promise<unknown>
+               ).call(target, input, config);
++              const outcome = normalizeProgrammaticToolResponse(
++                result,
++                (target as StructuredToolInterface & { mcp?: boolean }).mcp === true,
++              );
+               safeEmit({
+                 tool_call_id: toolCallId,
+                 call_id: callId,
+                 name,
+-                status: 'success',
++                status: outcome.is_error ? 'error' : 'success',
++                ...(includePreviews && outcome.is_error ? { error: outcome.error_message } : {}),
+                 durationMs: Date.now() - startedAt,
+                 ...(runId != null ? { runId } : {}),
+               });
+diff --git a/packages/api/src/mcp/status.spec.ts b/packages/api/src/mcp/status.spec.ts
+index deb347502b29ff55b0389663df1625e2c06d8f09..35a67c1b7f41300c1ce6f248b8f23fa0a26c9fd4 100644
+--- a/packages/api/src/mcp/status.spec.ts
++++ b/packages/api/src/mcp/status.spec.ts
+@@ -1,6 +1,9 @@
+ import { z } from 'zod';
++import { executeTools, Constants } from '@librechat/agents';
+ import { ToolMessage } from '@librechat/agents/langchain/messages';
++import type { PtcToolCallEvent } from 'librechat-data-provider';
+ import { markMCPToolResultError, isMCPToolResultError } from './status';
++import { instrumentPtcToolMap } from '~/agents/ptc';
+ import { createMCPStructuredTool } from './tools';
+ import { formatToolContent } from './parsers';
+ 
+@@ -41,3 +44,64 @@ test('successful MCP results retain their existing content and artifact contract
+   expect(result.status).toBe('success');
+   expect(result.artifact).toEqual(formatted[1]);
+ });
++
++test.each([Constants.PROGRAMMATIC_TOOL_CALLING, Constants.BASH_PROGRAMMATIC_TOOL_CALLING])(
++  '%s carries real MCP errors through instrumentation and preserves the next success',
++  async (caller) => {
++    for (const includePreviews of [false, true]) {
++      const events: PtcToolCallEvent[] = [];
++      const failed = markMCPToolResultError(
++        formatToolContent(
++          {
++            isError: true,
++            content: [{ type: 'text', text: 'Missing fixture file' }],
++            structuredContent: { reason: 'missing' },
++          },
++          'openai',
++        ),
++        true,
++      );
++      const succeeded = formatToolContent(
++        { content: [{ type: 'text', text: '{"sha":"fixture-sha"}' }] },
++        'openai',
++      );
++      const schema = z.object({ id: z.string() }).strict();
++      const probe = Object.assign(
++        createMCPStructuredTool(
++          async (input) => (schema.parse(input).id === 'missing' ? failed : succeeded),
++          {
++            name: 'probe',
++            description: 'Local MCP adapter fixture',
++            schema,
++            responseFormat: 'content_and_artifact',
++          },
++        ),
++        { mcp: true, schema },
++      );
++      const toolMap = instrumentPtcToolMap({
++        toolMap: new Map([[probe.name, probe]]),
++        toolCallId: 'outer',
++        includePreviews,
++        emit: (event) => events.push(event),
++      });
++      const input = Object.freeze({ id: 'missing', intent: 'Inspect fixture' });
++      const [bad] = await executeTools([{ id: 'bad', name: 'probe', input }], toolMap, caller);
++      expect(bad).toMatchObject({ is_error: true, error_message: 'Tool reported an error.' });
++      expect(bad.result).toBeInstanceOf(ToolMessage);
++      expect(bad.result.artifact).toBe(failed[1]);
++      expect(events[1]).toMatchObject({ status: 'error' });
++      expect(events[1].error).toBe(includePreviews ? 'Tool reported an error.' : undefined);
++      expect(events[0].args).toEqual(
++        includePreviews ? expect.stringContaining('Inspect fixture') : undefined,
++      );
++      const [good] = await executeTools(
++        [{ id: 'good', name: 'probe', input: { id: 'valid' } }],
++        toolMap,
++        caller,
++      );
++      expect(good).toMatchObject({ is_error: false, result: '{"sha":"fixture-sha"}' });
++      expect(events[3]).toMatchObject({ status: 'success' });
++      expect(input.intent).toBe('Inspect fixture');
++    }
++  },
++);

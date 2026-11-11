@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "name": "Contributor Markdown diff whitespace",
+      "tier": "focused",
+      "cwd": ".",
+      "requires": [
+        "AGENTS.md",
+        ".github/pull_request_template.md"
+      ],
+      "runner": "command",
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "HEAD",
+        "--",
+        "AGENTS.md",
+        ".github/pull_request_template.md"
+      ]
+    }
+  ]
+}

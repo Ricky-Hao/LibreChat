@@ -1,0 +1,588 @@
+diff --git a/api/app/clients/specs/BaseClient.test.js b/api/app/clients/specs/BaseClient.test.js
+index 035b20d032a4afa59d7ceee15977779fdc0ec0cc..7364dcf3c796ddda34b4c60f7a2b7462ff7186f1 100644
+--- a/api/app/clients/specs/BaseClient.test.js
++++ b/api/app/clients/specs/BaseClient.test.js
+@@ -657,6 +657,41 @@ describe('BaseClient', () => {
+   });
+ 
+   describe('sendMessage', () => {
++    test('waits for an MCP image artifact before persisting the ordinary response', async () => {
++      saveMessage.mockClear();
++      const storedImage = deferred();
++      const completionStarted = deferred();
++      const attachment = {
++        file_id: 'synthetic-image',
++        type: 'image/jpeg',
++        width: 2,
++        height: 2,
++        filepath: '/synthetic.jpeg',
++        toolCallId: 'synthetic-call',
++      };
++      TestClient.artifactPromises = [storedImage.promise];
++      TestClient.sendCompletion.mockImplementation(async () => {
++        completionStarted.resolve();
++        return { completion: 'Synthetic image result', metadata: undefined };
++      });
++
++      const sending = TestClient.sendMessage('Create a synthetic fixture');
++      await completionStarted.promise;
++      await new Promise((resolve) => setImmediate(resolve));
++      expect(saveMessage.mock.calls.some(([, message]) => message.isCreatedByUser === false)).toBe(
++        false,
++      );
++
++      storedImage.resolve(attachment);
++      const response = await sending;
++      await response.databasePromise;
++      expect(response.attachments).toEqual([attachment]);
++      const persisted = saveMessage.mock.calls.find(
++        ([, message]) => message.isCreatedByUser === false,
++      )?.[1];
++      expect(persisted?.attachments).toEqual([attachment]);
++    });
++
+     test('sendMessage should return a response message', async () => {
+       const expectedResult = expect.objectContaining({
+         sender: TestClient.sender,
+diff --git a/api/server/services/MCP.spec.js b/api/server/services/MCP.spec.js
+index 7ead0a2c0acc23e9006c1b559d5d9f1d6b5f3b2f..75b6b95d97b1ee15ba27e6688d457e2c36516fc7 100644
+--- a/api/server/services/MCP.spec.js
++++ b/api/server/services/MCP.spec.js
+@@ -109,6 +109,16 @@ jest.mock('./OboPolicyService', () => ({
+   createOboTrustChecker: jest.fn(() => jest.fn()),
+ }));
+ 
++jest.mock('~/server/services/Files/process', () => ({ saveBase64Image: jest.fn() }));
++jest.mock('~/server/services/Files/Citations', () => ({ processFileCitations: jest.fn() }));
++jest.mock('~/server/services/Files/Code/process', () => ({
++  processCodeOutput: jest.fn(),
++  runPreviewFinalize: jest.fn(),
++}));
++jest.mock('~/server/services/Files/Code/preflight', () => ({
++  preflightCodeOutputBatch: jest.fn(),
++}));
++
+ describe('tests for the new helper functions used by the MCP connection status endpoints', () => {
+   let mockGetMCPManager;
+   let mockGetFlowStateManager;
+@@ -1622,6 +1632,185 @@ describe('User parameter passing tests', () => {
+   });
+ 
+   describe('createMCPTool', () => {
++    describe('image artifact contract', () => {
++      afterEach(() => jest.restoreAllMocks());
++      it.each([
++        ['normalized custom alias', 'openai', undefined, 'openai', false],
++        ['normalized invocation metadata', 'openai', 'openai', 'openai', false],
++        ['explicit alias metadata override', 'openai', 'NewAPI', 'newapi', false],
++        ['anthropic', 'anthropic', 'anthropic', 'anthropic', false],
++        ['unknown', 'unknown', undefined, 'unknown', false],
++        ['undefined', undefined, undefined, undefined, false],
++        ['MCP error', 'unknown', undefined, 'unknown', true],
++      ])(
++        'delivers a synthetic JPEG through the foreground callback: %s',
++        async (_label, capturedProvider, invocationProvider, expectedProvider, isError) => {
++          const sharp = require('sharp');
++          const { createHash } = require('node:crypto');
++          const { CallToolResultSchema } = require('@modelcontextprotocol/sdk/types.js');
++          const {
++            createToolExecuteHandler,
++            getProviderConfig,
++            MCPManager,
++            MCPConnection,
++            MCPServersRegistry,
++          } = require('@librechat/api');
++          const { createToolEndCallback } = require('../controllers/agents/callbacks');
++          const { saveBase64Image } = require('./Files/process');
++          const { overrideProvider } = getProviderConfig({
++            provider: 'NewAPI',
++            appConfig: {
++              endpoints: { custom: [{ name: 'NewAPI', baseURL: 'http://127.0.0.1:1' }] },
++            },
++          });
++          expect(overrideProvider.toLowerCase()).toBe('openai');
++          const bytes = await sharp({
++            create: { width: 2, height: 2, channels: 3, background: '#4287ab' },
++          })
++            .jpeg()
++            .toBuffer();
++          const hash = (buffer) => createHash('sha256').update(buffer).digest('hex');
++          const text = JSON.stringify({ fixture: 'synthetic-2x2', immutable: true });
++          const result = CallToolResultSchema.parse({
++            structuredContent: JSON.parse(text),
++            content: [
++              { type: 'text', text },
++              { type: 'image', mimeType: 'image/jpeg', data: bytes.toString('base64') },
++            ],
++            isError,
++          });
++          const manager = new MCPManager();
++          const registry = new MCPServersRegistry(
++            require('mongoose'),
++            ['127.0.0.1'],
++            null,
++            async (principal) => ({
++              allowedDomains: ['127.0.0.1'],
++              allowedAddresses: null,
++              mcpApps: registry.getMCPAppsPolicy(),
++              serverNames: principal?.userId === 'hidden-user' ? [] : ['synthetic'],
++            }),
++          );
++          registry.setYamlServerOptions({
++            synthetic: { type: 'streamable-http', url: 'http://127.0.0.1:1/mcp' },
++          });
++          jest.spyOn(registry, 'isAppServerConfig').mockResolvedValue(false);
++          const hiddenCheck = jest.spyOn(registry, 'isHiddenFromPrincipal');
++          jest.spyOn(MCPServersRegistry, 'getInstance').mockReturnValue(registry);
++          const connection = new MCPConnection({
++            serverName: 'synthetic',
++            serverConfig: { type: 'streamable-http', url: 'http://127.0.0.1:1/mcp' },
++          });
++          const request = jest.spyOn(connection.client, 'request').mockResolvedValue(result);
++          jest.spyOn(connection, 'isConnected').mockResolvedValue(true);
++          jest.spyOn(manager, 'getConnection').mockResolvedValue(connection);
++          const callTool = jest.spyOn(manager, 'callTool');
++          mockGetMCPManager.mockReturnValue(manager);
++          require('~/models').getRoleByName.mockResolvedValue({
++            permissions: { [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true } },
++          });
++          const user = { id: 'synthetic-user', role: 'USER' };
++          const toolKey = `image${D}synthetic`;
++          const tool = await createMCPTool({
++            user,
++            config: { url: 'http://127.0.0.1:1/mcp' },
++            toolKey,
++            provider: capturedProvider === 'openai' ? overrideProvider : capturedProvider,
++            userMCPAuthMap: {},
++            availableTools: {
++              [toolKey]: {
++                function: {
++                  description: 'Synthetic image',
++                  parameters: { type: 'object', properties: {} },
++                },
++              },
++            },
++          });
++          expect(tool.responseFormat).toBe('content_and_artifact');
++          const artifactPromises = [];
++          const req = { user, config: {} };
++          const res = {
++            headersSent: true,
++            writableEnded: false,
++            write: jest.fn(),
++            flush: jest.fn(),
++          };
++          saveBase64Image.mockImplementation(async (url) => {
++            const [prefix, data] = url.split(',');
++            expect(prefix).toBe('data:image/jpeg;base64');
++            expect(hash(Buffer.from(data, 'base64'))).toBe(hash(bytes));
++            return {
++              file_id: 'synthetic-file',
++              type: 'image/jpeg',
++              width: 2,
++              height: 2,
++              filepath: '/synthetic.jpeg',
++            };
++          });
++          const callback = jest.fn(createToolEndCallback({ req, res, artifactPromises }));
++          const handler = createToolExecuteHandler({
++            loadTools: async () => ({ loadedTools: [tool] }),
++            toolEndCallback: callback,
++          });
++          const outputs = await new Promise((resolve, reject) => {
++            handler.handle('on_tool_execute', {
++              toolCalls: [
++                { id: 'synthetic-call', name: toolKey, args: {}, stepId: 'synthetic-step' },
++              ],
++              agentId: 'synthetic-agent',
++              metadata: {
++                provider: invocationProvider,
++                thread_id: 'synthetic-thread',
++                run_id: 'synthetic-message',
++              },
++              configurable: { user },
++              resolve,
++              reject,
++            });
++          });
++          expect(callTool).toHaveBeenCalledTimes(1);
++          await expect(callTool.mock.results[0].value).resolves.toHaveLength(2);
++          expect(request).toHaveBeenCalledTimes(1);
++          expect(callTool.mock.calls[0][0].provider).toBe(expectedProvider);
++          expect(hiddenCheck).toHaveBeenCalledWith(
++            'synthetic',
++            callTool.mock.calls[0][0].serverConfig,
++            user,
++          );
++          expect(callback).toHaveBeenCalledTimes(1);
++          expect(outputs[0].artifact?.content?.length ?? 0).toBe(1);
++          expect(outputs[0].content === text).toBe(true);
++          expect(outputs[0].status).toBe(isError ? 'error' : 'success');
++          expect(artifactPromises.length).toBe(1);
++          const attachments = await Promise.all(artifactPromises);
++          expect(attachments).toEqual([
++            expect.objectContaining({
++              file_id: 'synthetic-file',
++              type: 'image/jpeg',
++              messageId: 'synthetic-message',
++              conversationId: 'synthetic-thread',
++              toolCallId: 'synthetic-call',
++            }),
++          ]);
++          expect(saveBase64Image).toHaveBeenCalledTimes(1);
++          expect(saveBase64Image.mock.calls[0][1].req).toBe(req);
++          expect(res.write).toHaveBeenCalled();
++          expect(res.write.mock.calls.some(([chunk]) => chunk.includes('synthetic-file'))).toBe(
++            true,
++          );
++          // A valid image fixture must not bypass checkout when that principal hides the server.
++          await expect(
++            manager.callTool({
++              ...callTool.mock.calls[0][0],
++              user: { ...user, id: 'hidden-user' },
++            }),
++          ).rejects.toThrow('No connection found for server synthetic');
++          expect(request).toHaveBeenCalledTimes(1);
++          expect(manager.getConnection).toHaveBeenCalledTimes(1);
++        },
++      );
++    });
++
+     it('preserves the full MCP tuple for the Assistants required-action sink', async () => {
+       const mockUser = { id: 'assistants-app-user', role: 'USER' };
+       const mockRes = { write: jest.fn(), flush: jest.fn() };
+diff --git a/packages/api/src/mcp/__tests__/parsers.test.ts b/packages/api/src/mcp/__tests__/parsers.test.ts
+index 110e126379291b83f241809062710723bc980428..c72192a0424b3f49fef5db86df981e96231c871d 100644
+--- a/packages/api/src/mcp/__tests__/parsers.test.ts
++++ b/packages/api/src/mcp/__tests__/parsers.test.ts
+@@ -1,3 +1,5 @@
++import sharp from 'sharp';
++import { createHash } from 'node:crypto';
+ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+ import { isMcpAppMimeType, MCP_APP_MIME_TYPE } from 'librechat-data-provider';
+ import type * as t from '../types';
+@@ -38,17 +40,156 @@ describe('formatToolContent', () => {
+       expect(content).toBe('(No response)');
+       expect(artifacts).toBeUndefined();
+     });
++  });
+ 
+-    it('should preserve the image payload in the string for unrecognized providers', () => {
+-      const result: t.MCPToolCallResponse = {
+-        content: [{ type: 'image', data: 'iVBORw0KGgoAAAA...', mimeType: 'image/png' }],
+-      };
++  describe('synthetic image artifact contract', () => {
++    const providers = ['openai', 'anthropic', 'unknown', undefined] as const;
++    const metadata = Object.freeze({ fixture: 'synthetic-2x2', immutable: true });
++    const text = JSON.stringify(metadata);
++    const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
++    let images: t.ImageContent[];
++    let hashes: string[];
++    let jpegBytes: number;
++    const originalMaxImageBytes = process.env.MCP_IMAGE_DATA_MAX_BYTES;
+ 
+-      const [content, artifacts] = formatToolContent(result, 'unknown' as t.Provider);
++    beforeAll(async () => {
++      const buffers = await Promise.all(
++        (['jpeg', 'png', 'webp'] as const).map((format) =>
++          sharp({ create: { width: 2, height: 2, channels: 3, background: '#4287ab' } })
++            .toFormat(format)
++            .toBuffer(),
++        ),
++      );
++      images = buffers.map((buffer, index) => ({
++        type: 'image',
++        mimeType: ['image/jpeg', 'image/png', 'image/webp'][index],
++        data: buffer.toString('base64'),
++      }));
++      hashes = buffers.map(digest);
++      jpegBytes = buffers[0].length;
++    });
++
++    it('uses valid 2x2 JPEG, PNG and WebP fixtures', async () => {
++      for (const image of images) {
++        const dimensions = await sharp(Buffer.from(image.data, 'base64')).metadata();
++        expect([dimensions.width, dimensions.height]).toEqual([2, 2]);
++        expect(`image/${dimensions.format}`).toBe(image.mimeType);
++      }
++    });
+ 
+-      expect(artifacts).toBeUndefined();
+-      expect(content).toContain('iVBORw0KGgoAAAA...');
+-      expect(content).toContain('image/png');
++    afterEach(() => {
++      if (originalMaxImageBytes === undefined) {
++        delete process.env.MCP_IMAGE_DATA_MAX_BYTES;
++      } else {
++        process.env.MCP_IMAGE_DATA_MAX_BYTES = originalMaxImageBytes;
++      }
++    });
++
++    function checkImages(artifacts: t.Artifacts, expected: number[]) {
++      expect(artifacts?.content?.length ?? 0).toBe(expected.length);
++      expected.forEach((imageIndex, index) => {
++        const part = artifacts?.content?.[index];
++        expect(part?.type).toBe('image_url');
++        if (part?.type !== 'image_url') {
++          throw new Error('Missing image artifact');
++        }
++        const [prefix, data] = part.image_url.url.split(',');
++        expect(prefix).toBe(`data:${images[imageIndex].mimeType};base64`);
++        expect(digest(Buffer.from(data, 'base64'))).toBe(hashes[imageIndex]);
++      });
++    }
++
++    describe.each(providers)('provider %s', (provider) => {
++      it.each([false, true])('preserves canonical metadata and JPEG (isError=%s)', (isError) => {
++        const result = CallToolResultSchema.parse({
++          structuredContent: metadata,
++          content: [{ type: 'text', text }, images[0]],
++          isError,
++        });
++        const before = JSON.stringify(result);
++        const [content, artifacts] = formatToolContent(result, provider as t.Provider);
++        checkImages(artifacts, [0]);
++        expect(content === text).toBe(true);
++        expect(images.some((image) => content.includes(image.data))).toBe(false);
++        expect(JSON.stringify(result) === before).toBe(true);
++      });
++
++      it('keeps multiple image MIME types and order', () => {
++        const [content, artifacts] = formatToolContent({ content: images }, provider as t.Provider);
++        checkImages(artifacts, [0, 1, 2]);
++        expect(content.length).toBe(0);
++      });
++
++      it.each(['ordinary', 'legacy-ui', 'declared-app'] as const)(
++        'enforces the decoded-size boundary on %s results',
++        (path) => {
++          const content: t.ToolContentPart[] = [{ type: 'text', text }, images[0]];
++          if (path === 'legacy-ui') {
++            content.push({
++              type: 'resource',
++              resource: { uri: 'ui://fixture', mimeType: 'text/html', text: '<p>fixture</p>' },
++            });
++          }
++          const app =
++            path === 'declared-app'
++              ? {
++                  resourceUri: 'ui://fixture',
++                  serverName: 'fixture',
++                  toolName: 'image',
++                  serverBinding: 'synthetic-binding',
++                  mcpApps: ENABLED_MCP_APPS_POLICY,
++                }
++              : undefined;
++          process.env.MCP_IMAGE_DATA_MAX_BYTES = String(jpegBytes);
++          const [output, artifacts] = formatToolContent({ content }, provider as t.Provider, app);
++          checkImages(artifacts, [0]);
++          expect(output.includes(images[0].data)).toBe(false);
++          expect(artifacts?.ui_resources?.data?.length ?? 0).toBe(path === 'ordinary' ? 0 : 1);
++          process.env.MCP_IMAGE_DATA_MAX_BYTES = String(jpegBytes - 1);
++          expect(() => formatToolContent({ content }, provider as t.Provider, app)).toThrow(
++            /MCP image result exceeds maximum size/,
++          );
++        },
++      );
++
++      it.each(['file:///fixture.jpeg', 'ui://fixture.jpeg'])(
++        'extracts an embedded image at %s without base64 text',
++        (uri) => {
++          const result: t.MCPToolCallResponse = {
++            content: [
++              {
++                type: 'resource',
++                resource: { uri, mimeType: images[0].mimeType, blob: images[0].data },
++              },
++            ],
++          };
++          const [content, artifacts] = formatToolContent(result, provider as t.Provider);
++          checkImages(artifacts, [0]);
++          expect(content.includes(images[0].data)).toBe(false);
++          process.env.MCP_IMAGE_DATA_MAX_BYTES = String(jpegBytes - 1);
++          expect(() => formatToolContent(result, provider as t.Provider)).toThrow(
++            /MCP image result exceeds maximum size/,
++          );
++        },
++      );
++
++      it.each([false, true])('preserves text-only results (isError=%s)', (isError) => {
++        expect(
++          formatToolContent({ content: [{ type: 'text', text }], isError }, provider as t.Provider),
++        ).toEqual([text, undefined]);
++      });
++
++      it('preserves the existing audio representation', () => {
++        const audio: t.ToolContentPart = {
++          type: 'audio',
++          mimeType: 'audio/wav',
++          data: 'synthetic-audio',
++        };
++        expect(formatToolContent({ content: [audio] }, provider as t.Provider)).toEqual([
++          JSON.stringify(audio, null, 2),
++          undefined,
++        ]);
++      });
+     });
+   });
+ 
+@@ -1252,6 +1393,16 @@ describe('formatToolContent', () => {
+   });
+ 
+   describe('MCP apps on unrecognized providers', () => {
++    let imageData: string;
++    beforeAll(async () => {
++      imageData = (
++        await sharp({
++          create: { width: 2, height: 2, channels: 3, background: '#4287ab' },
++        })
++          .png()
++          .toBuffer()
++      ).toString('base64');
++    });
+     it('does not promote an unlinked embedded App while keeping its html out of model text', () => {
+       const result: t.MCPToolCallResponse = {
+         content: [
+@@ -1325,7 +1476,7 @@ describe('formatToolContent', () => {
+     it('preserves ordinary unrecognized-provider image output beside an unlinked App resource', () => {
+       const result: t.MCPToolCallResponse = {
+         content: [
+-          { type: 'image', data: 'base64data', mimeType: 'image/png' },
++          { type: 'image', data: imageData, mimeType: 'image/png' },
+           {
+             type: 'resource',
+             resource: { uri: 'ui://app', mimeType: 'text/html;profile=mcp-app', text: '<p>a</p>' },
+@@ -1340,14 +1491,14 @@ describe('formatToolContent', () => {
+       });
+ 
+       expect(artifacts?.ui_resources).toBeUndefined();
+-      expect(artifacts?.content).toBeUndefined();
+-      expect(content).toContain('base64data');
++      expect(artifacts?.content).toHaveLength(1);
++      expect(content.includes(imageData)).toBe(false);
+     });
+ 
+-    it('keeps bounded standalone images in model output beside a legacy UI attachment', () => {
++    it('keeps bounded standalone images as artifacts beside a legacy UI attachment', () => {
+       const result: t.MCPToolCallResponse = {
+         content: [
+-          { type: 'image', data: 'base64data', mimeType: 'image/png' },
++          { type: 'image', data: imageData, mimeType: 'image/png' },
+           {
+             type: 'resource',
+             resource: { uri: 'ui://legacy', mimeType: 'text/html', text: '<p>view</p>' },
+@@ -1358,19 +1509,19 @@ describe('formatToolContent', () => {
+       const [content, artifacts] = formatToolContent(result, 'vertexai' as t.Provider);
+ 
+       const resource = artifacts?.ui_resources?.data?.[0];
+-      expect(content).toContain('base64data');
++      expect(content.includes(imageData)).toBe(false);
+       expect(content).toContain(`UI Resource Marker: \\ui{${resource?.resourceId}}`);
+       expect(content.split(`UI Resource Marker: \\ui{${resource?.resourceId}}`)).toHaveLength(2);
+-      expect(artifacts?.content).toBeUndefined();
++      expect(artifacts?.content).toHaveLength(1);
+       expect(resource).toMatchObject({ uri: 'ui://legacy', mimeType: 'text/html' });
+     });
+ 
+-    it('keeps bounded embedded image blobs in model output beside a legacy UI attachment', () => {
++    it('keeps bounded embedded image blobs as artifacts beside a legacy UI attachment', () => {
+       const result: t.MCPToolCallResponse = {
+         content: [
+           {
+             type: 'resource',
+-            resource: { uri: 'file:///chart.png', mimeType: 'image/png', blob: 'aW1hZ2U=' },
++            resource: { uri: 'file:///chart.png', mimeType: 'image/png', blob: imageData },
+           },
+           {
+             type: 'resource',
+@@ -1381,8 +1532,8 @@ describe('formatToolContent', () => {
+ 
+       const [content, artifacts] = formatToolContent(result, 'vertexai' as t.Provider);
+ 
+-      expect(content).toContain('data:image/png;base64,aW1hZ2U=');
+-      expect(artifacts?.content).toBeUndefined();
++      expect(content.includes(imageData)).toBe(false);
++      expect(artifacts?.content).toHaveLength(1);
+       expect(artifacts?.ui_resources?.data).toHaveLength(1);
+     });
+ 
+diff --git a/packages/api/src/mcp/parsers.ts b/packages/api/src/mcp/parsers.ts
+index 14c8cc295bf2473529ea45d30504b30be0e1a539..807227ac5532e61ac46fe982eb21d73996272adc 100644
+--- a/packages/api/src/mcp/parsers.ts
++++ b/packages/api/src/mcp/parsers.ts
+@@ -247,7 +247,10 @@ function describeResourceLink(item: t.ResourceLink): string[] {
+   return lines;
+ }
+ 
+-function parseAsString(result: t.MCPToolCallResponse): string {
++function parseAsString(
++  result: t.MCPToolCallResponse,
++  collectImage: (item: t.ImageContent) => void,
++): string {
+   const content = result?.content ?? [];
+   if (!content.length) {
+     return '(No response)';
+@@ -269,8 +272,7 @@ function parseAsString(result: t.MCPToolCallResponse): string {
+           if (body.text) {
+             resourceText.push(body.text);
+           } else if (body.image) {
+-            assertImageDataWithinLimit(body.image);
+-            resourceText.push(`data:${body.image.mimeType};base64,${body.image.data}`);
++            collectImage(body.image);
+           } else if (body.binaryBytes != null) {
+             resourceText.push(describeBinaryResource(body.binaryBytes));
+           }
+@@ -284,7 +286,8 @@ function parseAsString(result: t.MCPToolCallResponse): string {
+         return resourceText.join('\n');
+       }
+       if (isImageContent(item)) {
+-        assertImageDataWithinLimit(item);
++        collectImage(item);
++        return '';
+       }
+       return JSON.stringify(item, null, 2);
+     })
+@@ -319,7 +322,8 @@ export function isRenderableUiResource(item: t.ToolContentPart): boolean {
+ /**
+  * Converts MCPToolCallResponse content into a plain-text string plus optional artifacts
+  * (images, UI resources). All providers receive string content; images are separated into
+- * artifacts and merged back by the agents package via formatArtifactPayload / formatAnthropicArtifactContent.
++ * artifacts for UI attachments regardless of provider. Model-specific artifact merging remains
++ * the agents package's responsibility; preserving an attachment does not imply model vision support.
+  *
+  * @param provider - Used only to distinguish recognized vs. unrecognized providers.
+  * All recognized providers currently produce identical string output;
+@@ -348,11 +352,6 @@ export function formatToolContent(
+     metadata.toolName &&
+     metadata.serverBinding
+   );
+-  const hasUiResource = result?.content?.some((item) => isUiResource(item));
+-  if (!isRecognizedProvider && !hasSyntheticApp && !hasUiResource) {
+-    return [parseAsString(result), undefined];
+-  }
+-
+   const content = result?.content ?? [];
+   if (!content.length && !hasSyntheticApp) {
+     return ['(No response)', undefined];
+@@ -361,8 +360,7 @@ export function formatToolContent(
+   const imageUrls: t.FormattedContent[] = [];
+   const uiResources: UIResource[] = [];
+   let placementMarkerCount = 0;
+-  // Assistants submits only this string; keep its bounded conversion independent from host UI data.
+-  let currentTextBlock = isRecognizedProvider ? '' : parseAsString(result);
++  let currentTextBlock = '';
+ 
+   type ContentHandler = undefined | ((item: t.ToolContentPart) => void);
+ 
+@@ -379,6 +377,11 @@ export function formatToolContent(
+     }
+   };
+ 
++  // String-only consumers keep their text formatting, but image bytes belong in artifacts.
++  if (!isRecognizedProvider) {
++    currentTextBlock = parseAsString(result, collectImage);
++  }
++
+   const contentHandlers: {
+     text: (item: Extract<t.ToolContentPart, { type: 'text' }>) => void;
+     image: (item: t.ToolContentPart) => void;

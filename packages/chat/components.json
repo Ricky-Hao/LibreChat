@@ -1,8 +1,0 @@
-{
-  "tailwind": {
-    "css": "../client/src/theme/theme.css"
-  },
-  "aliases": {
-    "ui": "@librechat/client"
-  }
-}

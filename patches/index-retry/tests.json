@@ -1,0 +1,17 @@
+{
+  "checks": [
+    {
+      "name": "packages/data-schemas focused tests",
+      "tier": "focused",
+      "cwd": "packages/data-schemas",
+      "requires": [
+        "packages/data-schemas/package.json",
+        "packages/data-schemas/src/utils/retry.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/data-schemas/src/utils/retry.spec.ts"
+      ]
+    }
+  ]
+}

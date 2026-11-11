@@ -1,0 +1,1030 @@
+diff --git a/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx b/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx
+index 68636ddd8b5fb240812f2130db2e85526c663e43..bb4fbe6db385d8f6b0f8325e44755777954cd421 100644
+--- a/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx
++++ b/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx
+@@ -48,7 +48,7 @@ export default function CodeAnalyze({
+       <span className="sr-only" aria-live="polite" aria-atomic="true">
+         {phase === 'running' ? localize('com_ui_analyzing') : localize('com_ui_analyzing_finished')}
+       </span>
+-      <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5">
++      <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5">
+         <ProgressText
+           phase={phase}
+           onClick={handleToggleCode}
+diff --git a/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx b/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx
+index 42977d3759274702bff05e6f7207bce21494fe78..c9d3e7662c9f03e7c9417137f09c4f3c29c91f48 100644
+--- a/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx
++++ b/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx
+@@ -85,7 +85,7 @@ export default function MemoryCall({
+     <>
+       <BareStatus active={bare} text={finishedText} />
+       {!bare && (
+-        <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
++        <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
+           <ProgressText
+             phase={phase}
+             onClick={toggleCode}
+diff --git a/client/src/components/Chat/Messages/Content/ProgressText.tsx b/client/src/components/Chat/Messages/Content/ProgressText.tsx
+index 6525002719366215a6d31e7f1da86b85c3f377ec..f1952bcf10b781f85f69092f44c9134ff89ce0a7 100644
+--- a/client/src/components/Chat/Messages/Content/ProgressText.tsx
++++ b/client/src/components/Chat/Messages/Content/ProgressText.tsx
+@@ -12,19 +12,16 @@ import { useFailedReveal } from './reveal';
+ import { useLocalize } from '~/hooks';
+ 
+ const wrapperClass =
+-  'progress-text-wrapper text-text-secondary relative -mt-[0.046875rem] h-5 w-full leading-5';
++  'progress-text-wrapper text-text-secondary relative -mt-[0.046875rem] min-h-5 min-w-0 w-full leading-5';
+ 
+-/** `right-0` and `max-w-full` cap the absolutely-positioned line at the message
+- *  column; the label span truncates itself, so overflow stays visible for the
+- *  button's focus ring. */
+-const contentClass =
+-  'progress-text-content absolute left-0 right-0 top-0 max-w-full overflow-visible whitespace-nowrap';
++/** Stay in flow so wrapped intents and metadata also size the caller's row.
++ *  Overflow remains visible for the disclosure's focus ring. */
++const contentClass = 'progress-text-content max-w-full overflow-visible';
+ 
+ /** A failed row is marked at its left edge, in the rail's column when the row
+  *  sits under a header and in the gutter when it stands alone, so a failure
+  *  is findable by shape before its text is read. A pseudo-element rather than
+- *  a border: the row's content is absolutely positioned against the padding
+- *  box, so a border would push it and change the row's geometry. It lies over
++ *  a border keeps the glyph and label aligned with the other rows. It lies over
+  *  the rail's hit area, so it lets the pointer through to the rail. */
+ const failedStripeClass =
+   "before:pointer-events-none before:absolute before:-left-3 before:top-0 before:h-full before:w-0.5 before:rounded-full before:bg-status-error before:content-['']";
+@@ -191,13 +188,15 @@ export default function ProgressText({
+               ]
+             : []),
+         ];
++  const showTimer = isRunning && phaseStartAt != null && localPhaseStart != null;
++  const hasMetadata = subtitle || errorSuffix || showTimer || durationParts.length > 0;
+ 
+   return (
+     <Wrapper popover={popover} failed={phase === 'failed'} rootRef={rootRef}>
+       <Button
+         type="button"
+         variant="disclosure"
+-        className="group/disclosure"
++        className="group/disclosure items-start text-left whitespace-normal"
+         disabled={!hasInput}
+         tabIndex={hasInput ? 0 : -1}
+         onClick={hasInput ? onClick : undefined}
+@@ -208,50 +207,35 @@ export default function ProgressText({
+             {icon}
+           </span>
+         )}
+-        {/* The label names the card and stays whole; a subtitle can be
+-            arbitrary authored text (a question, an error line), so it takes
+-            ALL of the shrink and ellipsizes instead of pushing the line past
+-            the message column. All, not most: a weighted share left the label
+-            a fraction of a pixel short of its text, and that fraction is
+-            enough for `truncate` to swap its last letters for an ellipsis.
+-            The pair sits in its own shrinking box so the verdict, the
+-            duration and the chevron after it never lose width: the box gives
+-            up the subtitle first, and a label wider than the box truncates at
+-            the box (`max-w-full`), not past the row. */}
+-        <span className="flex min-w-0 items-center gap-2">
++        {/* Phones give the intent its own full-width line. Larger layouts
++            stay inline when they fit, but can wrap inside nested panels too. */}
++        <span className="flex min-w-0 flex-1 flex-col gap-x-2 gap-y-1 sm:flex-initial sm:flex-row sm:flex-wrap sm:items-baseline">
+           <span
+             className={cn(
+               showShimmer ? 'shimmer' : '',
+-              'max-w-full min-w-0 truncate font-medium',
+-              subtitle && 'shrink-0',
++              'max-w-full min-w-0 font-medium [overflow-wrap:anywhere]',
+             )}
+           >
+             {text}
+           </span>
+-          {subtitle && (
+-            <span className="text-text-secondary min-w-0 shrink truncate font-normal">
+-              {subtitle}
++          {hasMetadata && (
++            <span className="text-text-secondary flex max-w-full min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 font-normal [overflow-wrap:anywhere]">
++              {subtitle && <span>{subtitle}</span>}
++              {errorSuffix && <span className="text-status-error">· {verdict || errorSuffix}</span>}
++              {showTimer && <ElapsedTimer start={localPhaseStart} />}
++              {durationParts.map(({ label, duration }) => (
++                <span key={label}>
++                  <span aria-hidden="true">
++                    · {label} {localize(duration.key, duration.values)}
++                  </span>
++                  <span className="sr-only">
++                    {label} {localize(duration.announcedKey, duration.announcedValues)}
++                  </span>
++                </span>
++              ))}
+             </span>
+           )}
+         </span>
+-        {/* A reason ("timed out", "exit code 2") already says the call failed,
+-            so it replaces the generic word instead of following it. */}
+-        {errorSuffix && (
+-          <span className="text-status-error shrink-0 font-normal">· {verdict || errorSuffix}</span>
+-        )}
+-        {isRunning && phaseStartAt != null && localPhaseStart != null && (
+-          <ElapsedTimer start={localPhaseStart} />
+-        )}
+-        {durationParts.map(({ label, duration }) => (
+-          <span key={label} className="text-text-secondary shrink-0 font-normal">
+-            <span aria-hidden="true">
+-              · {label} {localize(duration.key, duration.values)}
+-            </span>
+-            <span className="sr-only">
+-              {label} {localize(duration.announcedKey, duration.announcedValues)}
+-            </span>
+-          </span>
+-        ))}
+         {hasInput && (
+           <ChevronDown
+             className={cn(
+diff --git a/client/src/components/Chat/Messages/Content/RetrievalCall.tsx b/client/src/components/Chat/Messages/Content/RetrievalCall.tsx
+index e59bde5b7df3e2826c44e7d7c2fded1bbb0af053..61bab1a5bba35d65c6c47d00b190a8946734d8b8 100644
+--- a/client/src/components/Chat/Messages/Content/RetrievalCall.tsx
++++ b/client/src/components/Chat/Messages/Content/RetrievalCall.tsx
+@@ -467,7 +467,7 @@ export default function RetrievalCall({
+           return intent ?? localize('com_ui_retrieved_files');
+         })()}
+       </span>
+-      <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5">
++      <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5">
+         <ProgressText
+           phase={phase}
+           onClick={hasExpandableContent ? handleToggleOutput : undefined}
+diff --git a/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx b/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx
+index c483bde8930841cad37ac3e5e505f8ea422007c5..2015eaba6673897676704663973e30a072c2cd64 100644
+--- a/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx
++++ b/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx
+@@ -1,5 +1,5 @@
+ import React from 'react';
+-import { fireEvent, render, screen } from '@testing-library/react';
++import { act, fireEvent, render, screen } from '@testing-library/react';
+ import { FailedRevealContext } from '../reveal';
+ import ProgressText from '../ProgressText';
+ 
+@@ -93,6 +93,28 @@ describe('ProgressText duration', () => {
+     clock.mockRestore();
+   });
+ 
++  it('ticks while running and replaces the live timer with measured intervals on completion', () => {
++    jest.useFakeTimers();
++    try {
++      const { rerender } = renderProgressText({ phase: 'running', phaseStartAt: 1_000 });
++      const initial = screen.getByTestId('stream-elapsed').textContent;
++      act(() => jest.advanceTimersByTime(3000));
++      expect(screen.getByTestId('stream-elapsed').textContent).not.toBe(initial);
++      rerender(
++        <ProgressText
++          {...defaults}
++          toolPreparationDurationMs={13_000}
++          toolExecutionDurationMs={1000}
++        />,
++      );
++      expect(screen.queryByTestId('stream-elapsed')).not.toBeInTheDocument();
++      expect(screen.getByText('· Preparation 13s')).toBeInTheDocument();
++      expect(screen.getByText('· Tool call 1s')).toBeInTheDocument();
++    } finally {
++      jest.useRealTimers();
++    }
++  });
++
+   it('does not render while the step is still running', () => {
+     renderProgressText({ phase: 'running', durationMs: 3500 });
+     expect(screen.queryByText('· Total elapsed 3.5s')).not.toBeInTheDocument();
+@@ -176,28 +198,43 @@ describe('ProgressText disclosure', () => {
+   });
+ 
+   it('renders no chevron or disclosure state without expandable content', () => {
+-    renderProgressText({ hasInput: false });
++    const onClick = jest.fn();
++    renderProgressText({ hasInput: false, onClick });
+ 
+     const button = screen.getByRole('button', { name: 'Completed foo' });
+ 
+     expect(button).toBeDisabled();
+     expect(button).not.toHaveAttribute('aria-expanded');
+     expect(button.querySelector('svg')).toBeNull();
++    fireEvent.click(button);
++    expect(onClick).not.toHaveBeenCalled();
+   });
+ });
+ 
+-describe('ProgressText subtitle', () => {
+-  it('gives the subtitle every bit of the shrink so the label keeps its last letters', () => {
+-    renderProgressText({ subtitle: 'HTTP 429 from github.com' });
+-    const label = screen.getByText('Completed foo');
+-    const subtitle = screen.getByText('HTTP 429 from github.com');
+-    expect(label).toHaveClass('shrink-0', 'max-w-full', 'truncate');
+-    expect(subtitle).toHaveClass('shrink', 'min-w-0', 'truncate');
++describe('ProgressText label and metadata', () => {
++  it.each([
++    '核对全部十二项配置检查结果',
++    'Checking all the older configuration entries before creating a complete comparison report. '.repeat(
++      4,
++    ),
++    'CheckEveryConfigurationEntryWithoutBreakingTheOriginalIntent'.repeat(4),
++  ])('preserves the entire label in the disclosure name: %s', (finishedText) => {
++    renderProgressText({
++      finishedText,
++      subtitle: 'Synthetic status details',
++      toolPreparationDurationMs: 13_000,
++      toolExecutionDurationMs: 1000,
++    });
++    expect(screen.getByText(finishedText.trim()).textContent).toBe(finishedText);
++    expect(screen.getByRole('button')).toHaveAccessibleName(
++      `${finishedText.trim()} Synthetic status details Preparation took 13 seconds Tool call took 1 second`,
++    );
+   });
+ 
+-  it('lets a lone label shrink into its own ellipsis', () => {
+-    renderProgressText();
+-    expect(screen.getByText('Completed foo')).not.toHaveClass('shrink-0');
++  it('keeps authentication text ahead of the running intent', () => {
++    renderProgressText({ phase: 'running', authText: 'Authentication required' });
++    expect(screen.getByRole('button')).toHaveAccessibleName('Authentication required');
++    expect(screen.queryByText(defaults.inProgressText)).not.toBeInTheDocument();
+   });
+ });
+ 
+@@ -264,21 +301,6 @@ describe('ProgressText failed reveal', () => {
+   });
+ });
+ 
+-describe('ProgressText fixed siblings', () => {
+-  it('keeps the verdict, duration and chevron out of the shrinking label box', () => {
+-    const { container } = renderProgressText({
+-      phase: 'completed',
+-      subtitle: 'a very long subtitle',
+-      durationMs: 3500,
+-    });
+-    const box = screen.getByText('Completed foo').parentElement;
+-    expect(box).toHaveClass('min-w-0');
+-    expect(box).toContainElement(screen.getByText('a very long subtitle'));
+-    expect(screen.getByText('· Total elapsed 3.5s').parentElement).toHaveClass('shrink-0');
+-    expect(container.querySelector('svg')).toHaveClass('shrink-0');
+-  });
+-});
+-
+ describe('ProgressText verdict', () => {
+   it('names the failure reason inside the button on a failed card', () => {
+     renderProgressText({ phase: 'failed', verdict: 'exit code 2' });
+diff --git a/client/src/utils/__tests__/activityLabels.spec.ts b/client/src/utils/__tests__/activityLabels.spec.ts
+index d8f0929414b00eeccb4bb92ee8ba6037b4c2aa9b..3c8b347b326efad931efb8f0c3197590d5fca2a5 100644
+--- a/client/src/utils/__tests__/activityLabels.spec.ts
++++ b/client/src/utils/__tests__/activityLabels.spec.ts
+@@ -6,7 +6,6 @@ import {
+   groupActivityPhases,
+   lastCursorContentIdx,
+   lastVisibleContentIdx,
+-  offsetActivityPhaseBoundary,
+   findActivityLabelMessageIndex,
+ } from '../activityLabels';
+ 
+@@ -201,15 +200,6 @@ describe('lastCursorContentIdx', () => {
+   });
+ });
+ 
+-describe('offsetActivityPhaseBoundary', () => {
+-  it('folds only boundaries covered by the merged first completion part', () => {
+-    expect(offsetActivityPhaseBoundary(0, 5, true)).toBe(4);
+-    expect(offsetActivityPhaseBoundary(1, 5, true)).toBe(5);
+-    expect(offsetActivityPhaseBoundary(3, 5, true)).toBe(8);
+-    expect(offsetActivityPhaseBoundary(3, 5, false)).toBe(8);
+-  });
+-});
+-
+ describe('groupActivityPhases', () => {
+   const text = { type: ContentTypes.TEXT, text: 'final answer' } as TMessageContentParts;
+   const tool = {
+diff --git a/client/src/utils/activityLabels.ts b/client/src/utils/activityLabels.ts
+index bf0e265660c5e879ec8e733ff16e8e484bed218c..57515ad1c673695e075fc6391deed9118983efc1 100644
+--- a/client/src/utils/activityLabels.ts
++++ b/client/src/utils/activityLabels.ts
+@@ -138,15 +138,6 @@ export function getActivityLabelText(part: ActivityLabelPart | undefined): strin
+   return typeof label === 'string' ? label.trim() : '';
+ }
+ 
+-/** Maps a completion-local half-open boundary into edited-response coordinates. */
+-export function offsetActivityPhaseBoundary(
+-  boundary: number,
+-  prefixLength: number,
+-  foldedFirstPart: boolean,
+-): number {
+-  return boundary + prefixLength - (foldedFirstPart && boundary <= 1 ? 1 : 0);
+-}
+-
+ /**
+  * Mirrors `SUBSTANTIAL_TEXT_CHARS` in `activityPhases/runtime.ts`. Short
+  * commentary belongs inside a phase; a real block of prose ends one.
+diff --git a/e2e/specs/mock/activity-fold.spec.ts b/e2e/specs/mock/activity-fold.spec.ts
+index 1e4e71bca14c32afb35e3de6c656f89a6a6bf0da..af16f15a2d5a459dab19e8118fe9249fad31642b 100644
+--- a/e2e/specs/mock/activity-fold.spec.ts
++++ b/e2e/specs/mock/activity-fold.spec.ts
+@@ -1,8 +1,16 @@
+ import fs from 'fs';
+ import path from 'path';
++import { randomUUID } from 'crypto';
+ import { expect, test } from '@playwright/test';
+-import type { APIRequestContext, Page } from '@playwright/test';
++import type { APIRequestContext, Locator, Page } from '@playwright/test';
+ import { NEW_CHAT_PATH, messagesView, selectMockEndpoint, sendMessage } from './helpers';
++import {
++  deleteConversations,
++  deleteMessagesByConversation,
++  seedConversations,
++  seedMessages,
++} from './db';
++import { getE2EUser } from '../../setup/user';
+ 
+ const PHASE_ENDPOINT = { label: 'Mock Provider F', model: 'mock-model-f' };
+ const MCP_SERVER_TITLE = 'E2E Memory';
+@@ -12,6 +20,224 @@ const SHOT_DIR = process.env.E2E_FOLD_SHOTS || '';
+ 
+ const uniqueLabel = () => `fold-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+ 
++const MOBILE_INTENTS = [
++  '核对十二项配置并生成报告',
++  '检查旧任务中保留的完整操作意图，核对所有配置项目，然后创建一份包含检查结果和后续处理建议的详细报告。',
++  'CheckEveryConfigurationEntryBeforeCreatingTheCompleteComparisonReportWithoutDroppingAnyOriginalIntentText',
++];
++
++function intentParts(prefix: string) {
++  return MOBILE_INTENTS.map((intent, index) => ({
++    type: 'tool_call',
++    tool_call: {
++      id: `${prefix}-${index}`,
++      name: 'lookup',
++      args: JSON.stringify({ intent, query: 'synthetic fixture' }),
++      output: 'Synthetic result',
++      type: 'tool_call',
++      progress: 1,
++      runStepStatus: 'completed',
++      ...(index === 1
++        ? { runStepDurationMs: 14_000 }
++        : { toolPreparationDurationMs: 13_000, toolExecutionDurationMs: 1000 }),
++    },
++  }));
++}
++
++/** Measure text fragments, not just the element box: an ellipsized span can
++ * have perfectly contained bounds while most of its text remains invisible. */
++async function expectIntentGeometry(row: Locator, intent: string, mobile: boolean) {
++  const button = row.getByRole('button');
++  await expect(button).toContainText(intent);
++  await button.scrollIntoViewIfNeeded();
++  const geometry = await button.evaluate((element, text) => {
++    const label = [...element.querySelectorAll('span')].find(
++      (span) => span.textContent === text && span.childElementCount === 0,
++    );
++    if (!label) throw new Error('Intent label missing');
++    const primary = label.getBoundingClientRect();
++    const buttonBox = element.getBoundingClientRect();
++    const wrapper = element.closest('.progress-text-wrapper');
++    if (!wrapper?.parentElement) throw new Error('Caller row missing');
++    const rowBox = wrapper.parentElement.getBoundingClientRect();
++    const metadata = label.nextElementSibling?.getBoundingClientRect();
++    const range = document.createRange();
++    range.selectNodeContents(label);
++    const fragments = [...range.getClientRects()];
++    const following = wrapper.parentElement.nextElementSibling?.getBoundingClientRect();
++    return {
++      text: label.textContent,
++      overflow: label.scrollWidth > label.clientWidth + 1,
++      clipped: fragments.some(
++        (fragment) =>
++          fragment.left < primary.left - 1 ||
++          fragment.right > primary.right + 1 ||
++          fragment.top < primary.top - 1 ||
++          fragment.bottom > primary.bottom + 1,
++      ),
++      buttonFits: buttonBox.left >= rowBox.left - 1 && buttonBox.right <= rowBox.right + 1,
++      rowContainsButton: buttonBox.bottom <= rowBox.bottom + 1,
++      followingOverlaps: following != null && following.top < buttonBox.bottom - 1,
++      metadataBelow: metadata == null || metadata.top >= primary.bottom - 1,
++      metadataFits:
++        metadata == null ||
++        (metadata.right <= buttonBox.right + 1 && metadata.bottom <= buttonBox.bottom + 1),
++      viewportFits: buttonBox.right <= document.documentElement.clientWidth + 1,
++      ellipsis: getComputedStyle(label).textOverflow === 'ellipsis',
++    };
++  }, intent);
++  expect(geometry).toMatchObject({
++    text: intent,
++    overflow: false,
++    clipped: false,
++    buttonFits: true,
++    rowContainsButton: true,
++    followingOverlaps: false,
++    metadataFits: true,
++    viewportFits: true,
++    ellipsis: false,
++    ...(mobile ? { metadataBelow: true } : {}),
++  });
++}
++
++for (const width of [320, 360, 390, 430, 1280]) {
++  test(`mobile intent geometry at ${width}px in action folds and child panels`, async ({
++    page,
++  }) => {
++    test.setTimeout(60_000);
++    await page.setViewportSize({ width, height: 900 });
++    await page.addInitScript(() => {
++      localStorage.setItem('navVisible', 'false');
++      localStorage.setItem('autoExpandTools', 'false');
++      localStorage.setItem('color-theme', sessionStorage.getItem('intent-review-theme') ?? 'dark');
++    });
++    const conversationId = randomUUID();
++    const userMessageId = randomUUID();
++    const { email } = getE2EUser();
++    await seedConversations(email, [
++      { conversationId, title: 'Synthetic mobile intent review', updatedAt: new Date() },
++    ]);
++    await seedMessages(email, conversationId, [
++      {
++        messageId: userMessageId,
++        parentMessageId: '00000000-0000-0000-0000-000000000000',
++        text: 'Review synthetic tool intents.',
++        isCreatedByUser: true,
++        sender: 'User',
++      },
++      {
++        messageId: randomUUID(),
++        parentMessageId: userMessageId,
++        text: 'Following row remains clear.',
++        isCreatedByUser: false,
++        sender: 'Assistant',
++        content: [
++          ...intentParts('intent'),
++          {
++            type: 'activity_label',
++            activity_label: 'Synthetic action group',
++            activity_start_index: 0,
++            activity_end_index: 3,
++            activity_count: 3,
++          },
++          {
++            type: 'activity_label',
++            activity_label: 'Synthetic review phase',
++            activity_label_type: 'phase',
++            activity_start_index: 0,
++            activity_end_index: 4,
++            activity_count: 3,
++          },
++          { type: 'text', text: 'Following row remains clear.' },
++          {
++            type: 'tool_call',
++            tool_call: {
++              id: 'intent-child',
++              name: 'subagent',
++              type: 'tool_call',
++              args: JSON.stringify({ subagent_type: 'general', prompt: 'Synthetic child review' }),
++              output: 'Synthetic child complete',
++              progress: 1,
++              runStepStatus: 'completed',
++              subagent_content: [
++                ...intentParts('child-intent'),
++                { type: 'text', text: 'Child following row remains clear.' },
++              ],
++            },
++          },
++        ],
++      },
++    ]);
++    try {
++      await page.goto(`/c/${conversationId}`);
++      const phase = page.getByRole('button', { name: 'Synthetic review phase', exact: true });
++      await phase.click();
++      const group = page.getByRole('button', { name: /^Synthetic action group/ });
++      await group.click();
++      for (const [index, intent] of MOBILE_INTENTS.entries()) {
++        const row = page.locator(`[data-tool-call-id="intent-${index}"]`);
++        await expectIntentGeometry(row, intent, width < 640);
++        await expect(row).toContainText(index === 1 ? 'Total elapsed 14s' : 'Preparation 13s');
++        if (index !== 1) await expect(row).toContainText('Tool call 1s');
++      }
++      const disclosure = page.locator('[data-tool-call-id="intent-0"]').getByRole('button');
++      await disclosure.focus();
++      await expect(disclosure).toBeFocused();
++      await page.keyboard.press('Enter');
++      await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
++      await expect(page.locator('[data-tool-call-output-id="intent-0"]')).toContainText(
++        'Synthetic result',
++      );
++      await page.keyboard.press('Space');
++      await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
++      await disclosure.click();
++      await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
++      await disclosure.click();
++      await disclosure.blur();
++      await phase.scrollIntoViewIfNeeded();
++      await shot(page, `intents-${width}-dark`);
++      if (width === 390) {
++        await page.evaluate(() => {
++          sessionStorage.setItem('intent-review-theme', 'light');
++        });
++        await page.reload();
++        await expect(page.locator('html')).toHaveClass(/\blight\b/);
++        await phase.click();
++        await group.click();
++        for (const [index, intent] of MOBILE_INTENTS.entries()) {
++          await expectIntentGeometry(
++            page.locator(`[data-tool-call-id="intent-${index}"]`),
++            intent,
++            true,
++          );
++        }
++        await phase.scrollIntoViewIfNeeded();
++        await shot(page, 'intents-390-light');
++      }
++
++      await page.locator('[data-subagent-tool-call="intent-child"]').click();
++      const panel = page.getByRole(width < 768 ? 'dialog' : 'region', {
++        name: 'Child agent activity',
++      });
++      await expect(panel).toBeVisible();
++      const childGroup = panel.getByRole('button', { name: /^Ran 3 actions/ });
++      await childGroup.click();
++      for (const [index, intent] of MOBILE_INTENTS.entries()) {
++        await expectIntentGeometry(
++          panel.locator(`[data-tool-call-id="child-intent-${index}"]`),
++          intent,
++          width < 640,
++        );
++      }
++      await panel.locator('[data-tool-call-id="child-intent-0"]').scrollIntoViewIfNeeded();
++      await shot(page, `intents-child-${width}`);
++    } finally {
++      await deleteMessagesByConversation([conversationId]);
++      await deleteConversations([conversationId]);
++    }
++  });
++}
++
+ async function shot(page: Page, name: string) {
+   if (!SHOT_DIR) {
+     return;
+diff --git a/packages/api/src/agents/intent.spec.ts b/packages/api/src/agents/intent.spec.ts
+index 27dd8bed069f1bb901e0f3ccfff3054114bfa65b..4f8cf6919f8f9f862269f6f2520f00133c495119 100644
+--- a/packages/api/src/agents/intent.spec.ts
++++ b/packages/api/src/agents/intent.spec.ts
+@@ -1,5 +1,17 @@
+ import { logger } from '@librechat/data-schemas';
+-import type { LCTool, LCToolRegistry } from '@librechat/agents';
++import {
++  Providers,
++  createGraph,
++  withoutIntent,
++  initializeModel,
++  INTENT_LABEL_MARKER,
++  INTENT_DESCRIPTION as SDK_INTENT_DESCRIPTION,
++  BashExecutionToolDefinition,
++  ReadFileToolDefinition,
++  SkillToolDefinition,
++  ToolSearchToolDefinition,
++} from '@librechat/agents';
++import type { LCTool, LCToolRegistry, JsonSchemaType } from '@librechat/agents';
+ import {
+   INTENT_ARG,
+   NATIVE_INTENT_TOOL_NAMES,
+@@ -18,6 +30,14 @@ import { applyBackgroundToolCalls, CHECK_BACKGROUND_TASK_NAME } from './backgrou
+ import { mergeSynthesizedToolOptions, TOOL_SELECTION_WILDCARD } from './selection';
+ import { toolOptionsSchema } from './validation';
+ 
++const CONCISE_INTENT_DESCRIPTION =
++  'ALWAYS write this field FIRST, before any other argument. ' +
++  'Briefly describe this call in the user language: bare action and necessary object only. ' +
++  'Chinese: at most 12 characters, e.g. 读取配置, 检查构建状态, 查找登录逻辑. Other languages: at most 6 words. ' +
++  'No progress preambles (正在, 正在做, 我正在, or equivalents). ' +
++  'Do not imply completion or success (已完成, 已成功, or equivalents). ' +
++  'No explanation, tool names, or ending punctuation. Distinguish sibling calls with a short object.';
++
+ const mcpDef = (name: string): LCTool =>
+   ({
+     name,
+@@ -34,8 +54,7 @@ const sdkNativeDef = (name: string): LCTool =>
+       properties: {
+         intent: {
+           type: 'string',
+-          description:
+-            'ALWAYS write this field FIRST, before any other argument. One short sentence…',
++          description: SDK_INTENT_DESCRIPTION,
+         },
+         query: { type: 'string' },
+       },
+@@ -111,6 +130,16 @@ describe('injectIntentParam', () => {
+     expect((injected.parameters as { required?: string[] }).required).toEqual(['q']);
+   });
+ 
++  it('uses the bare-action prompt without adding validation or truncating labels', () => {
++    const injected = injectIntentParam(mcpDef('search_mcp_docs'));
++    expect(injected.parameters?.properties?.intent).toEqual({
++      type: 'string',
++      description: CONCISE_INTENT_DESCRIPTION,
++    });
++    expect(CONCISE_INTENT_DESCRIPTION.startsWith(INTENT_LABEL_MARKER)).toBe(true);
++    expect(withoutIntent(injected.parameters)?.properties).not.toHaveProperty('intent');
++  });
++
+   it('creates an object schema when the tool declares no parameters', () => {
+     const def = { name: 'no_params' } as unknown as LCTool;
+     const injected = injectIntentParam(def);
+@@ -515,7 +544,7 @@ describe('sanitizeIntentLabels', () => {
+     expect(INTENT_ARG in (skill.parameters as { properties: object }).properties).toBe(true);
+   });
+ 
+-  it('leaves defs untouched when the capability is on and nothing opted out', () => {
++  it('overrides SDK label prose and is idempotent once normalized', () => {
+     const skill = sdkNativeDef('skill');
+     const defs = [skill];
+     const { toolDefinitions, semanticIntentToolNames } = sanitizeIntentLabels({
+@@ -524,8 +553,177 @@ describe('sanitizeIntentLabels', () => {
+       toolOptions: undefined,
+       capabilityEnabled: true,
+     });
+-    expect(toolDefinitions).toBe(defs);
++    expect(toolDefinitions[0].parameters?.properties?.intent?.description).toBe(
++      CONCISE_INTENT_DESCRIPTION,
++    );
++    expect(skill.parameters?.properties?.intent?.description).toBe(SDK_INTENT_DESCRIPTION);
+     expect(semanticIntentToolNames).toEqual(['skill']);
++    expect(
++      sanitizeIntentLabels({
++        toolDefinitions,
++        toolRegistry: undefined,
++        toolOptions: undefined,
++        capabilityEnabled: true,
++      }).toolDefinitions,
++    ).toBe(toolDefinitions);
++  });
++
++  it('normalizes deferred registry-only labels while preserving metadata and opt-outs', () => {
++    const deferred = { ...sdkNativeDef('deferred'), defer_loading: true };
++    const optedOut = sdkNativeDef('opted_out');
++    const registry: LCToolRegistry = new Map([
++      [deferred.name, deferred],
++      [optedOut.name, optedOut],
++    ]);
++    const result = sanitizeIntentLabels({
++      toolDefinitions: undefined,
++      toolRegistry: registry,
++      toolOptions: { opted_out: { describe_intent: false } },
++      capabilityEnabled: true,
++    });
++    expect(result.semanticIntentToolNames).toEqual(['deferred']);
++    expect(result.semanticIntentBlockedToolNames).toEqual(['opted_out']);
++    expect(registry.get('deferred')).toEqual({
++      ...deferred,
++      parameters: {
++        ...deferred.parameters,
++        properties: {
++          ...deferred.parameters?.properties,
++          intent: { type: 'string', description: CONCISE_INTENT_DESCRIPTION },
++        },
++      },
++    });
++    expect(registry.get('opted_out')?.parameters?.properties).not.toHaveProperty('intent');
++    expect(deferred.parameters?.properties?.intent?.description).toBe(SDK_INTENT_DESCRIPTION);
++    const normalized = registry.get('deferred');
++    sanitizeIntentLabels({
++      toolDefinitions: [],
++      toolRegistry: registry,
++      toolOptions: undefined,
++      capabilityEnabled: true,
++    });
++    expect(registry.get('deferred')).toBe(normalized);
++  });
++
++  it.each([undefined, true, false])(
++    'preserves business intent schemas and registry entries with describe_intent=%s',
++    (describe_intent) => {
++      const business = mcpDef('create_record');
++      business.parameters = {
++        type: 'object',
++        properties: {
++          title: { type: 'string' },
++          intent: { type: 'string', description: 'CRM intent category', enum: ['billing'] },
++        },
++        required: ['intent'],
++      };
++      const defs = [business, mcpDef('unlabelled')];
++      const registry: LCToolRegistry = new Map(defs.map((def) => [def.name, def]));
++      const result = sanitizeIntentLabels({
++        toolDefinitions: defs,
++        toolRegistry: registry,
++        toolOptions: { create_record: { describe_intent } },
++        capabilityEnabled: true,
++      });
++      expect(result.toolDefinitions).toBe(defs);
++      expect(registry.get(business.name)).toBe(business);
++      expect(result.semanticIntentToolNames).toEqual([]);
++    },
++  );
++
++  it('carries host and real SDK schema overrides through SDK model binding and discovery', () => {
++    const nativeDefinitions: LCTool[] = [
++      {
++        name: BashExecutionToolDefinition.name,
++        description: BashExecutionToolDefinition.description,
++        parameters: BashExecutionToolDefinition.schema,
++      },
++      ReadFileToolDefinition,
++      SkillToolDefinition,
++      {
++        name: ToolSearchToolDefinition.name,
++        description: ToolSearchToolDefinition.description,
++        // The SDK publishes readonly tuples and a union absent from JsonSchemaType.
++        parameters: ToolSearchToolDefinition.schema as unknown as JsonSchemaType,
++      },
++    ].map((def) => ({
++      ...def,
++      parameters: {
++        ...def.parameters,
++        properties: {
++          ...def.parameters.properties,
++          intent: { ...def.parameters.properties!.intent },
++        },
++        required: [...(def.parameters.required ?? [])],
++      },
++    }));
++    for (const def of nativeDefinitions) {
++      Object.freeze(def.parameters?.properties?.intent);
++      Object.freeze(def.parameters?.properties);
++      Object.freeze(def.parameters);
++      Object.freeze(def);
++    }
++    const deferred = { ...sdkNativeDef('deferred'), defer_loading: true };
++    const originals = [mcpDef('web_search'), ...nativeDefinitions, deferred];
++    const registry: LCToolRegistry = new Map(originals.map((def) => [def.name, def]));
++    const applied = applyIntentLabels({
++      toolDefinitions: originals,
++      toolRegistry: registry,
++      toolOptions: undefined,
++    });
++    expect(applied.intentToolNames).toEqual(['web_search']);
++    const { toolDefinitions } = sanitizeIntentLabels({
++      ...applied,
++      toolRegistry: registry,
++      toolOptions: undefined,
++      capabilityEnabled: true,
++    });
++    for (const def of toolDefinitions) {
++      const original = originals.find((entry) => entry.name === def.name)!;
++      expect(Object.keys(def.parameters?.properties ?? {})[0]).toBe(INTENT_ARG);
++      expect(def.parameters?.required).toEqual(original.parameters?.required);
++      expect(def.parameters?.required).not.toContain(INTENT_ARG);
++      expect(def.parameters?.properties?.intent).toEqual({
++        type: 'string',
++        description: CONCISE_INTENT_DESCRIPTION,
++      });
++      expect(withoutIntent(def.parameters)).toEqual(withoutIntent(original.parameters));
++      expect(registry.get(def.name)?.parameters).toEqual(def.parameters);
++    }
++    for (const def of nativeDefinitions) {
++      expect(def.parameters?.properties?.intent?.description).toBe(SDK_INTENT_DESCRIPTION);
++    }
++
++    const graph = createGraph({
++      kind: 'standard',
++      input: {
++        agents: [
++          {
++            agentId: 'intent-test',
++            provider: Providers.OPENAI,
++            toolDefinitions,
++            toolRegistry: registry,
++          },
++        ],
++      },
++    });
++    const context = graph.agentContexts.get('intent-test')!;
++    const bind = () =>
++      initializeModel({
++        provider: Providers.OPENAI,
++        clientOptions: { apiKey: 'test-placeholder', model: 'gpt-4o-mini' },
++        tools: context.getToolsForBinding(),
++      });
++    const expectedTools = (defs: LCTool[]) =>
++      defs.map((def) => ({
++        type: 'function',
++        function: expect.objectContaining({ name: def.name, parameters: def.parameters }),
++      }));
++    expect(bind()).toMatchObject({
++      defaultOptions: { tools: expectedTools(toolDefinitions.filter((def) => !def.defer_loading)) },
++    });
++    expect(context.markToolsAsDiscovered(['deferred'])).toBe(true);
++    expect(bind()).toMatchObject({ defaultOptions: { tools: expectedTools(toolDefinitions) } });
+   });
+ 
+   it('projects only surviving marker-verified intent schemas for compaction', () => {
+diff --git a/packages/api/src/agents/intent.ts b/packages/api/src/agents/intent.ts
+index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee06346a13 100644
+--- a/packages/api/src/agents/intent.ts
++++ b/packages/api/src/agents/intent.ts
+@@ -2,9 +2,8 @@
+  * @fileoverview Tool intent labels.
+  *
+  * Injects an optional `intent` string as the FIRST property of a tool's
+- * schema so the model can declare, per call, one sentence stating what that
+- * specific call is about to do ("Searching for OAuth handling in the
+- * callback router"). Because the property is first, it is the first key
++ * schema so the model can declare a concise action and object in the user's
++ * language ("读取配置"). Because the property is first, it is the first key
+  * providers stream in the tool-call args, and the client renders it as the
+  * call's live status label — the args already reach the client verbatim, so
+  * no new event plumbing is involved. The label is inert server-side: the
+@@ -25,11 +24,7 @@
+ 
+ import { logger } from '@librechat/data-schemas';
+ import { Tools, Constants } from 'librechat-data-provider';
+-import {
+-  Constants as AgentConstants,
+-  INTENT_LABEL_MARKER,
+-  INTENT_DESCRIPTION,
+-} from '@librechat/agents';
++import { Constants as AgentConstants, INTENT_LABEL_MARKER } from '@librechat/agents';
+ import type { LCTool, LCToolRegistry, JsonSchemaType } from '@librechat/agents';
+ import type { AgentToolOptions } from 'librechat-data-provider';
+ import type { CapabilityToolNames } from './selection';
+@@ -132,14 +127,22 @@ export function stripIntentArg(args: unknown): unknown {
+   return rest;
+ }
+ 
++/** Host prompt override; the SDK marker remains the shared label discriminator. */
++const INTENT_DESCRIPTION =
++  `${INTENT_LABEL_MARKER}, before any other argument. ` +
++  'Briefly describe this call in the user language: bare action and necessary object only. ' +
++  'Chinese: at most 12 characters, e.g. 读取配置, 检查构建状态, 查找登录逻辑. Other languages: at most 6 words. ' +
++  'No progress preambles (正在, 正在做, 我正在, or equivalents). ' +
++  'Do not imply completion or success (已完成, 已成功, or equivalents). ' +
++  'No explanation, tool names, or ending punctuation. Distinguish sibling calls with a short object.';
++
+ /**
+  * Canonical (frozen) shape of the injected property. Injection embeds a
+  * copy so downstream schema tooling that mutates subschemas (JSON-schema
+  * dereferencers stamp URI markers) never trips on a frozen shared instance.
+  *
+- * The description is the SDK's, not a local copy: host-injected tools and
+- * SDK-native tools must present the model with one identical instruction, and
+- * a divergent copy would also miss the SDK's token trimming.
++ * Final sanitization applies this same prompt to SDK-native label schemas.
++ * Length guidance is prose only; no schema limit or runtime truncation.
+  */
+ const INTENT_PROPERTY: JsonSchemaType = Object.freeze<JsonSchemaType>({
+   type: 'string',
+@@ -208,6 +211,30 @@ function isIntentLabelProperty(property: JsonSchemaType | undefined): boolean {
+   );
+ }
+ 
++/** Overrides only label prose, preserving property order and schema constraints. */
++function overrideIntentDescription(def: LCTool): LCTool {
++  const params = def.parameters;
++  const property = params?.properties?.[INTENT_ARG];
++  if (
++    !params ||
++    !property ||
++    !isIntentLabelProperty(property) ||
++    property.description === INTENT_DESCRIPTION
++  ) {
++    return def;
++  }
++  return {
++    ...def,
++    parameters: {
++      ...params,
++      properties: {
++        ...params.properties,
++        [INTENT_ARG]: { ...property, description: INTENT_DESCRIPTION },
++      },
++    },
++  };
++}
++
+ /** Returns a copy of the def without the intent LABEL property (marker-guarded). */
+ function removeIntentParam(def: LCTool): LCTool {
+   const params = def.parameters;
+@@ -393,6 +420,8 @@ export function applyIntentLabels(params: {
+  * advertised: every one when the capability is disabled (the admin kill
+  * switch over SDK-native schemas, which otherwise pay the token cost with
+  * the feature off), or the explicitly opted-out ones when it is enabled.
++ * Surviving labels receive the host prompt override, including registry-only
++ * definitions used for deferred discovery.
+  * Marker-guarded, so a tool's own `intent` business parameter survives.
+  */
+ export function sanitizeIntentLabels(params: {
+@@ -426,31 +455,27 @@ export function sanitizeIntentLabels(params: {
+     semanticIntentBlockedToolNames.add(def.name);
+   };
+   const nextDefs = defs.map((def) => {
+-    if (!shouldStrip(def.name)) {
+-      projectSemanticTrust(def);
+-      return def;
+-    }
+-    const stripped = removeIntentParam(def);
+-    projectSemanticTrust(stripped);
+-    if (stripped !== def) {
++    const sanitized = shouldStrip(def.name)
++      ? removeIntentParam(def)
++      : overrideIntentDescription(def);
++    projectSemanticTrust(sanitized);
++    if (sanitized !== def) {
+       changed = true;
+       const registryEntry = toolRegistry?.get(def.name);
+       if (registryEntry) {
+-        toolRegistry?.set(def.name, { ...registryEntry, parameters: stripped.parameters });
++        toolRegistry?.set(def.name, { ...registryEntry, parameters: sanitized.parameters });
+       }
+     }
+-    return stripped;
++    return sanitized;
+   });
+   if (toolRegistry) {
+     for (const [name, entry] of toolRegistry) {
+-      if (!shouldStrip(name)) {
+-        projectSemanticTrust(entry);
+-        continue;
+-      }
+-      const stripped = removeIntentParam(entry);
+-      projectSemanticTrust(stripped);
+-      if (stripped !== entry) {
+-        toolRegistry.set(name, stripped);
++      const sanitized = shouldStrip(name)
++        ? removeIntentParam(entry)
++        : overrideIntentDescription(entry);
++      projectSemanticTrust(sanitized);
++      if (sanitized !== entry) {
++        toolRegistry.set(name, sanitized);
+       }
+     }
+   }
+diff --git a/packages/chat/src/components/parts/rows.ts b/packages/chat/src/components/parts/rows.ts
+index 545817ef11947aa27c9088950795502b3d92c677..693b5be697e8d363d935b803e99a71d98ce49486 100644
+--- a/packages/chat/src/components/parts/rows.ts
++++ b/packages/chat/src/components/parts/rows.ts
+@@ -1,11 +1,9 @@
+ /**
+- * The vertical box of a live tool row: a 20px line with 6px margins above and
+- * below, shared by every call card header and by the streaming cursor a
+- * collapsed phase card renders beneath itself. The two trade places on every
+- * absorb → next-call cycle of a run, so they must occupy the same height or
+- * everything under the card moves on each swap.
++ * A tool row starts at 20px with 6px margins above and below, shared by call
++ * card headers and the streaming cursor beneath a collapsed phase. Wrapped
++ * intents and metadata can grow the row without overlapping the next card.
+  */
+-export const TOOL_ROW_CLASSES = 'relative my-1.5 flex h-5 shrink-0 items-center gap-2.5';
++export const TOOL_ROW_CLASSES = 'relative my-1.5 flex min-h-5 shrink-0 items-center gap-2.5';
+ 
+ /** Leave an 8px gap beside MessageNav's hit area in full-width chat. */
+ export const ARTIFACT_ROW_NAV_SPACING = 'pe-3 md:pe-17';
+@@ -19,9 +17,8 @@ export const FOLD_GLYPH_CLASS = 'fold-glyph';
+  * phase check and the 12px cursor dot all center in it, so every row's glyph
+  * sits on the avatar's axis, and with the row's 8px gap every row's text
+  * starts where the header's name does. `min-w` rather than `w`, so a stacked
+- * icon strip can run wider without overlapping its label; never taller than
+- * `TOOL_ROW_CLASSES`, whose `ProgressText` content is absolutely positioned
+- * and would carry a taller slot 2px below the row's center. `fold-glyph` is a
++ * icon strip can run wider without overlapping its label. The slot stays on
++ * the first line when a tool row wraps. `fold-glyph` is a
+  * hook, not a style: see `FOLD_GLYPH_SELECTOR`.
+  */
+ export const ROW_GLYPH_SLOT: string = `${FOLD_GLYPH_CLASS} flex h-5 min-w-6 shrink-0 items-center justify-center`;
+diff --git a/tool-intent-spec.md b/tool-intent-spec.md
+index 5286de44a23fc0500835752edd7bcc16de00fb0c..0248af2fdcfe1c573a2e04b869953bc7dff30f4d 100644
+--- a/tool-intent-spec.md
++++ b/tool-intent-spec.md
+@@ -116,6 +116,33 @@ const INTENT_PROPERTY: JsonSchemaType = Object.freeze<JsonSchemaType>({
+ 
+ The "distinguish siblings" clause is load-bearing for the reference case. Without it, models emit identical intents for parallel calls to the same tool.
+ 
++#### Fork override: concise, user-language labels
++
++`packages/api/src/agents/intent.ts` overrides the SDK description above with:
++
++> ALWAYS write this field FIRST, before any other argument. Briefly describe this call in the user language: bare action and necessary object only. Chinese: at most 12 characters, e.g. 读取配置, 检查构建状态, 查找登录逻辑. Other languages: at most 6 words. No progress preambles (正在, 正在做, 我正在, or equivalents). Do not imply completion or success (已完成, 已成功, or equivalents). No explanation, tool names, or ending punctuation. Distinguish sibling calls with a short object.
++
++Host injection uses this prompt immediately. The final `sanitizeIntentLabels` pass
++also replaces the description on surviving marker-verified SDK-native labels in
++definitions and the deferred-tool registry. It preserves the imported
++`INTENT_LABEL_MARKER`, property order, optionality, capability gate, opt-outs,
++stripping and business `intent` parameters. Length targets are prompt guidance
++only: this override adds neither `maxLength` nor runtime truncation.
++
++Binding verified against `@librechat/agents@4.0.4-ricky.3`: event-driven definitions
++pass through `AgentContext.getToolsForBinding`, `createSchemaOnlyTools` and
++`initializeModel` to the provider's `bindTools`; deferred definitions use the same
++path after discovery. Regression coverage checks the bound OpenAI schemas for
++host injection, SDK bash/read-file/skill/tool-search definitions and discovery,
++without making a model request.
++
++**Coverage boundary:** SDK instance-only tools bypass these host definitions.
++In particular, `StandardGraph.createAgentNode` builds the graph-managed `subagent`
++tool later via `buildSubagentToolParams`, retaining the SDK prompt. A registry
++override cannot change that schema. `ask_user_question` remains excluded and is
++rebuilt from its own host Zod schema. This change does not alter those paths or
++the vendored SDK.
++
+ ### 4.2 Outcome, and who authors it
+ 
+ The model cannot know the outcome at call time, so `outcome` is never a model-authored arg. Two sources, in precedence order:

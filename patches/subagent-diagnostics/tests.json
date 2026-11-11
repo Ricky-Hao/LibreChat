@@ -1,0 +1,68 @@
+{
+  "checks": [
+    {
+      "name": "api focused tests",
+      "tier": "focused",
+      "cwd": "api",
+      "requires": [
+        "api/package.json",
+        "api/server/services/Endpoints/agents/initialize.spec.js"
+      ],
+      "runner": "jest",
+      "files": [
+        "api/server/services/Endpoints/agents/initialize.spec.js"
+      ]
+    },
+    {
+      "name": "packages/api focused tests",
+      "tier": "focused",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/package.json",
+        "packages/api/src/agents/__tests__/initialize.test.ts",
+        "packages/api/src/agents/__tests__/run-codeTools.test.ts",
+        "packages/api/src/agents/initialization.spec.ts",
+        "packages/api/src/utils/errors.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/api/src/agents/__tests__/initialize.test.ts",
+        "packages/api/src/agents/__tests__/run-codeTools.test.ts",
+        "packages/api/src/agents/initialization.spec.ts",
+        "packages/api/src/utils/errors.spec.ts"
+      ]
+    },
+    {
+      "name": "packages/api tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    }
+  ]
+}

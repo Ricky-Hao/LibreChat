@@ -1,0 +1,273 @@
+diff --git a/packages/api/src/mcp/__tests__/ping.integration.spec.ts b/packages/api/src/mcp/__tests__/ping.integration.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..cdca941c2a19520ea9ef19cc8424d6ed8f9ba31f
+--- /dev/null
++++ b/packages/api/src/mcp/__tests__/ping.integration.spec.ts
+@@ -0,0 +1,129 @@
++import express from 'express';
++import { createServer } from 'node:http';
++import { Server } from '@modelcontextprotocol/sdk/server/index.js';
++import { CallToolRequestSchema, EmptyResultSchema } from '@modelcontextprotocol/sdk/types.js';
++import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
++import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
++import type { AddressInfo } from 'node:net';
++import { MCPConnection } from '../connection';
++
++test('one HTTP session answers recurring server heartbeats between tool calls', async () => {
++  const server = new Server(
++    { name: 'heartbeat-test', version: '1' },
++    { capabilities: { tools: {} } },
++  );
++  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => 'test-session' });
++  const outgoing: JSONRPCMessage[] = [];
++  const incoming: JSONRPCMessage[] = [];
++  const send = transport.send.bind(transport);
++  jest.spyOn(transport, 'send').mockImplementation(async (message, options) => {
++    outgoing.push(message);
++    return send(message, options);
++  });
++  let toolCalls = 0;
++  server.setRequestHandler(CallToolRequestSchema, () => {
++    toolCalls++;
++    return { content: [{ type: 'text', text: `call ${toolCalls}` }] };
++  });
++  await server.connect(transport);
++  const onmessage = transport.onmessage!;
++  transport.onmessage = (message, extra) => {
++    incoming.push(message);
++    onmessage(message, extra);
++  };
++
++  let initializes = 0;
++  let streams = 0;
++  const sessions = new Set<string | undefined>();
++  const httpErrors: unknown[] = [];
++  const app = express();
++  app.use(express.json());
++  app.all('/mcp', (req, res) => {
++    if (req.body?.method === 'initialize') initializes++;
++    else sessions.add(req.headers['mcp-session-id'] as string | undefined);
++    if (req.method === 'GET') streams++;
++    void transport.handleRequest(req, res, req.body).catch((error) => {
++      httpErrors.push(error);
++      res.destroy();
++    });
++  });
++  const http = createServer(app);
++  let connection: MCPConnection | undefined;
++  let heartbeat: ReturnType<typeof setInterval> | undefined;
++  const pending: Promise<void>[] = [];
++  const heartbeatErrors: unknown[] = [];
++  let acknowledged = 0;
++  async function waitFor(predicate: () => boolean) {
++    const deadline = Date.now() + 3000;
++    while (!predicate()) {
++      if (heartbeatErrors.length) throw heartbeatErrors[0];
++      if (Date.now() >= deadline) throw new Error('Local heartbeat test deadline exceeded');
++      await new Promise((resolve) => setTimeout(resolve, 10));
++    }
++  }
++
++  try {
++    await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
++    const { port } = http.address() as AddressInfo;
++    connection = new MCPConnection({
++      serverName: 'heartbeat-test',
++      serverConfig: {
++        type: 'streamable-http',
++        url: `http://127.0.0.1:${port}/mcp`,
++        initTimeout: 2000,
++        timeout: 1000,
++      },
++    });
++    await connection.connectClient();
++    await waitFor(() => streams === 1);
++    const call = () => connection!.client.callTool({ name: 'echo' }, undefined, { timeout: 1000 });
++    await expect(call()).resolves.toEqual({ content: [{ type: 'text', text: 'call 1' }] });
++    heartbeat = setInterval(() => {
++      pending.push(
++        server.request({ method: 'ping' }, EmptyResultSchema, { timeout: 500 }).then(
++          (result) => {
++            expect(result).toEqual({});
++            acknowledged++;
++          },
++          (error) => {
++            heartbeatErrors.push(error);
++          },
++        ),
++      );
++    }, 50);
++    await waitFor(() => acknowledged >= 4);
++    await expect(call()).resolves.toEqual({ content: [{ type: 'text', text: 'call 2' }] });
++    clearInterval(heartbeat);
++    await Promise.all(pending);
++
++    const pings = outgoing.filter((message) => 'method' in message && message.method === 'ping');
++    const responses = incoming.filter((message) => 'result' in message);
++    expect(pings.length).toBeGreaterThanOrEqual(4);
++    expect(responses).toEqual(
++      pings.map((message) => ({
++        jsonrpc: '2.0',
++        id: 'id' in message ? message.id : undefined,
++        result: {},
++      })),
++    );
++    expect(new Set(pings.map((message) => ('id' in message ? message.id : undefined))).size).toBe(
++      pings.length,
++    );
++    expect(initializes).toBe(1);
++    expect(streams).toBe(1);
++    expect(sessions).toEqual(new Set(['test-session']));
++    expect(transport.sessionId).toBe('test-session');
++    expect(toolCalls).toBe(2);
++    expect(heartbeatErrors).toEqual([]);
++    expect(httpErrors).toEqual([]);
++  } finally {
++    clearInterval(heartbeat);
++    await connection?.dispose();
++    await server.close();
++    await Promise.all(pending);
++    http.closeAllConnections();
++    await new Promise<void>((resolve, reject) =>
++      http.close((error) => (error ? reject(error) : resolve())),
++    );
++  }
++}, 10_000);
+diff --git a/packages/api/src/mcp/__tests__/ping.spec.ts b/packages/api/src/mcp/__tests__/ping.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8980e9516eb8bf8c03e10738422f686f240174e0
+--- /dev/null
++++ b/packages/api/src/mcp/__tests__/ping.spec.ts
+@@ -0,0 +1,99 @@
++import { z } from 'zod';
++import { Server } from '@modelcontextprotocol/sdk/server/index.js';
++import { EmptyResultSchema } from '@modelcontextprotocol/sdk/types.js';
++import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
++import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
++import { MCPConnection } from '../connection';
++
++describe('MCP response forwarding', () => {
++  let connection: MCPConnection;
++  let server: Server;
++  let sent: JSONRPCMessage[];
++
++  async function connect() {
++    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
++    sent = [];
++    const send = clientTransport.send.bind(clientTransport);
++    jest.spyOn(clientTransport, 'send').mockImplementation(async (message) => {
++      sent.push(message);
++      return send(message);
++    });
++    connection['transport'] = clientTransport;
++    connection['patchTransportSend']();
++    server = new Server({ name: 'test', version: '1' });
++    await server.connect(serverTransport);
++    await connection.client.connect(clientTransport);
++    connection['setupTransportOnMessageHandler']();
++  }
++
++  async function request(method = 'ping') {
++    const result = server.request({ method }, EmptyResultSchema, { timeout: 100 }).then(
++      (value) => value,
++      (error: unknown) => error,
++    );
++    await jest.advanceTimersByTimeAsync(100);
++    expect(await result).toEqual({});
++  }
++
++  beforeEach(async () => {
++    jest.useFakeTimers({ now: 1_000_000 });
++    connection = new MCPConnection({
++      serverName: 'test',
++      serverConfig: { command: 'unused', args: [], type: 'stdio' },
++    });
++    await connect();
++  });
++
++  afterEach(async () => {
++    await connection.dispose();
++    await server.close();
++    jest.useRealTimers();
++  });
++
++  it.each([0, 300_001, -60_000])(
++    'answers distinct pings regardless of clock offset %i',
++    async (offset) => {
++      jest.setSystemTime(1_000_000 + offset);
++      for (let i = 0; i < 3; i++) await request();
++      const responses = sent.filter((message) => 'result' in message);
++      expect(responses).toEqual([
++        { jsonrpc: '2.0', id: 0, result: {} },
++        { jsonrpc: '2.0', id: 1, result: {} },
++        { jsonrpc: '2.0', id: 2, result: {} },
++      ]);
++    },
++  );
++
++  it('forwards legitimate non-ping empty results through the SDK', async () => {
++    connection.client.setRequestHandler(z.object({ method: z.literal('test/empty') }), () => ({}));
++    await request('test/empty');
++    await request('test/empty');
++    expect(sent.filter((message) => 'result' in message)).toEqual([
++      { jsonrpc: '2.0', id: 0, result: {} },
++      { jsonrpc: '2.0', id: 1, result: {} },
++    ]);
++  });
++
++  it('does not carry response throttling across close and reconnect', async () => {
++    jest.setSystemTime(1_300_001);
++    await request();
++    await connection.disconnect();
++    await server.close();
++    await connect();
++    for (let i = 0; i < 3; i++) await request();
++    expect(sent.filter((message) => 'result' in message)).toHaveLength(3);
++  });
++
++  it('preserves nonempty results, errors, notifications and requests', async () => {
++    const messages: JSONRPCMessage[] = [
++      { jsonrpc: '2.0', id: 'result', result: { value: 1 } },
++      { jsonrpc: '2.0', id: 'error', error: { code: -32601, message: 'Unknown method' } },
++      { jsonrpc: '2.0', method: 'notifications/test', params: { value: 2 } },
++      { jsonrpc: '2.0', id: 'request', method: 'ping' },
++    ];
++    sent.length = 0;
++    for (const message of messages) await connection['transport']!.send(message);
++    expect(sent).toEqual(messages);
++    await expect(connection.client.ping({ timeout: 100 })).resolves.toEqual({});
++  });
++});
+diff --git a/packages/api/src/mcp/connection.ts b/packages/api/src/mcp/connection.ts
+index 1c8a88a4e2aae0e623708777a86c2cf0e28ab391..3adb2dacafa77fbae26f4a3e17e719f738afd643 100644
+--- a/packages/api/src/mcp/connection.ts
++++ b/packages/api/src/mcp/connection.ts
+@@ -1124,7 +1124,6 @@ export class MCPConnection extends EventEmitter {
+   private reportedStandaloneSseConflict = false;
+   private agents: Dispatcher[] = [];
+   private readonly userId?: string;
+-  private lastPingTime: number;
+   private lastConnectionCheckAt: number = 0;
+   private lastConnectionCheckError?: unknown;
+   private lastConnectionCheckCredentialSetId?: string | null;
+@@ -1321,7 +1320,6 @@ export class MCPConnection extends EventEmitter {
+     this.iconPath = params.serverConfig.iconPath;
+     this.timeout = params.serverConfig.timeout;
+     this.sseReadTimeout = params.serverConfig.sseReadTimeout;
+-    this.lastPingTime = Date.now();
+     this.createdAt = Date.now(); // Record creation timestamp for staleness detection
+     if (params.oauthTokens) {
+       this.oauthTokens = params.oauthTokens;
+@@ -2505,12 +2503,6 @@ export class MCPConnection extends EventEmitter {
+ 
+     const originalSend = this.transport.send.bind(this.transport);
+     this.transport.send = async (msg) => {
+-      if ('result' in msg && !('method' in msg) && Object.keys(msg.result ?? {}).length === 0) {
+-        if (Date.now() - this.lastPingTime < FIVE_MINUTES) {
+-          throw new Error('Empty result');
+-        }
+-        this.lastPingTime = Date.now();
+-      }
+       const method = 'method' in msg ? msg.method : undefined;
+       const id = 'id' in msg ? msg.id : undefined;
+       if (

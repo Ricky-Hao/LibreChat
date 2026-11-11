@@ -1,0 +1,37 @@
+{
+  "checks": [
+    {
+      "name": "Devcontainer setup contract",
+      "tier": "focused",
+      "cwd": ".",
+      "requires": [
+        ".devcontainer/setup.test.mjs",
+        ".devcontainer/setup.sh"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "--test",
+        ".devcontainer/setup.test.mjs"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    }
+  ]
+}

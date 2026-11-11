@@ -1,0 +1,246 @@
+{
+  "checks": [
+    {
+      "name": "api focused tests",
+      "tier": "focused",
+      "cwd": "api",
+      "requires": [
+        "api/package.json",
+        "api/server/routes/__tests__/messages-content-edit.spec.js",
+        "api/server/routes/__tests__/messages-delete.spec.js",
+        "api/server/routes/__tests__/messages-feedback.spec.js",
+        "api/server/routes/__tests__/messages-get-real-validation.spec.js",
+        "api/server/routes/__tests__/messages-get.spec.js",
+        "api/server/routes/__tests__/messages-retention.spec.js",
+        "api/server/routes/__tests__/messages-subagent-thread.spec.js",
+        "api/server/routes/__tests__/messages-update.spec.js"
+      ],
+      "runner": "jest",
+      "files": [
+        "api/server/routes/__tests__/messages-content-edit.spec.js",
+        "api/server/routes/__tests__/messages-delete.spec.js",
+        "api/server/routes/__tests__/messages-feedback.spec.js",
+        "api/server/routes/__tests__/messages-get-real-validation.spec.js",
+        "api/server/routes/__tests__/messages-get.spec.js",
+        "api/server/routes/__tests__/messages-retention.spec.js",
+        "api/server/routes/__tests__/messages-subagent-thread.spec.js",
+        "api/server/routes/__tests__/messages-update.spec.js"
+      ]
+    },
+    {
+      "name": "client focused tests",
+      "tier": "focused",
+      "cwd": "client",
+      "requires": [
+        "client/package.json",
+        "client/src/components/Chat/Messages/Content/Parts/__tests__/LazyAttachment.test.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/__tests__/LogContent.test.tsx",
+        "client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx",
+        "client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx",
+        "client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx",
+        "client/src/components/Chat/__tests__/ChatView.spec.tsx",
+        "client/src/components/Conversations/ConvoOptions/__tests__/ShareButton.test.tsx",
+        "client/src/data-provider/Messages/__tests__/queries.test.ts",
+        "client/src/data-provider/Messages/__tests__/window.test.ts",
+        "client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx",
+        "client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx",
+        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx",
+        "client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx"
+      ],
+      "runner": "jest",
+      "files": [
+        "client/src/components/Chat/Messages/Content/Parts/__tests__/LazyAttachment.test.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/__tests__/LogContent.test.tsx",
+        "client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx",
+        "client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx",
+        "client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx",
+        "client/src/components/Chat/__tests__/ChatView.spec.tsx",
+        "client/src/components/Conversations/ConvoOptions/__tests__/ShareButton.test.tsx",
+        "client/src/data-provider/Messages/__tests__/queries.test.ts",
+        "client/src/data-provider/Messages/__tests__/window.test.ts",
+        "client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx",
+        "client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx",
+        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx",
+        "client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx"
+      ]
+    },
+    {
+      "name": "packages/api focused tests",
+      "tier": "focused",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/package.json",
+        "packages/api/src/messages/history.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/api/src/messages/history.spec.ts"
+      ]
+    },
+    {
+      "name": "packages/chat focused tests",
+      "tier": "focused",
+      "cwd": "packages/chat",
+      "requires": [
+        "packages/chat/package.json",
+        "packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx",
+        "packages/chat/test/consumer.spec.tsx"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx",
+        "packages/chat/test/consumer.spec.tsx"
+      ]
+    },
+    {
+      "name": "packages/data-provider focused tests",
+      "tier": "focused",
+      "cwd": "packages/data-provider",
+      "requires": [
+        "packages/data-provider/package.json",
+        "packages/data-provider/src/history.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/data-provider/src/history.spec.ts"
+      ]
+    },
+    {
+      "name": "packages/data-schemas focused tests",
+      "tier": "focused",
+      "cwd": "packages/data-schemas",
+      "requires": [
+        "packages/data-schemas/package.json",
+        "packages/data-schemas/src/methods/history.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/data-schemas/src/methods/history.spec.ts"
+      ]
+    },
+    {
+      "name": "history-window browser contract",
+      "tier": "browser",
+      "cwd": ".",
+      "runner": "playwright",
+      "files": [
+        "e2e/specs/mock/export.spec.ts",
+        "e2e/specs/mock/scenarios/long-conversation-mount.spec.ts",
+        "e2e/specs/mock/scenarios/mobile-drawer-large-chat.spec.ts",
+        "e2e/specs/mock/scenarios/reply-read-state.spec.ts"
+      ],
+      "config": "e2e/playwright.config.mock.ts",
+      "requires": [
+        "e2e/playwright.config.mock.ts",
+        "e2e/specs/mock/export.spec.ts",
+        "e2e/specs/mock/scenarios/long-conversation-mount.spec.ts",
+        "e2e/specs/mock/scenarios/mobile-drawer-large-chat.spec.ts",
+        "e2e/specs/mock/scenarios/reply-read-state.spec.ts"
+      ]
+    },
+    {
+      "name": "client tsc --noEmit",
+      "tier": "types",
+      "cwd": "client",
+      "requires": [
+        "client/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/api tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/chat tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/chat",
+      "requires": [
+        "packages/chat/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/data-provider tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/data-provider",
+      "requires": [
+        "packages/data-provider/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/data-schemas tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/data-schemas",
+      "requires": [
+        "packages/data-schemas/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    },
+    {
+      "name": "Lighthouse application gate",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "e2e/playwright.config.lighthouse.ts",
+        "e2e/lighthouse/README.md"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "lighthouse"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,191 @@
+{
+  "checks": [
+    {
+      "name": "api focused tests",
+      "tier": "focused",
+      "cwd": "api",
+      "requires": [
+        "api/package.json",
+        "api/app/clients/specs/BaseClient.test.js",
+        "api/server/controllers/agents/__tests__/request.partialDisconnect.spec.js",
+        "api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js",
+        "api/server/controllers/agents/__tests__/resume.spec.js",
+        "api/server/routes/agents/__tests__/abort.spec.js"
+      ],
+      "runner": "jest",
+      "files": [
+        "api/app/clients/specs/BaseClient.test.js",
+        "api/server/controllers/agents/__tests__/request.partialDisconnect.spec.js",
+        "api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js",
+        "api/server/controllers/agents/__tests__/resume.spec.js",
+        "api/server/routes/agents/__tests__/abort.spec.js"
+      ]
+    },
+    {
+      "name": "client focused tests",
+      "tier": "focused",
+      "cwd": "client",
+      "requires": [
+        "client/package.json",
+        "client/src/hooks/SSE/__tests__/stepEquivalence.spec.ts",
+        "client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts",
+        "client/src/hooks/SSE/__tests__/useResumeOnLoad.spec.tsx",
+        "client/src/hooks/SSE/__tests__/useStepHandler.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "client/src/hooks/SSE/__tests__/stepEquivalence.spec.ts",
+        "client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts",
+        "client/src/hooks/SSE/__tests__/useResumeOnLoad.spec.tsx",
+        "client/src/hooks/SSE/__tests__/useStepHandler.spec.ts"
+      ]
+    },
+    {
+      "name": "packages/api focused tests",
+      "tier": "focused",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/package.json",
+        "packages/api/src/stream/__tests__/RedisJobStore.spec.ts",
+        "packages/api/src/stream/__tests__/retained.spec.ts",
+        "packages/api/src/stream/__tests__/steering.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/api/src/stream/__tests__/RedisJobStore.spec.ts",
+        "packages/api/src/stream/__tests__/retained.spec.ts",
+        "packages/api/src/stream/__tests__/steering.spec.ts"
+      ]
+    },
+    {
+      "name": "packages/chat focused tests",
+      "tier": "focused",
+      "cwd": "packages/chat",
+      "requires": [
+        "packages/chat/package.json",
+        "packages/chat/src/core/__tests__/steps.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/chat/src/core/__tests__/steps.spec.ts"
+      ]
+    },
+    {
+      "name": "packages/data-provider focused tests",
+      "tier": "focused",
+      "cwd": "packages/data-provider",
+      "requires": [
+        "packages/data-provider/package.json",
+        "packages/data-provider/specs/messages.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/data-provider/specs/messages.spec.ts"
+      ]
+    },
+    {
+      "name": "retained-prefix browser contract",
+      "tier": "browser",
+      "cwd": ".",
+      "runner": "playwright",
+      "files": [
+        "e2e/specs/mock/retained-prefix.spec.ts"
+      ],
+      "config": "e2e/playwright.config.mock.ts",
+      "requires": [
+        "e2e/playwright.config.mock.ts",
+        "e2e/specs/mock/retained-prefix.spec.ts"
+      ]
+    },
+    {
+      "name": "client tsc --noEmit",
+      "tier": "types",
+      "cwd": "client",
+      "requires": [
+        "client/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/api tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/chat tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/chat",
+      "requires": [
+        "packages/chat/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/data-provider tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/data-provider",
+      "requires": [
+        "packages/data-provider/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    },
+    {
+      "name": "Lighthouse application gate",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "e2e/playwright.config.lighthouse.ts",
+        "e2e/lighthouse/README.md"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "lighthouse"
+      ]
+    }
+  ]
+}

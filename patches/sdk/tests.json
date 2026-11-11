@@ -1,0 +1,85 @@
+{
+  "checks": [
+    {
+      "name": "Installed SDK provenance and real export smoke",
+      "tier": "focused",
+      "cwd": ".",
+      "requires": [
+        "vendor/verify-agents.mjs",
+        "vendor/agents.json",
+        "vendor/librechat-agents-4.2.2-ricky.1.tgz",
+        "vendor/agents-4.2.2-ricky.1.patch",
+        "package-lock.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "vendor/verify-agents.mjs"
+      ]
+    },
+    {
+      "name": "sdk browser contract",
+      "tier": "browser",
+      "cwd": ".",
+      "runner": "playwright",
+      "files": [
+        "e2e/specs/mock/scenarios/locked-registry.spec.ts",
+        "e2e/specs/mock/scenarios/registry.spec.ts"
+      ],
+      "config": "e2e/playwright.config.mock.ts",
+      "requires": [
+        "e2e/playwright.config.mock.ts",
+        "e2e/specs/mock/scenarios/locked-registry.spec.ts",
+        "e2e/specs/mock/scenarios/registry.spec.ts"
+      ]
+    },
+    {
+      "name": "packages/api tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    },
+    {
+      "name": "Lighthouse application gate",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "e2e/playwright.config.lighthouse.ts",
+        "e2e/lighthouse/README.md"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "lighthouse"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+diff --git a/client/src/components/Chat/Menus/OpenSidebar.tsx b/client/src/components/Chat/Menus/OpenSidebar.tsx
+index 2d527d3cb17f0098aeba9c23e71cd6b321ac2858..1f18154dc2130ce2d0fd6ebf3114de44d8b6d245 100644
+--- a/client/src/components/Chat/Menus/OpenSidebar.tsx
++++ b/client/src/components/Chat/Menus/OpenSidebar.tsx
+@@ -24,14 +24,16 @@ export default function OpenSidebar({
+   const ariaKey = useShortcutAriaKey('toggleSidebar');
+ 
+   const handleClick = () => {
++    const opener = document.activeElement;
+     const mode = setSidebarOpen(true);
+     if (mode === 'none') {
+-      /** Desktop only: the expanded panel claims `CLOSE_SIDEBAR_ID` and has
+-       * no commit-driven handoff of its own. The mobile drawer focuses its
+-       * toggle from the commit itself — a second timer there would steal
+-       * focus back from a keyboard user who has already tabbed onward. */
++      /** Desktop panels need a timed handoff. The animator can also be absent
++       * during mobile initialization, so preserve its commit-driven handoff
++       * and any deliberate focus change before this fallback runs. */
+       setTimeout(() => {
+-        document.getElementById(CLOSE_SIDEBAR_ID)?.focus();
++        if (document.activeElement === opener || document.activeElement === document.body) {
++          document.getElementById(CLOSE_SIDEBAR_ID)?.focus();
++        }
+       }, 250);
+     }
+   };
+diff --git a/client/src/components/Chat/Menus/__tests__/OpenSidebar.spec.tsx b/client/src/components/Chat/Menus/__tests__/OpenSidebar.spec.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..3f99a72057bb60be489f4d53ac5e42b9cc9bb442
+--- /dev/null
++++ b/client/src/components/Chat/Menus/__tests__/OpenSidebar.spec.tsx
+@@ -0,0 +1,56 @@
++import React from 'react';
++import { RecoilRoot } from 'recoil';
++import { act, fireEvent, render, screen } from '@testing-library/react';
++import OpenSidebar, { CLOSE_SIDEBAR_ID } from '../OpenSidebar';
++import store from '~/store';
++
++jest.mock('~/hooks', () => ({ useLocalize: () => (key: string) => key }));
++
++const closeLabel = 'Close sidebar';
++const menuLabel = 'Settings';
++
++describe('sidebar opener fallback focus', () => {
++  beforeEach(() => {
++    jest.useFakeTimers();
++    localStorage.clear();
++  });
++
++  afterEach(() => {
++    jest.useRealTimers();
++  });
++
++  function openSidebar() {
++    render(
++      <RecoilRoot initializeState={({ set }) => set(store.sidebarExpanded, false)}>
++        <OpenSidebar />
++        <button id={CLOSE_SIDEBAR_ID}>{closeLabel}</button>
++        <button role="menuitem">{menuLabel}</button>
++      </RecoilRoot>,
++    );
++    const opener = screen.getByRole('button', { name: 'com_nav_open_sidebar' });
++    opener.focus();
++    fireEvent.click(opener);
++    return opener;
++  }
++
++  it('hands focus into the sidebar when the opener still owns focus', () => {
++    openSidebar();
++    act(() => jest.advanceTimersByTime(250));
++    expect(screen.getByRole('button', { name: closeLabel })).toHaveFocus();
++  });
++
++  it('hands focus into the sidebar when focus falls back to the body', () => {
++    const opener = openSidebar();
++    opener.blur();
++    act(() => jest.advanceTimersByTime(250));
++    expect(screen.getByRole('button', { name: closeLabel })).toHaveFocus();
++  });
++
++  it('preserves a menu opened after the mobile commit has already handed off focus', () => {
++    openSidebar();
++    screen.getByRole('button', { name: closeLabel }).focus();
++    screen.getByRole('menuitem', { name: menuLabel }).focus();
++    act(() => jest.advanceTimersByTime(250));
++    expect(screen.getByRole('menuitem', { name: menuLabel })).toHaveFocus();
++  });
++});

@@ -1,0 +1,64 @@
+{
+  "checks": [
+    {
+      "name": "api focused tests",
+      "tier": "focused",
+      "cwd": "api",
+      "requires": [
+        "api/package.json",
+        "api/app/clients/specs/BaseClient.test.js",
+        "api/server/services/MCP.spec.js"
+      ],
+      "runner": "jest",
+      "files": [
+        "api/app/clients/specs/BaseClient.test.js",
+        "api/server/services/MCP.spec.js"
+      ]
+    },
+    {
+      "name": "packages/api focused tests",
+      "tier": "focused",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/package.json",
+        "packages/api/src/mcp/__tests__/parsers.test.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/api/src/mcp/__tests__/parsers.test.ts"
+      ]
+    },
+    {
+      "name": "packages/api tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    }
+  ]
+}

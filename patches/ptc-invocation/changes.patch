@@ -1,0 +1,155 @@
+diff --git a/packages/api/src/agents/handlers.spec.ts b/packages/api/src/agents/handlers.spec.ts
+index bc56be1d708bf0123b1d82ba1960159f5769c666..795c0a4ccc4eb64f155e68ef4811503f8c79d576 100644
+--- a/packages/api/src/agents/handlers.spec.ts
++++ b/packages/api/src/agents/handlers.spec.ts
+@@ -1,3 +1,4 @@
++import { z } from 'zod';
+ import { performance } from 'node:perf_hooks';
+ import { applyTextEdits, HostEditError } from './files/matching';
+ import * as hostEditProcessing from './files/processing';
+@@ -11,7 +12,7 @@ import { createServer } from 'node:http';
+ import type { AddressInfo } from 'node:net';
+ import { Constants } from '@librechat/agents';
+ import { logger } from '@librechat/data-schemas';
+-import { tool } from '@librechat/agents/langchain/tools';
++import { tool, DynamicStructuredTool } from '@librechat/agents/langchain/tools';
+ import type {
+   ToolExecuteBatchRequest,
+   ToolExecuteResult,
+@@ -811,6 +812,41 @@ describe('createToolExecuteHandler', () => {
+   });
+ 
+   describe('tool argument normalization', () => {
++    it.each([false, true])(
++      'invokes a real strict tool with UI intent (JSON=%s)',
++      async (encoded) => {
++        const args = Object.freeze({ id: 'agent', expanded: false, intent: 'Inspecting agent' });
++        const received: unknown[] = [];
++        const strictTool = new DynamicStructuredTool({
++          name: 'agents_get',
++          description: 'fixture',
++          schema: z.object({ id: z.string(), expanded: z.boolean() }).strict(),
++          func: async (input) => {
++            received.push(input);
++            return 'ok';
++          },
++        });
++        const handler = createToolExecuteHandler({
++          loadTools: async () => ({ loadedTools: [strictTool] }),
++        });
++        const [result] = await invokeHandler(handler, [
++          {
++            id: 'call_intent',
++            name: strictTool.name,
++            args: encoded ? (JSON.stringify(args) as unknown as ToolCallRequest['args']) : args,
++          },
++        ]);
++        expect(result.status).toBe('success');
++        expect(received).toEqual([{ id: 'agent', expanded: false }]);
++        expect(args.intent).toBe('Inspecting agent');
++        const [invalid] = await invokeHandler(handler, [
++          { id: 'call_invalid', name: strictTool.name, args: { ...args, extra: true } },
++        ]);
++        expect(invalid.status).toBe('error');
++        expect(received).toHaveLength(1);
++      },
++    );
++
+     it('parses JSON-string args for object-schema tools before invocation', async () => {
+       const capturedArgs: unknown[] = [];
+       const tool = createMockTool(Constants.BASH_PROGRAMMATIC_TOOL_CALLING, [], {
+diff --git a/packages/api/src/agents/handlers.ts b/packages/api/src/agents/handlers.ts
+index 420adad664a7f9307e882ab1a7e9a63db717c504..62e7ea152aaf30c526fe13ebbff8a642a9a1486d 100644
+--- a/packages/api/src/agents/handlers.ts
++++ b/packages/api/src/agents/handlers.ts
+@@ -1,6 +1,6 @@
+ import yaml from 'js-yaml';
+ import { Types } from 'mongoose';
+-import { Constants, ToolEndHandler } from '@librechat/agents';
++import { Constants, ToolEndHandler, stripIntentForInvoke } from '@librechat/agents';
+ import {
+   logger,
+   normalizeSkillFrontmatterKeys,
+@@ -142,17 +142,12 @@ import {
+   contentFilterModelBoundBlockResponse,
+   isContentFilterError,
+ } from '~/middleware/contentFilter';
+-import {
+-  hasIntentArg,
+-  stripIntentArg,
+-  stripIntentLabelsFromToolDefinitions,
+-  INTENT_ARG,
+-} from './intent';
+ import { editConflictExcerptText, formatEditConflict, parseEditConflict } from '~/code/edits';
+ import { buildSkillPrimeMessage, isSkillFilePath, SKILL_FILE_PREFIX } from './skills';
+ import { resolveCallerCapabilityProjectionSnapshot } from './callerCapabilities';
+ import { SteerToolInterrupt, interruptedToolResult } from './steering/tools';
+ import { BACKGROUND_TOOL_INVOCATION_CONFIG_KEY } from './invocation';
++import { stripIntentLabelsFromToolDefinitions } from './intent';
+ import { mergeCodeFilesIntoContext } from './codeFilesSession';
+ import { toolValidationFeedback } from './validationFeedback';
+ import { explainWorkspacePathRejection } from '~/code/paths';
+@@ -3250,37 +3245,6 @@ function toolDeclaresRunInBackgroundParam(tool: StructuredToolInterface): boolea
+   );
+ }
+ 
+-/**
+- * True when the tool's own schema declares `intent` (zod shape or raw JSON
+- * schema) — SDK-native intent tools do, so they receive the argument
+- * untouched and handle it themselves; host-injected tools do not, so the
+- * arg is stripped before invocation.
+- */
+-function toolDeclaresIntentParam(tool: StructuredToolInterface): boolean {
+-  const schema = (
+-    tool as StructuredToolInterface & {
+-      schema?: { shape?: Record<string, unknown>; properties?: Record<string, unknown> };
+-    }
+-  ).schema;
+-  if (schema == null) {
+-    return false;
+-  }
+-  return schema.shape?.[INTENT_ARG] != null || schema.properties?.[INTENT_ARG] != null;
+-}
+-
+-/**
+- * Strips the host-injected `intent` label from invoke args unless the tool's
+- * own schema declares it. The label rides `tool_call.args` to the client
+- * untouched — only the tool body must never see an undeclared parameter
+- * (strict MCP/action schemas would reject it; zod tools would strip-or-throw).
+- */
+-function stripIntentForInvoke(args: unknown, tool: StructuredToolInterface): unknown {
+-  if (!hasIntentArg(args) || toolDeclaresIntentParam(tool)) {
+-    return args;
+-  }
+-  return stripIntentArg(args);
+-}
+-
+ function mergeToolConfigurables(
+   base: Record<string, unknown> | undefined,
+   loaded: Record<string, unknown> | undefined,
+diff --git a/packages/api/src/agents/ptc.ts b/packages/api/src/agents/ptc.ts
+index aaa47d274f6c034c88e5a14555bdeb7c9647f6f7..249355b2590aa8857784dd8afc482692d0521a48 100644
+--- a/packages/api/src/agents/ptc.ts
++++ b/packages/api/src/agents/ptc.ts
+@@ -1,3 +1,4 @@
++import { PROGRAMMATIC_TOOL_INPUT } from '@librechat/agents';
+ import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
+ import type { PtcToolCallEvent } from 'librechat-data-provider';
+ 
+@@ -155,7 +156,15 @@ export function instrumentPtcToolMap({
+               call_id: callId,
+               name,
+               status: 'running',
+-              ...(includePreviews ? { args: summarizePtcArgs(input) } : {}),
++              ...(includePreviews
++                ? {
++                    args: summarizePtcArgs(
++                      (config as { [PROGRAMMATIC_TOOL_INPUT]?: unknown } | undefined)?.[
++                        PROGRAMMATIC_TOOL_INPUT
++                      ] ?? input,
++                    ),
++                  }
++                : {}),
+               ...(runId != null ? { runId } : {}),
+             });
+             try {

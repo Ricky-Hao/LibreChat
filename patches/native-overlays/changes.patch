@@ -1,0 +1,1876 @@
+diff --git a/client/src/components/Artifacts/Artifacts.tsx b/client/src/components/Artifacts/Artifacts.tsx
+index 43707ba9feae59c6c32d05cf616c396cb864f8d5..2657c5b974c177d0a02d0fe6e063baf9cf1488a8 100644
+--- a/client/src/components/Artifacts/Artifacts.tsx
++++ b/client/src/components/Artifacts/Artifacts.tsx
+@@ -3,7 +3,14 @@ import { useAtom } from 'jotai';
+ import copy from 'copy-to-clipboard';
+ import * as Tabs from '@radix-ui/react-tabs';
+ import { useSetRecoilState, useResetRecoilState } from 'recoil';
+-import { Button, Spinner, useMediaQuery, Radio, useToastContext } from '@librechat/client';
++import {
++  Button,
++  Spinner,
++  useMediaQuery,
++  Radio,
++  useToastContext,
++  OverlayBack,
++} from '@librechat/client';
+ import {
+   Code,
+   Maximize2,
+@@ -450,7 +457,7 @@ export default function Artifacts() {
+       ? (Math.min(blurAmount, MAX_BLUR_AMOUNT) / MAX_BLUR_AMOUNT) * MAX_BACKDROP_OPACITY
+       : 0;
+ 
+-  return (
++  const panel = (
+     <Tabs.Root value={displayedTab} onValueChange={setActiveTab} asChild>
+       <div ref={artifactContainerRef} className="bg-surface-primary flex h-full w-full flex-col">
+         {/* Mobile backdrop with dynamic blur */}
+@@ -708,4 +715,9 @@ export default function Artifacts() {
+       </div>
+     </Tabs.Root>
+   );
++  return (
++    <OverlayBack open={isMobile && !isClosing} onClose={closeArtifacts}>
++      {panel}
++    </OverlayBack>
++  );
+ }
+diff --git a/client/src/components/Chat/Messages/Content/DialogImage.tsx b/client/src/components/Chat/Messages/Content/DialogImage.tsx
+index 4dd98b0d8f74d231bb761bd900c89ef287c58959..b261c3bfa51cbc6a6ee0ac2c90a7f940c5c67af7 100644
+--- a/client/src/components/Chat/Messages/Content/DialogImage.tsx
++++ b/client/src/components/Chat/Messages/Content/DialogImage.tsx
+@@ -2,7 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
+ import { PanelLeftOpen, PanelLeftClose } from 'lucide';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ import { X, ArrowDownToLine, RotateCcw } from 'lucide-react';
+-import { Button, MorphIcon, TooltipAnchor, useMediaQuery, useRemScale } from '@librechat/client';
++import {
++  Button,
++  Dialog,
++  MorphIcon,
++  TooltipAnchor,
++  useMediaQuery,
++  useRemScale,
++} from '@librechat/client';
+ import { useLocalize } from '~/hooks';
+ 
+ /** The lightbox is z-250 and not an OGDialog, so its tooltips would keep the default 150 and sit behind it. */
+@@ -260,7 +267,7 @@ export default function DialogImage({
+   const getImageMaxWidth = () => (detailsBeside ? 'calc(90vw - 20rem)' : '90vw');
+ 
+   return (
+-    <DialogPrimitive.Root open={isOpen} onOpenChange={onOpenChange}>
++    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+       <DialogPrimitive.Portal>
+         <DialogPrimitive.Overlay
+           className="bg-surface-media-overlay/90 fixed inset-0 z-[250]"
+@@ -477,6 +484,6 @@ export default function DialogImage({
+           )}
+         </DialogPrimitive.Content>
+       </DialogPrimitive.Portal>
+-    </DialogPrimitive.Root>
++    </Dialog>
+   );
+ }
+diff --git a/client/src/components/Chat/Subagents/SubagentThreadPanel.tsx b/client/src/components/Chat/Subagents/SubagentThreadPanel.tsx
+index d4faa30c5f7b4ca62775c33276f66f22799441c6..cf096d55cc2d47d0bd8169115f3cd1cd8b1d63af 100644
+--- a/client/src/components/Chat/Subagents/SubagentThreadPanel.tsx
++++ b/client/src/components/Chat/Subagents/SubagentThreadPanel.tsx
+@@ -10,6 +10,7 @@ import {
+   Button,
+   Composer,
+   ControlCombobox,
++  OverlayBack,
+   useMediaQuery,
+   useToastContext,
+ } from '@librechat/client';
+@@ -1594,7 +1595,7 @@ export default function SubagentThreadPanel({ selection }: { selection: ActiveSu
+     );
+   }
+ 
+-  return (
++  const panel = (
+     <aside
+       ref={panelRef}
+       tabIndex={-1}
+@@ -1766,6 +1767,11 @@ export default function SubagentThreadPanel({ selection }: { selection: ActiveSu
+       )}
+     </aside>
+   );
++  return (
++    <OverlayBack open={isMobile} onClose={close}>
++      {panel}
++    </OverlayBack>
++  );
+ }
+ 
+ function HistoricalEventTaskActivity({
+diff --git a/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx b/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx
+index b0ca8e43462a4eb05da65a50f7e57a3431a9ec41..d832a2741feeb38dda711249e3f01e5b8e33e438 100644
+--- a/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx
++++ b/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx
+@@ -1,6 +1,6 @@
+ import { forwardRef } from 'react';
+ import { Input, Label, SecretInput } from '@librechat/client';
+-import type { ChangeEvent, FC, Ref } from 'react';
++import type { ChangeEvent } from 'react';
+ import { useLocalize } from '~/hooks';
+ import { cn } from '~/utils/';
+ 
+@@ -13,10 +13,9 @@ interface InputWithLabelProps {
+   labelClassName?: string;
+   inputClassName?: string;
+   secret?: boolean;
+-  ref?: Ref<HTMLInputElement>;
+ }
+ 
+-const InputWithLabel: FC<InputWithLabelProps> = forwardRef((props, ref) => {
++const InputWithLabel = forwardRef<HTMLInputElement, InputWithLabelProps>((props, ref) => {
+   const {
+     id,
+     value,
+diff --git a/client/src/components/Nav/Settings/Dialog.tsx b/client/src/components/Nav/Settings/Dialog.tsx
+index beb54d49c8a56403b2e30f114e6557d61328f68d..69a83010d232667ad8b62d0051e049f9a22fe79a 100644
+--- a/client/src/components/Nav/Settings/Dialog.tsx
++++ b/client/src/components/Nav/Settings/Dialog.tsx
+@@ -5,6 +5,7 @@ import { SettingsTabValues } from 'librechat-data-provider';
+ import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from '@headlessui/react';
+ import {
+   Button,
++  OverlayBack,
+   DialogLayer,
+   useMediaQuery,
+   useRemScale,
+@@ -47,7 +48,7 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
+     setMobileDetail(true);
+   };
+ 
+-  return (
++  const dialog = (
+     <Transition appear show={open}>
+       <Dialog as="div" className="relative z-50" onClose={() => onOpenChange(false)}>
+         <TransitionChild
+@@ -155,4 +156,11 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
+       </Dialog>
+     </Transition>
+   );
++  return (
++    <OverlayBack open={open} onClose={() => onOpenChange(false)}>
++      <OverlayBack open={open && inDetail} onClose={() => setMobileDetail(false)}>
++        {dialog}
++      </OverlayBack>
++    </OverlayBack>
++  );
+ }
+diff --git a/client/src/hooks/SSE/pane.ts b/client/src/hooks/SSE/pane.ts
+index 63b9a6f1acbbc76502d6c9501dd5c08f904450f1..3c23767a16093adb65dcf713b472248cd2bf141c 100644
+--- a/client/src/hooks/SSE/pane.ts
++++ b/client/src/hooks/SSE/pane.ts
+@@ -23,6 +23,7 @@ import type {
+ } from '@librechat/chat';
+ import type { EventHandlerParams } from './useEventHandlers';
+ import { clearComposerDrafts, resolveRunEndTarget } from '~/utils';
++import { replaceBrowserUrl } from '~/utils/overlays';
+ import { activeRunFamily } from './atoms';
+ 
+ /**
+@@ -47,11 +48,7 @@ const replaceNewConversationUrl = (conversationId: string) => {
+     return;
+   }
+ 
+-  window.history.replaceState(
+-    window.history.state,
+-    '',
+-    `/c/${conversationId}${window.location.search}`,
+-  );
++  replaceBrowserUrl(`/c/${conversationId}${window.location.search}`);
+ };
+ 
+ /**
+diff --git a/client/src/routes/Overlays.test.tsx b/client/src/routes/Overlays.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd5943db81af485122664b0926c4caf1f8cb89cb
+--- /dev/null
++++ b/client/src/routes/Overlays.test.tsx
+@@ -0,0 +1,470 @@
++import React, { StrictMode, useState } from 'react';
++import { OverlayBack } from '@librechat/client';
++import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
++import { createBrowserRouter, RouterProvider, useLocation, useNavigate } from 'react-router-dom';
++import { replaceBrowserUrl } from '~/utils/overlays';
++import Overlays from './Overlays';
++
++let mockIsMobile = true;
++jest.mock('@librechat/client', () => ({
++  ...jest.requireActual('@librechat/client'),
++  useMediaQuery: () =>
++    jest.requireActual('react').useSyncExternalStore(
++      (callback: () => void) => {
++        globalThis.window.addEventListener('resize', callback);
++        return () => globalThis.window.removeEventListener('resize', callback);
++      },
++      () => mockIsMobile,
++    ),
++}));
++
++function Windows({ initialOpen = false }: { initialOpen?: boolean }) {
++  const [open, setOpen] = useState(initialOpen);
++  const [nested, setNested] = useState(initialOpen);
++  const [refuseClose, setRefuseClose] = useState(false);
++  const [draft, setDraft] = useState('original');
++  const location = useLocation();
++  const navigate = useNavigate();
++  return (
++    <>
++      <output aria-label="route">{location.pathname}</output>
++      <input aria-label="draft" value={draft} onChange={(event) => setDraft(event.target.value)} />
++      <button onClick={() => setOpen(true)}>{'Open'}</button>
++      <button onClick={() => setOpen(false)}>{'Close'}</button>
++      <button onClick={() => setRefuseClose((value) => !value)}>{'Toggle refusal'}</button>
++      <button
++        onClick={() => {
++          setOpen(false);
++          void navigate('/c/next');
++        }}
++      >
++        {'Navigate'}
++      </button>
++      <button
++        onClick={() => {
++          setOpen(false);
++          void navigate('/c/next', { replace: true });
++        }}
++      >
++        {'Replace'}
++      </button>
++      <button onClick={() => replaceBrowserUrl('/c/stream-123?model=example')}>
++        {'Promote URL'}
++      </button>
++      <OverlayBack
++        open={open}
++        onClose={() => {
++          if (!refuseClose) setOpen(false);
++        }}
++      >
++        {open && (
++          <div role="dialog" aria-label="outer">
++            <button onClick={() => setNested(true)}>{'Open nested'}</button>
++            <button onClick={() => setNested(false)}>{'Close nested'}</button>
++            <OverlayBack open={nested} onClose={() => setNested(false)}>
++              {nested && <div role="dialog" aria-label="inner" />}
++            </OverlayBack>
++          </div>
++        )}
++      </OverlayBack>
++    </>
++  );
++}
++
++class MockCloseWatcher extends EventTarget {
++  static active = new Set<MockCloseWatcher>();
++
++  constructor() {
++    super();
++    MockCloseWatcher.active.add(this);
++  }
++
++  destroy() {
++    MockCloseWatcher.active.delete(this);
++  }
++
++  close() {
++    this.destroy();
++    this.dispatchEvent(new Event('close'));
++  }
++}
++
++describe('native mobile overlay dismissal', () => {
++  let router: ReturnType<typeof createBrowserRouter>;
++  let navigation: EventTarget & { currentEntry: { index: number } };
++
++  function mount(initialOpen = false) {
++    window.history.replaceState({ key: 'before', idx: 0 }, '', '/before');
++    window.history.pushState({ key: 'chat', idx: 1, usr: { preserved: true } }, '', '/c/chat');
++    router = createBrowserRouter([
++      {
++        element: <Overlays />,
++        children: [{ path: '*', element: <Windows initialOpen={initialOpen} /> }],
++      },
++    ]);
++    return render(
++      <StrictMode>
++        <RouterProvider router={router} useTransitions={false} />
++      </StrictMode>,
++    );
++  }
++
++  async function open() {
++    fireEvent.click(screen.getByText('Open', { selector: 'button' }));
++    await waitFor(() => expect(screen.getByRole('dialog', { name: 'outer' })).toBeVisible());
++  }
++
++  function traverse({ forward = false, cancelable = true, sameDocument = true } = {}) {
++    navigation.currentEntry.index = window.history.state.idx;
++    const event = Object.assign(new Event('navigate', { cancelable }), {
++      navigationType: 'traverse',
++      destination: {
++        index: navigation.currentEntry.index + (forward ? 1 : -1),
++        sameDocument,
++      },
++    });
++    navigation.dispatchEvent(event);
++    return event;
++  }
++
++  async function back(options = {}) {
++    await act(async () => {
++      if (!traverse(options).defaultPrevented) window.history.back();
++      await new Promise((resolve) => setTimeout(resolve, 20));
++    });
++  }
++
++  async function forward() {
++    await act(async () => {
++      if (!traverse({ forward: true }).defaultPrevented) window.history.forward();
++      await new Promise((resolve) => setTimeout(resolve, 20));
++    });
++  }
++
++  async function nativeClose() {
++    await waitFor(() => expect(MockCloseWatcher.active.size).toBe(1));
++    act(() => [...MockCloseWatcher.active][0].close());
++  }
++
++  beforeEach(() => {
++    mockIsMobile = true;
++    MockCloseWatcher.active.clear();
++    navigation = Object.assign(new EventTarget(), { currentEntry: { index: 1 } });
++    Object.defineProperty(window, 'navigation', { configurable: true, value: navigation });
++    Object.defineProperty(window, 'CloseWatcher', { configurable: true, value: MockCloseWatcher });
++  });
++  afterEach(() => {
++    router?.dispose();
++  });
++
++  it('cancels supported Back without changing URL, draft, state or history length', async () => {
++    mount();
++    const state = window.history.state;
++    const length = window.history.length;
++    fireEvent.change(screen.getByLabelText('draft'), { target: { value: 'unsaved words' } });
++    await open();
++    await back();
++    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++    expect(window.location.pathname).toBe('/c/chat');
++    expect(window.history.state).toEqual(state);
++    expect(window.history.length).toBe(length);
++    expect(screen.getByLabelText('draft')).toHaveValue('unsaved words');
++    await back();
++    await waitFor(() => expect(window.location.pathname).toBe('/before'));
++  });
++
++  it('closes explicitly without adding a dead Back step', async () => {
++    mount();
++    await open();
++    fireEvent.click(screen.getByText('Close', { selector: 'button' }));
++    await back();
++    await waitFor(() => expect(window.location.pathname).toBe('/before'));
++  });
++
++  it('closes nested windows one at a time without adding history', async () => {
++    mount();
++    const length = window.history.length;
++    await open();
++    fireEvent.click(screen.getByText('Open nested'));
++    await back();
++    await waitFor(() =>
++      expect(screen.queryByRole('dialog', { name: 'inner' })).not.toBeInTheDocument(),
++    );
++    expect(screen.getByRole('dialog', { name: 'outer' })).toBeInTheDocument();
++    expect(window.history.length).toBe(length);
++    await back();
++    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++    expect(window.history.length).toBe(length);
++  });
++
++  it('uses one native watcher for initially open nested windows under StrictMode', async () => {
++    mount(true);
++    await nativeClose();
++    await waitFor(() =>
++      expect(screen.queryByRole('dialog', { name: 'inner' })).not.toBeInTheDocument(),
++    );
++    expect(screen.getByRole('dialog', { name: 'outer' })).toBeInTheDocument();
++    await nativeClose();
++    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++    await waitFor(() => expect(MockCloseWatcher.active.size).toBe(0));
++  });
++
++  it.each(['Back', 'native close'])(
++    'preserves controlled refusal of %s and accepts a later close',
++    async (method) => {
++      mount();
++      await open();
++      fireEvent.click(screen.getByText('Toggle refusal'));
++      const close = method === 'Back' ? back : nativeClose;
++      await close();
++      expect(screen.getByRole('dialog', { name: 'outer' })).toBeInTheDocument();
++      expect(window.location.pathname).toBe('/c/chat');
++      fireEvent.click(screen.getByText('Toggle refusal'));
++      await close();
++      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++    },
++  );
++
++  it('does not undo navigation issued in the same action as dismissal', async () => {
++    mount();
++    await open();
++    fireEvent.click(screen.getByText('Navigate'));
++    await waitFor(() => expect(screen.getByLabelText('route')).toHaveTextContent('/c/next'));
++    await back();
++    await waitFor(() => expect(router.state.location.key).toBe('chat'));
++    expect(window.location.pathname).toBe('/c/chat');
++  });
++
++  it('protects a rapidly reopened window without scheduling a history traversal', async () => {
++    mount();
++    const go = jest.spyOn(window.history, 'go');
++    const backSpy = jest.spyOn(window.history, 'back');
++    await open();
++    fireEvent.click(screen.getByText('Close', { selector: 'button' }));
++    fireEvent.click(screen.getByText('Open', { selector: 'button' }));
++    await nativeClose();
++    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++    expect(go).not.toHaveBeenCalled();
++    expect(backSpy).not.toHaveBeenCalled();
++  });
++
++  it('does not add history or intercept navigation on desktop', async () => {
++    mockIsMobile = false;
++    mount();
++    fireEvent.click(screen.getByText('Open', { selector: 'button' }));
++    expect(window.history.state.key).toBe('chat');
++    await back();
++    await waitFor(() => expect(window.location.pathname).toBe('/before'));
++    expect(MockCloseWatcher.active.size).toBe(0);
++  });
++
++  it('preserves the open window and draft when crossing to desktop', async () => {
++    mount();
++    await open();
++    fireEvent.change(screen.getByLabelText('draft'), { target: { value: 'keep on resize' } });
++    await waitFor(() => expect(MockCloseWatcher.active.size).toBe(1));
++    act(() => {
++      mockIsMobile = false;
++      window.dispatchEvent(new Event('resize'));
++    });
++    await waitFor(() => expect(MockCloseWatcher.active.size).toBe(0));
++    expect(screen.getByRole('dialog', { name: 'outer' })).toBeVisible();
++    expect(screen.getByLabelText('draft')).toHaveValue('keep on resize');
++    expect(window.location.pathname).toBe('/c/chat');
++    act(() => {
++      mockIsMobile = true;
++      window.dispatchEvent(new Event('resize'));
++    });
++    await nativeClose();
++    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
++  });
++
++  it('does not resurrect a dismissed window on Forward and protects a reopened one', async () => {
++    mount();
++    await open();
++    await back();
++    await back();
++    await forward();
++    expect(window.location.pathname).toBe('/c/chat');
++    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
++    await open();
++    await back();
++    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
++    await back();
++    await waitFor(() => expect(router.state.location.pathname).toBe('/before'));
++  });
++
++  it.each(['explicit', 'Back', 'native close'])(
++    'preserves an existing Forward destination after %s dismissal',
++    async (method) => {
++      mount();
++      await act(async () => {
++        await router.navigate('/c/next');
++      });
++      await back();
++      await waitFor(() => expect(router.state.location.pathname).toBe('/c/chat'));
++      const length = window.history.length;
++      await open();
++      if (method === 'explicit') fireEvent.click(screen.getByText('Close', { selector: 'button' }));
++      else if (method === 'Back') await back();
++      else await nativeClose();
++      expect(window.history.length).toBe(length);
++      await forward();
++      await waitFor(() => expect(router.state.location.pathname).toBe('/c/next'));
++    },
++  );
++
++  it('does not reopen a window or leave ghost entries after a router remount', async () => {
++    const view = mount();
++    await open();
++    view.unmount();
++    expect(MockCloseWatcher.active.size).toBe(0);
++    router.dispose();
++    router = createBrowserRouter([
++      { element: <Overlays />, children: [{ path: '*', element: <Windows /> }] },
++    ]);
++    render(<RouterProvider router={router} useTransitions={false} />);
++    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
++    await back();
++    await waitFor(() => expect(router.state.location.pathname).toBe('/before'));
++  });
++
++  it('does not undo navigation immediately following explicit close', async () => {
++    mount();
++    await open();
++    fireEvent.click(screen.getByText('Close', { selector: 'button' }));
++    fireEvent.click(screen.getByText('Navigate'));
++    await waitFor(() => expect(router.state.location.pathname).toBe('/c/next'));
++    await new Promise((resolve) => setTimeout(resolve, 30));
++    expect(router.state.location.pathname).toBe('/c/next');
++  });
++
++  it('preserves REPLACE semantics while an overlay is open', async () => {
++    mount();
++    await open();
++    fireEvent.click(screen.getByText('Replace', { selector: 'button' }));
++    await waitFor(() => expect(router.state.location.pathname).toBe('/c/next'));
++    await back();
++    await waitFor(() => expect(router.state.location.pathname).toBe('/before'));
++  });
++
++  it('preserves Back and Forward across consecutive real REPLACEs', async () => {
++    mount();
++    for (const pathname of ['/c/next', '/c/third']) {
++      await open();
++      await act(async () => {
++        await router.navigate(pathname, { replace: true });
++      });
++      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++    }
++    await back();
++    await waitFor(() => expect(router.state.location.pathname).toBe('/before'));
++    await forward();
++    await waitFor(() => expect(router.state.location.pathname).toBe('/c/third'));
++  });
++
++  it.each(['before opening', 'while open'])(
++    'preserves a mirrored streaming URL %s without switching routes',
++    async (when) => {
++      mount();
++      if (when === 'while open') await open();
++      fireEvent.click(screen.getByText('Promote URL'));
++      if (when === 'before opening') await open();
++      expect(window.location.pathname).toBe('/c/stream-123');
++      expect(router.state.location.pathname).toBe('/c/chat');
++      await back();
++      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++      expect(window.location.pathname).toBe('/c/stream-123');
++      expect(window.location.search).toBe('?model=example');
++      expect(router.state.location.pathname).toBe('/c/chat');
++      expect(window.history.state.usr).toEqual({ preserved: true });
++    },
++  );
++
++  it.each(['before opening', 'while open'])(
++    'keeps an overlay open when FINAL synchronizes a route mirrored %s',
++    async (when) => {
++      mount();
++      if (when === 'while open') await open();
++      fireEvent.click(screen.getByText('Promote URL'));
++      if (when === 'before opening') await open();
++      const length = window.history.length;
++      await act(async () => {
++        await router.navigate('/c/stream-123', { replace: true, state: { synchronized: true } });
++      });
++      expect(screen.getByRole('dialog', { name: 'outer' })).toBeInTheDocument();
++      expect(router.state.location.pathname).toBe('/c/stream-123');
++      expect(window.history.length).toBe(length);
++      const key = router.state.location.key;
++      await back();
++      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++      expect(window.location.pathname).toBe('/c/stream-123');
++      expect(window.location.search).toBe('');
++      expect(window.history.state.key).toBe(key);
++      expect(window.history.state.usr).toEqual({ synchronized: true });
++      await back();
++      await waitFor(() => expect(router.state.location.pathname).toBe('/before'));
++    },
++  );
++
++  it('keeps nested overlays through FINAL and closes explicitly without a dead Back step', async () => {
++    mount();
++    await open();
++    fireEvent.click(screen.getByText('Open nested'));
++    fireEvent.click(screen.getByText('Promote URL'));
++    await act(async () => {
++      await router.navigate('/c/stream-123', { replace: true });
++    });
++    expect(screen.getByRole('dialog', { name: 'inner' })).toBeInTheDocument();
++    await back();
++    await waitFor(() =>
++      expect(screen.queryByRole('dialog', { name: 'inner' })).not.toBeInTheDocument(),
++    );
++    expect(screen.getByRole('dialog', { name: 'outer' })).toBeInTheDocument();
++    fireEvent.click(screen.getByText('Close', { selector: 'button' }));
++    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++    expect(window.location.pathname).toBe('/c/stream-123');
++    await back();
++    await waitFor(() => expect(router.state.location.pathname).toBe('/before'));
++    await forward();
++    await waitFor(() => expect(router.state.location.pathname).toBe('/c/stream-123'));
++    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
++  });
++
++  it.each([
++    { pathname: '/c/stream-123', replace: false },
++    { pathname: '/c/elsewhere', replace: true },
++  ])('still dismisses on real navigation after mirroring: %o', async ({ pathname, replace }) => {
++    mount();
++    await open();
++    fireEvent.click(screen.getByText('Promote URL'));
++    await act(async () => {
++      await router.navigate(pathname, { replace });
++    });
++    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
++    expect(router.state.location.pathname).toBe(pathname);
++  });
++
++  it.each([{ cancelable: false }, { sameDocument: false }, { forward: true }])(
++    'does not intercept unsupported traversal: %o',
++    async (options) => {
++      mount();
++      await open();
++      const event = traverse(options);
++      expect(event.defaultPrevented).toBe(false);
++      expect(screen.getByRole('dialog', { name: 'outer' })).toBeVisible();
++    },
++  );
++
++  it('leaves normal Back available without native APIs', async () => {
++    Object.defineProperty(window, 'navigation', { configurable: true, value: undefined });
++    Object.defineProperty(window, 'CloseWatcher', { configurable: true, value: undefined });
++    mount();
++    const length = window.history.length;
++    await open();
++    expect(window.history.length).toBe(length);
++    await back();
++    await waitFor(() => expect(router.state.location.pathname).toBe('/before'));
++    expect(MockCloseWatcher.active.size).toBe(0);
++  });
++});
+diff --git a/client/src/routes/Overlays.tsx b/client/src/routes/Overlays.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..c06ab309fae4c39d498ea0859fa7f46521263133
+--- /dev/null
++++ b/client/src/routes/Overlays.tsx
+@@ -0,0 +1,18 @@
++import { useLayoutEffect, useState } from 'react';
++import { OverlayBackProvider, useMediaQuery } from '@librechat/client';
++import { Outlet, useLocation, useNavigationType } from 'react-router-dom';
++import { createOverlayDismissal } from '~/utils/overlays';
++
++export default function Overlays() {
++  const isMobile = useMediaQuery('(max-width: 868px)');
++  const location = useLocation();
++  const action = useNavigationType();
++  const [overlays] = useState(() => createOverlayDismissal(window));
++  useLayoutEffect(() => overlays.listen(), [overlays]);
++  useLayoutEffect(() => overlays.navigated(action), [action, location, overlays]);
++  return (
++    <OverlayBackProvider value={isMobile ? overlays.register : null}>
++      <Outlet />
++    </OverlayBackProvider>
++  );
++}
+diff --git a/client/src/routes/index.tsx b/client/src/routes/index.tsx
+index 7fac97dbb226aa85bf49d76011d5b2a02b7be3c5..b54defa562ea115e1067ae616bb8cc67aeb3d335 100644
+--- a/client/src/routes/index.tsx
++++ b/client/src/routes/index.tsx
+@@ -1,4 +1,5 @@
+ import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
++import type { RouteObject } from 'react-router-dom';
+ import {
+   Login,
+   VerifyEmail,
+@@ -20,6 +21,7 @@ import dashboardRoutes from './Dashboard';
+ import WithRum from '~/lib/rum/WithRum';
+ import ShareRoute from './ShareRoute';
+ import ChatRoute from './ChatRoute';
++import Overlays from './Overlays';
+ import Search from './Search';
+ import Root from './Root';
+ 
+@@ -59,149 +61,150 @@ const loadProjectWorkspace = () =>
+ const baseEl = document.querySelector('base');
+ const baseHref = baseEl?.getAttribute('href') || '/';
+ 
+-export const router = createBrowserRouter(
+-  [
+-    {
+-      path: 'share/:shareId',
+-      element: <ShareRoute />,
+-      errorElement: <RouteErrorBoundary />,
+-    },
+-    {
+-      path: 'oauth',
+-      errorElement: <RouteErrorBoundary />,
+-      children: [
+-        {
+-          path: 'success',
+-          element: <OAuthSuccess />,
+-        },
+-        {
+-          path: 'error',
+-          element: <OAuthError />,
+-        },
+-      ],
+-    },
+-    {
+-      path: '/',
+-      element: <StartupLayout />,
+-      errorElement: <RouteErrorBoundary />,
+-      children: [
+-        {
+-          path: 'register',
+-          element: <Registration />,
+-        },
+-        {
+-          path: 'forgot-password',
+-          element: <RequestPasswordReset />,
+-        },
+-        {
+-          path: 'reset-password',
+-          element: <ResetPassword />,
+-        },
+-      ],
+-    },
+-    {
+-      path: 'verify',
+-      element: <VerifyEmail />,
+-      errorElement: <RouteErrorBoundary />,
+-    },
+-    {
+-      element: <AuthLayout />,
+-      errorElement: <RouteErrorBoundary />,
+-      children: [
+-        {
+-          errorElement: <RouteErrorBoundary />,
+-          children: [
+-            {
+-              path: '/',
+-              element: <LoginLayout />,
+-              children: [
+-                {
+-                  path: 'login',
+-                  element: <Login />,
+-                },
+-                {
+-                  path: 'login/2fa',
+-                  element: <TwoFactorScreen />,
+-                },
+-                {
+-                  path: 'login/2fa/setup',
+-                  element: <TwoFactorSetupScreen />,
+-                },
+-              ],
+-            },
+-            dashboardRoutes,
+-            codeSetupRoute,
+-            {
+-              path: '/',
+-              element: <Root />,
+-              children: [
+-                {
+-                  index: true,
+-                  element: <Navigate to="/c/new" replace={true} />,
+-                },
+-                {
+-                  path: 'c/:conversationId?',
+-                  element: <ChatRoute />,
+-                },
+-                {
+-                  path: 'search',
+-                  element: <Search />,
+-                },
+-                {
+-                  path: 'prompts',
+-                  element: <Navigate to="/c/new" replace={true} />,
+-                },
+-                {
+-                  /** Prompts are created from a dialog, so there is no "new" page to land on */
+-                  path: 'prompts/new',
+-                  element: <Navigate to="/c/new" replace={true} />,
+-                },
+-                {
+-                  path: 'prompts/:promptId',
+-                  lazy: loadInlinePromptsView,
+-                },
+-                {
+-                  path: 'skills',
+-                  lazy: loadSkillsView,
+-                },
+-                {
+-                  path: 'insights',
+-                  lazy: loadInsightsView,
+-                },
+-                {
+-                  path: 'skills/new',
+-                  lazy: loadSkillsView,
+-                },
+-                {
+-                  path: 'skills/:skillId',
+-                  lazy: loadSkillsView,
+-                },
+-                {
+-                  path: 'skills/:skillId/edit',
+-                  lazy: loadSkillsView,
+-                },
+-                {
+-                  path: 'projects',
+-                  lazy: loadProjectsView,
+-                },
+-                {
+-                  path: 'projects/:projectId',
+-                  lazy: loadProjectWorkspace,
+-                },
+-                {
+-                  path: 'agents',
+-                  element: <MarketplaceRoute />,
+-                },
+-                {
+-                  path: 'agents/:category',
+-                  element: <MarketplaceRoute />,
+-                },
+-              ],
+-            },
+-          ],
+-        },
+-      ],
+-    },
+-  ],
+-  { basename: baseHref },
+-);
++const routes: RouteObject[] = [
++  {
++    path: 'share/:shareId',
++    element: <ShareRoute />,
++    errorElement: <RouteErrorBoundary />,
++  },
++  {
++    path: 'oauth',
++    errorElement: <RouteErrorBoundary />,
++    children: [
++      {
++        path: 'success',
++        element: <OAuthSuccess />,
++      },
++      {
++        path: 'error',
++        element: <OAuthError />,
++      },
++    ],
++  },
++  {
++    path: '/',
++    element: <StartupLayout />,
++    errorElement: <RouteErrorBoundary />,
++    children: [
++      {
++        path: 'register',
++        element: <Registration />,
++      },
++      {
++        path: 'forgot-password',
++        element: <RequestPasswordReset />,
++      },
++      {
++        path: 'reset-password',
++        element: <ResetPassword />,
++      },
++    ],
++  },
++  {
++    path: 'verify',
++    element: <VerifyEmail />,
++    errorElement: <RouteErrorBoundary />,
++  },
++  {
++    element: <AuthLayout />,
++    errorElement: <RouteErrorBoundary />,
++    children: [
++      {
++        errorElement: <RouteErrorBoundary />,
++        children: [
++          {
++            path: '/',
++            element: <LoginLayout />,
++            children: [
++              {
++                path: 'login',
++                element: <Login />,
++              },
++              {
++                path: 'login/2fa',
++                element: <TwoFactorScreen />,
++              },
++              {
++                path: 'login/2fa/setup',
++                element: <TwoFactorSetupScreen />,
++              },
++            ],
++          },
++          dashboardRoutes,
++          codeSetupRoute,
++          {
++            path: '/',
++            element: <Root />,
++            children: [
++              {
++                index: true,
++                element: <Navigate to="/c/new" replace={true} />,
++              },
++              {
++                path: 'c/:conversationId?',
++                element: <ChatRoute />,
++              },
++              {
++                path: 'search',
++                element: <Search />,
++              },
++              {
++                path: 'prompts',
++                element: <Navigate to="/c/new" replace={true} />,
++              },
++              {
++                /** Prompts are created from a dialog, so there is no "new" page to land on */
++                path: 'prompts/new',
++                element: <Navigate to="/c/new" replace={true} />,
++              },
++              {
++                path: 'prompts/:promptId',
++                lazy: loadInlinePromptsView,
++              },
++              {
++                path: 'skills',
++                lazy: loadSkillsView,
++              },
++              {
++                path: 'insights',
++                lazy: loadInsightsView,
++              },
++              {
++                path: 'skills/new',
++                lazy: loadSkillsView,
++              },
++              {
++                path: 'skills/:skillId',
++                lazy: loadSkillsView,
++              },
++              {
++                path: 'skills/:skillId/edit',
++                lazy: loadSkillsView,
++              },
++              {
++                path: 'projects',
++                lazy: loadProjectsView,
++              },
++              {
++                path: 'projects/:projectId',
++                lazy: loadProjectWorkspace,
++              },
++              {
++                path: 'agents',
++                element: <MarketplaceRoute />,
++              },
++              {
++                path: 'agents/:category',
++                element: <MarketplaceRoute />,
++              },
++            ],
++          },
++        ],
++      },
++    ],
++  },
++];
++
++export const router = createBrowserRouter([{ element: <Overlays />, children: routes }], {
++  basename: baseHref,
++});
+diff --git a/client/src/store/__tests__/families.spec.tsx b/client/src/store/__tests__/families.spec.tsx
+index 610e425a52af4704f5045b4782d7f5680eb366e4..0488b11f57da8ea4240e97efd4beb990422b635b 100644
+--- a/client/src/store/__tests__/families.spec.tsx
++++ b/client/src/store/__tests__/families.spec.tsx
+@@ -161,6 +161,21 @@ describe('conversationByIndex URL mirroring', () => {
+     expect(window.location.search).toContain('endpoint=openAI');
+   });
+ 
++  it('preserves the complete history state while mirroring a model edit', async () => {
++    const state = {
++      key: 'chat-entry',
++      idx: 3,
++      usr: { draft: true },
++      extra: { preserved: true },
++    };
++    window.history.replaceState(state, '', `/c/${Constants.NEW_CONVO}`);
++    renderChat();
++    await seed();
++    fireEvent.click(screen.getByRole('button', { name: 'edit-model' }));
++    await waitFor(() => expect(window.location.search).toContain('model=edited-1'));
++    expect(window.history.state).toEqual(state);
++  });
++
+   it('keeps the landing project switch in place, as ProjectLandingChip intends', async () => {
+     renderChat();
+     await seed();
+diff --git a/client/src/store/families.ts b/client/src/store/families.ts
+index 8c719ad99ffa8c3e8870b1aafb092c5de61bd66c..9d20fa5b8ed07d766c134052fcb1c5e3424d4301 100644
+--- a/client/src/store/families.ts
++++ b/client/src/store/families.ts
+@@ -18,6 +18,7 @@ import {
+   logger,
+ } from '~/utils';
+ import { useSetConvoContext } from '~/Providers/SetConvoContext';
++import { replaceBrowserUrl } from '~/utils/overlays';
+ 
+ const conversationByIndex = atomFamily<TConversation | null, string | number>({
+   key: 'conversationByIndex',
+@@ -82,7 +83,7 @@ const conversationByIndex = atomFamily<TConversation | null, string | number>({
+            * `navigate()` calls (useNewConvo), and in-place writers like
+            * ProjectLandingChip deliberately replace. Pushing here buried the
+            * Back target under one inert entry per draft edit. */
+-          window.history.replaceState({}, '', url);
++          replaceBrowserUrl(url);
+         }
+       });
+     },
+diff --git a/client/src/utils/overlays.ts b/client/src/utils/overlays.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..4a15db658fae0d38aabc2331b41d2dd6fbd22116
+--- /dev/null
++++ b/client/src/utils/overlays.ts
+@@ -0,0 +1,132 @@
++import type { OverlayRegistration, RegisterOverlay } from '@librechat/client';
++import type { NavigationType } from 'react-router-dom';
++
++/** Native close/navigation types are missing from the client's TypeScript DOM library. */
++type CloseWatcher = EventTarget & { destroy(): void };
++type NavigateEvent = Event & {
++  navigationType: string;
++  destination: { index: number; sameDocument: boolean };
++};
++type OverlayWindow = Window & {
++  CloseWatcher?: new () => CloseWatcher;
++  navigation?: {
++    currentEntry: { index: number } | null;
++    addEventListener(type: 'navigate', listener: (event: NavigateEvent) => void): void;
++    removeEventListener(type: 'navigate', listener: (event: NavigateEvent) => void): void;
++  };
++};
++const URL_MIRRORED = 'librechat:url-mirrored';
++
++/** Mirror without navigating or initializing the streaming conversation. */
++export function replaceBrowserUrl(url: string) {
++  window.history.replaceState(window.history.state, '', url);
++  window.dispatchEvent(new Event(URL_MIRRORED));
++}
++
++/** Never manufacture history entries for overlays: pushing would erase Forward.
++ *  Unsupported or non-cancelable navigation remains the browser's responsibility. */
++export function createOverlayDismissal(browser: OverlayWindow): {
++  register: RegisterOverlay;
++  listen: () => () => void;
++  navigated: (action: NavigationType) => void;
++} {
++  const layers = new Map<string, OverlayRegistration>();
++  const snapshot = () => ({
++    key: (browser.history.state as { key?: string } | null)?.key,
++    url: browser.location.href,
++  });
++  let current = snapshot();
++  let mirroredPath: string | null = null;
++  let watcher: CloseWatcher | undefined;
++  let listening = false;
++  let scheduled = false;
++
++  const topLayer = () => {
++    let top: OverlayRegistration | undefined;
++    for (const layer of layers.values()) {
++      if (top == null || layer.depth >= top.depth) top = layer;
++    }
++    return top;
++  };
++
++  const reconcile = () => {
++    if (scheduled) return;
++    scheduled = true;
++    queueMicrotask(() => {
++      scheduled = false;
++      if (!listening || layers.size === 0) {
++        watcher?.destroy();
++        watcher = undefined;
++        return;
++      }
++      if (watcher != null || browser.CloseWatcher == null) return;
++      /** One native watcher owns the stack, avoiding grouped per-dialog closes. */
++      watcher = new browser.CloseWatcher();
++      watcher.addEventListener('close', () => {
++        watcher = undefined;
++        topLayer()?.onClose();
++        /** A native close consumes the watcher even if controlled UI refuses it. */
++        reconcile();
++      });
++    });
++  };
++
++  const onNavigate = (event: NavigateEvent) => {
++    const entry = browser.navigation?.currentEntry;
++    if (
++      event.defaultPrevented ||
++      !event.cancelable ||
++      event.navigationType !== 'traverse' ||
++      !event.destination.sameDocument ||
++      entry == null ||
++      event.destination.index >= entry.index
++    ) {
++      return;
++    }
++    const top = topLayer();
++    if (top == null) return;
++    event.preventDefault();
++    top.onClose();
++  };
++
++  const mirrored = () => {
++    if (new URL(current.url).pathname !== browser.location.pathname) {
++      mirroredPath = browser.location.pathname;
++    }
++    current = snapshot();
++  };
++
++  return {
++    register: (layer) => {
++      layers.set(layer.id, layer);
++      reconcile();
++      return () => {
++        if (layers.get(layer.id) !== layer) return;
++        layers.delete(layer.id);
++        reconcile();
++      };
++    },
++    listen: () => {
++      listening = true;
++      current = snapshot();
++      browser.navigation?.addEventListener('navigate', onNavigate);
++      browser.addEventListener(URL_MIRRORED, mirrored);
++      reconcile();
++      return () => {
++        listening = false;
++        watcher?.destroy();
++        watcher = undefined;
++        browser.navigation?.removeEventListener('navigate', onNavigate);
++        browser.removeEventListener(URL_MIRRORED, mirrored);
++      };
++    },
++    navigated: (action) => {
++      const previous = current;
++      const synchronizing = action === 'REPLACE' && mirroredPath === browser.location.pathname;
++      mirroredPath = null;
++      current = snapshot();
++      if (synchronizing || (previous.key === current.key && previous.url === current.url)) return;
++      for (const layer of layers.values()) layer.onClose();
++    },
++  };
++}
+diff --git a/e2e/specs/mock/mobile-overlay-back.spec.ts b/e2e/specs/mock/mobile-overlay-back.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2babe9c74ee712e8bc705c86f1ed704cfca022a8
+--- /dev/null
++++ b/e2e/specs/mock/mobile-overlay-back.spec.ts
+@@ -0,0 +1,373 @@
++import { expect, test } from '@playwright/test';
++import type { Locator, Page } from '@playwright/test';
++import type { AgentDetail } from './agents.helpers';
++import { cleanupAgent, openAgentBuilder, uniqueAgentName } from './agents.helpers';
++import {
++  MOCK_ENDPOINTS,
++  getAccessToken,
++  messagesView,
++  replyPrompt,
++  replyText,
++  requestJson,
++  selectMockEndpoint,
++  sendMessage,
++  sendMessageAndWaitForCompletion,
++} from './helpers';
++
++const MOBILE_VIEWPORT = { width: 390, height: 844 };
++const DESKTOP_VIEWPORT = { width: 1280, height: 900 };
++
++type NativeWatcher = EventTarget & { requestClose(): void; destroy(): void };
++type WatchedWindow = Window & {
++  CloseWatcher: new () => NativeWatcher;
++  overlayWatchers: Set<NativeWatcher>;
++};
++
++async function previousUrl(page: Page): Promise<string> {
++  return page.evaluate(() => {
++    const { navigation } = window as Window & {
++      navigation: {
++        currentEntry: { index: number };
++        entries(): { index: number; url: string }[];
++      };
++    };
++    const previous = navigation
++      .entries()
++      .find((entry) => entry.index === navigation.currentEntry.index - 1);
++    if (!previous) throw new Error('The fixture must have a real previous history entry');
++    return previous.url;
++  });
++}
++
++async function backClosesOverlay(page: Page, overlay: Locator, chatUrl: string): Promise<void> {
++  await expect(overlay).toBeVisible();
++  const historyBefore = await page.evaluate(() => ({
++    length: history.length,
++    state: history.state,
++  }));
++  await page.evaluate(() => history.back());
++  await expect(overlay).toBeHidden();
++  await expect(page).toHaveURL(chatUrl);
++  expect(await page.evaluate(() => ({ length: history.length, state: history.state }))).toEqual(
++    historyBefore,
++  );
++}
++
++async function enterMobileChat(page: Page): Promise<void> {
++  await page.setViewportSize(MOBILE_VIEWPORT);
++  await expect(page.getByTestId('header-open-sidebar-button')).toBeVisible();
++  await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeVisible();
++}
++
++async function prepareMockChat(page: Page, prompt: string): Promise<string> {
++  await page.setViewportSize(DESKTOP_VIEWPORT);
++  /** Enter through a real SPA link so Back has a same-document destination. */
++  await page.goto('/search');
++  await page.getByTestId('new-chat-button').click();
++  await expect(page).toHaveURL(/\/c\/new/);
++  await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
++  const response = await sendMessageAndWaitForCompletion(page, prompt);
++  expect(response.ok()).toBeTruthy();
++  await expect(page.getByRole('button', { name: 'Stop generating' })).toBeHidden();
++  await enterMobileChat(page);
++  return page.url();
++}
++
++test.describe('supported mobile Back dismisses overlays without changing history', () => {
++  test.use({ viewport: MOBILE_VIEWPORT });
++
++  test('keeps the Agent instructions draft when Back closes the expanded editor', async ({
++    page,
++  }) => {
++    const label = 'mobile-instructions-back';
++    const chatUrl = await prepareMockChat(page, replyPrompt(label));
++    const form = await openAgentBuilder(page, { navigate: false });
++    const instructions = form.getByTestId('instructions-inline-panel');
++    const agentName = uniqueAgentName('E2E Back Draft');
++    await form.getByLabel('Agent name').fill(agentName);
++    await instructions.getByRole('button', { name: 'Expand editor', exact: true }).click();
++
++    const editor = page.getByRole('dialog', { name: 'Instructions', exact: true });
++    const draft = 'Keep this unsaved instruction draft.\nDo not navigate away from the chat.';
++    await editor.getByRole('textbox', { name: 'Instructions', exact: true }).fill(draft);
++    await backClosesOverlay(page, editor, chatUrl);
++    await expect(form.getByLabel('Instructions', { exact: true })).toHaveValue(draft);
++    await expect(form.getByLabel('Agent name')).toHaveValue(agentName);
++
++    await instructions.getByRole('button', { name: 'Expand editor', exact: true }).click();
++    await expect(editor.getByRole('textbox', { name: 'Instructions', exact: true })).toHaveValue(
++      draft,
++    );
++    await backClosesOverlay(page, editor, chatUrl);
++    await page.getByTestId('close-sidebar-button').click();
++    await expect(messagesView(page).getByText(replyText(label), { exact: true })).toBeVisible();
++    await expect(page).toHaveURL(chatUrl);
++  });
++
++  test('returns Settings detail to its list before closing Settings on the next Back', async ({
++    page,
++  }) => {
++    const label = 'mobile-settings-back';
++    const chatUrl = await prepareMockChat(page, replyPrompt(label));
++    const previous = await previousUrl(page);
++    await page.getByTestId('header-open-sidebar-button').click();
++    await page.getByTestId('nav-user').click();
++    await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
++
++    const settings = page.getByRole('dialog');
++    const closeSettings = settings.getByRole('button', { name: 'Close Settings', exact: true });
++    const list = settings.getByRole('tablist', { name: 'Settings', exact: true });
++    await expect(list).toBeVisible();
++    await settings.getByRole('tab', { name: 'General', exact: true }).click();
++    const detailBack = settings.getByRole('button', { name: 'Back', exact: true });
++    await expect(detailBack).toBeVisible();
++    await expect(settings.getByRole('tabpanel')).toBeVisible();
++    await expect(list).toBeHidden();
++
++    await page.evaluate(() => history.back());
++    await expect(detailBack).toBeHidden();
++    await expect(list).toBeVisible();
++    await expect(closeSettings).toBeVisible();
++    await expect(page).toHaveURL(chatUrl);
++
++    await backClosesOverlay(page, closeSettings, chatUrl);
++    await page.getByTestId('close-sidebar-button').click();
++    await expect(messagesView(page).getByText(replyText(label), { exact: true })).toBeVisible();
++    await expect(page).toHaveURL(chatUrl);
++    await page.evaluate(() => history.back());
++    await expect(page).toHaveURL(previous);
++  });
++
++  test('closes the Artifacts overlay and keeps the conversation and artifact available', async ({
++    page,
++  }) => {
++    const chatUrl = await prepareMockChat(page, 'E2E_MERMAID_ARTIFACT_REPLY');
++    const messages = messagesView(page);
++    await expect(messages.getByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
++    await messages.getByRole('button', { name: 'Open as artifact', exact: true }).click();
++
++    const panel = page.getByRole('dialog', { name: 'Mermaid diagram', exact: true });
++    await expect(panel.getByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
++    await backClosesOverlay(page, panel, chatUrl);
++    const artifact = messages.locator('[data-artifact-trigger^="mermaid-artifact-"]');
++    await expect(artifact).toBeVisible();
++    await expect(artifact).toHaveAttribute('aria-expanded', 'false');
++    await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeVisible();
++
++    await artifact.click();
++    await expect(panel.getByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
++    await backClosesOverlay(page, panel, chatUrl);
++    await expect(artifact).toHaveAttribute('aria-expanded', 'false');
++  });
++
++  test('keeps a child control draft through first-turn FINAL, then Back closes only the panel', async ({
++    page,
++  }) => {
++    test.setTimeout(120_000);
++    const label = `mobile-back-${Date.now().toString(36)}`;
++    const createdAgentIds: string[] = [];
++
++    try {
++      await page.setViewportSize(DESKTOP_VIEWPORT);
++      await page.goto('/search');
++      await page.getByTestId('new-chat-button').click();
++      await expect(page).toHaveURL(/\/c\/new/);
++      const token = await getAccessToken(page);
++      const parentName = uniqueAgentName('E2E Back Parent');
++      const childIds: string[] = [];
++      for (const name of [
++        uniqueAgentName('E2E Back Child A'),
++        uniqueAgentName('E2E Back Child B'),
++        parentName,
++      ]) {
++        const agent = await requestJson<AgentDetail>(page, {
++          path: '/api/agents',
++          token,
++          method: 'POST',
++          body: {
++            name,
++            instructions: 'Follow the deterministic end-to-end request exactly.',
++            provider: MOCK_ENDPOINTS[0].label,
++            model: MOCK_ENDPOINTS[0].model,
++            ...(name === parentName
++              ? { subagents: { enabled: true, allowSelf: false, agent_ids: childIds } }
++              : {}),
++          },
++        });
++        createdAgentIds.push(agent.id);
++        if (name !== parentName) {
++          childIds.push(agent.id);
++        }
++      }
++
++      const form = await openAgentBuilder(page);
++      await form.getByRole('combobox', { name: 'Agent', exact: true }).click();
++      await page.getByRole('option', { name: parentName, exact: true }).click();
++      await expect(form.getByLabel('Agent name')).toHaveValue(parentName);
++      await form.getByRole('button', { name: 'Select Agent' }).click();
++      await enterMobileChat(page);
++      const response = await sendMessage(
++        page,
++        `E2E_SUBAGENT_ACTIVITY_FINAL:${childIds.join(',')}:${label}`,
++      );
++      expect(response.ok()).toBeTruthy();
++      await expect(page).toHaveURL(/\/c\/[0-9a-f-]{36}/);
++      const initialKey = await page.evaluate(() => history.state.key as string);
++      /** FINAL removes the new-chat query parameters from this same conversation. */
++      const { origin, pathname } = new URL(page.url());
++      const chatUrl = `${origin}${pathname}`;
++      const parentReply = messagesView(page).getByText(
++        `E2E detached subagents dispatched ${label}`,
++      );
++      await page.getByRole('button', { name: /(?:Running|Ran) 2 agents/ }).click();
++      const cards = page.locator('[data-subagent-tool-call^="call_e2e_subagent_activity_"]');
++      await expect(cards).toHaveCount(2);
++      await cards.first().click();
++
++      const panel = page.getByRole('dialog', { name: 'Child agent activity', exact: true });
++      const input = panel.getByRole('textbox', { name: 'Message input', exact: true });
++      const draft = `Unsent child control draft ${label}`;
++      await input.fill(draft);
++      await expect(page.getByRole('button', { name: 'Stop generating' })).toBeVisible();
++      expect(await page.evaluate(() => history.state.key as string)).toBe(initialKey);
++      await expect(panel).toContainText('child-1-phase-10', { timeout: 30_000 });
++
++      /** The changed Router key proves FINAL synchronized /c/new, not just the URL mirror. */
++      await expect
++        .poll(() => page.evaluate(() => history.state.key as string), { timeout: 30_000 })
++        .not.toBe(initialKey);
++      await expect(panel).toBeVisible();
++      await expect(input).toHaveValue(draft);
++      await expect(parentReply).toContainText('chunk-159');
++      await expect(page.getByRole('button', { name: 'Stop generating' })).toBeHidden();
++      await expect(page).toHaveURL(chatUrl);
++      await backClosesOverlay(page, panel, chatUrl);
++      await expect(parentReply).toBeVisible();
++      await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeVisible();
++
++      await cards.first().click();
++      await expect(panel).toContainText(`E2E detached child 1 complete ${label}`, {
++        timeout: 30_000,
++      });
++      await backClosesOverlay(page, panel, chatUrl);
++      await expect(parentReply).toBeVisible();
++    } finally {
++      for (const agentId of createdAgentIds.reverse()) {
++        await cleanupAgent(page, agentId);
++      }
++    }
++  });
++
++  test('preserves Forward after explicit close and after Back, reopen, and dismissal', async ({
++    page,
++  }) => {
++    const completedUrl = await prepareMockChat(page, replyPrompt('forward-preserved'));
++    const previous = await previousUrl(page);
++    await page.getByTestId('header-new-chat-button').click();
++    await expect(page).toHaveURL(/\/c\/new/);
++    const nextUrl = page.url();
++    /** Chat initialization mirrors the selected model spec with replaceState.
++     * Returning to a completed turn canonicalizes that same history entry. */
++    const backTarget = new URL(await previousUrl(page));
++    expect(backTarget.pathname).toBe(new URL(completedUrl).pathname);
++    backTarget.searchParams.set('spec', 'e2e-mock-provider-a');
++    const chatUrl = backTarget.href;
++    await page.goBack();
++    await expect(page).toHaveURL(chatUrl);
++    const length = await page.evaluate(() => history.length);
++
++    for (const explicit of [true, false]) {
++      await page.getByTestId('header-open-sidebar-button').click();
++      /** The drawer's deferred open commit hands focus to its close control.
++       * Opening a menu before that handoff lets the pending focus dismiss it. */
++      await expect(page.getByTestId('close-sidebar-button')).toBeFocused();
++      await page.getByTestId('nav-user').click();
++      await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
++      const settings = page.getByRole('dialog');
++      const closeSettings = settings.getByRole('button', { name: 'Close Settings', exact: true });
++      await expect(closeSettings).toBeVisible();
++      if (explicit) {
++        await closeSettings.click();
++        await expect(closeSettings).toBeHidden();
++      } else {
++        await backClosesOverlay(page, closeSettings, chatUrl);
++      }
++      await page.getByTestId('close-sidebar-button').click();
++      expect(await page.evaluate(() => history.length)).toBe(length);
++      await page.goForward();
++      await expect(page).toHaveURL(nextUrl);
++      await page.goBack();
++      await expect(page).toHaveURL(chatUrl);
++    }
++    await page.goBack();
++    await expect(page).toHaveURL(previous);
++  });
++
++  test('native close requests dismiss one Settings layer at a time without history changes', async ({
++    page,
++  }) => {
++    /** Observe real native instances, rather than replacing their close-event behavior. */
++    await page.addInitScript(() => {
++      const browser = window as WatchedWindow;
++      const NativeCloseWatcher = browser.CloseWatcher;
++      browser.overlayWatchers = new Set();
++      browser.CloseWatcher = class extends NativeCloseWatcher {
++        constructor() {
++          super();
++          browser.overlayWatchers.add(this);
++          this.addEventListener('close', () => browser.overlayWatchers.delete(this));
++        }
++        destroy() {
++          browser.overlayWatchers.delete(this);
++          super.destroy();
++        }
++      };
++    });
++    const chatUrl = await prepareMockChat(page, replyPrompt('native-close'));
++    const historyBefore = await page.evaluate(() => ({
++      length: history.length,
++      state: history.state,
++    }));
++    await page.getByTestId('header-open-sidebar-button').click();
++    await page.getByTestId('nav-user').click();
++    await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
++    const settings = page.getByRole('dialog');
++    await settings.getByRole('tab', { name: 'General', exact: true }).click();
++    await expect(settings.getByRole('tabpanel')).toBeVisible();
++    for (const detail of [true, false]) {
++      await expect
++        .poll(() => page.evaluate(() => (window as WatchedWindow).overlayWatchers.size))
++        .toBe(1);
++      await page.evaluate(() => [...(window as WatchedWindow).overlayWatchers][0].requestClose());
++      if (detail)
++        await expect(
++          settings.getByRole('tablist', { name: 'Settings', exact: true }),
++        ).toBeVisible();
++      else await expect(settings).toBeHidden();
++    }
++    await expect
++      .poll(() => page.evaluate(() => (window as WatchedWindow).overlayWatchers.size))
++      .toBe(0);
++    await expect(page).toHaveURL(chatUrl);
++    expect(await page.evaluate(() => ({ length: history.length, state: history.state }))).toEqual(
++      historyBefore,
++    );
++  });
++
++  test('leaves cross-document Back and Forward to the browser', async ({ page }) => {
++    const chatUrl = await prepareMockChat(page, replyPrompt('cross-document-back'));
++    await page.goto('/search');
++    await page.goto(chatUrl);
++    await enterMobileChat(page);
++    const length = await page.evaluate(() => history.length);
++    await page.getByTestId('header-open-sidebar-button').click();
++    await page.getByTestId('nav-user').click();
++    await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
++    await expect(page.getByRole('button', { name: 'Close Settings', exact: true })).toBeVisible();
++    await page.goBack();
++    await expect(page).toHaveURL(/\/search$/);
++    await page.goForward();
++    await expect(page).toHaveURL(chatUrl);
++    expect(await page.evaluate(() => history.length)).toBe(length);
++  });
++});
+diff --git a/packages/chat/src/components/composer/files/ImagePreview.tsx b/packages/chat/src/components/composer/files/ImagePreview.tsx
+index 3ba6e175a849f9ae1cae2a2c55cc77f0734c0cbe..503db39cee72c45ac6215f19585b173c9e40bd42 100644
+--- a/packages/chat/src/components/composer/files/ImagePreview.tsx
++++ b/packages/chat/src/components/composer/files/ImagePreview.tsx
+@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
+ import { Maximize2, X } from 'lucide-react';
+ import { FileSources } from 'librechat-data-provider';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+-import { cn, Button, useLocalize } from '@librechat/client';
++import { cn, Button, Dialog, useLocalize } from '@librechat/client';
+ import ProgressCircle from './ProgressCircle';
+ import SourceIcon from './SourceIcon';
+ 
+@@ -161,7 +161,7 @@ const ImagePreview = ({
+         <SourceIcon source={source} aria-label={source ? `Source: ${source}` : undefined} />
+       </button>
+ 
+-      <DialogPrimitive.Root open={isModalOpen} onOpenChange={handleOpenChange}>
++      <Dialog open={isModalOpen} onOpenChange={handleOpenChange}>
+         <DialogPrimitive.Portal>
+           <DialogPrimitive.Overlay
+             className="bg-surface-media-overlay/90 fixed inset-0 z-[250]"
+@@ -204,7 +204,7 @@ const ImagePreview = ({
+             </div>
+           </DialogPrimitive.Content>
+         </DialogPrimitive.Portal>
+-      </DialogPrimitive.Root>
++      </Dialog>
+     </>
+   );
+ };
+diff --git a/packages/client/src/Providers/Overlay.tsx b/packages/client/src/Providers/Overlay.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..21cf998f6f368d85bf106050582c07b948839a9c
+--- /dev/null
++++ b/packages/client/src/Providers/Overlay.tsx
+@@ -0,0 +1,41 @@
++import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef } from 'react';
++import type { Provider, ReactNode, ReactElement } from 'react';
++
++export interface OverlayRegistration {
++  id: string;
++  depth: number;
++  onClose: () => void;
++}
++
++export type RegisterOverlay = (overlay: OverlayRegistration) => () => void;
++
++const OverlayContext = createContext<RegisterOverlay | null>(null);
++const OverlayDepth = createContext(0);
++
++/** The application owns navigation; shared UI only reports dismissible layers. */
++export const OverlayBackProvider: Provider<RegisterOverlay | null> = OverlayContext.Provider;
++
++export function OverlayBack({
++  open,
++  onClose,
++  children,
++}: {
++  open: boolean;
++  onClose: () => void;
++  children: ReactNode;
++}): ReactElement {
++  const register = useContext(OverlayContext);
++  const depth = useContext(OverlayDepth) + 1;
++  const id = useId();
++  const closeRef = useRef(onClose);
++  useLayoutEffect(() => {
++    closeRef.current = onClose;
++  }, [onClose]);
++
++  useEffect(() => {
++    if (!open || register == null) return;
++    return register({ id, depth, onClose: () => closeRef.current() });
++  }, [depth, id, open, register]);
++
++  return <OverlayDepth.Provider value={depth}>{children}</OverlayDepth.Provider>;
++}
+diff --git a/packages/client/src/Providers/index.ts b/packages/client/src/Providers/index.ts
+index 41cb62ae9cb5f40f8c24c42a323e9a8928426981..fbd6543974deec62e9586bf0f7684d72e7b3eb5d 100644
+--- a/packages/client/src/Providers/index.ts
++++ b/packages/client/src/Providers/index.ts
+@@ -1,2 +1,3 @@
+ export { default as ToastProvider } from './ToastContext';
+ export * from './ToastContext';
++export * from './Overlay';
+diff --git a/packages/client/src/components/AlertDialog.tsx b/packages/client/src/components/AlertDialog.tsx
+index 78342026879bba75bd414806e286b4a28ab7031a..a9376be2a77b6ba2669e4ec6b8b6cc79848bf2c8 100644
+--- a/packages/client/src/components/AlertDialog.tsx
++++ b/packages/client/src/components/AlertDialog.tsx
+@@ -1,10 +1,28 @@
+ import * as React from 'react';
+ import { JSX } from 'react/jsx-runtime';
+ import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
++import { OverlayBack } from '../Providers/Overlay';
+ import { useDialogDepth } from './OriginalDialog';
+ import { cn, disabledFillClasses } from '~/utils';
+ 
+-const AlertDialog: React.FC<AlertDialogPrimitive.AlertDialogProps> = AlertDialogPrimitive.Root;
++const AlertDialog: React.FC<AlertDialogPrimitive.AlertDialogProps> = ({
++  open,
++  defaultOpen,
++  onOpenChange,
++  ...props
++}) => {
++  const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
++  const isOpen = open ?? internalOpen;
++  const changeOpen = (next: boolean) => {
++    if (open === undefined) setInternalOpen(next);
++    onOpenChange?.(next);
++  };
++  return (
++    <OverlayBack open={isOpen} onClose={() => changeOpen(false)}>
++      <AlertDialogPrimitive.Root {...props} open={isOpen} onOpenChange={changeOpen} />
++    </OverlayBack>
++  );
++};
+ 
+ const AlertDialogTrigger: React.ForwardRefExoticComponent<
+   AlertDialogPrimitive.AlertDialogTriggerProps & React.RefAttributes<HTMLButtonElement>
+diff --git a/packages/client/src/components/DialogRoot.tsx b/packages/client/src/components/DialogRoot.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..7a5cd371bda59a41b860a534bf8b8ef58d80c3ff
+--- /dev/null
++++ b/packages/client/src/components/DialogRoot.tsx
+@@ -0,0 +1,26 @@
++import { useState } from 'react';
++import * as DialogPrimitive from '@radix-ui/react-dialog';
++import type { DialogProps } from '@radix-ui/react-dialog';
++import type { ReactElement } from 'react';
++import { OverlayBack } from '../Providers/Overlay';
++
++/** Observe both controlled and trigger-owned dialogs without changing their content. */
++export default function DialogRoot({
++  open,
++  defaultOpen,
++  onOpenChange,
++  ...props
++}: DialogProps): ReactElement {
++  const [internalOpen, setInternalOpen] = useState(defaultOpen ?? false);
++  const isOpen = open ?? internalOpen;
++  const changeOpen = (next: boolean) => {
++    if (open === undefined) setInternalOpen(next);
++    onOpenChange?.(next);
++  };
++
++  return (
++    <OverlayBack open={isOpen && props.modal !== false} onClose={() => changeOpen(false)}>
++      <DialogPrimitive.Root {...props} open={isOpen} onOpenChange={changeOpen} />
++    </OverlayBack>
++  );
++}
+diff --git a/packages/client/src/components/OriginalDialog.tsx b/packages/client/src/components/OriginalDialog.tsx
+index d00f4f2e0e25b29a8c723caddec249d1053ace7d..422aa47aff32f97a41532bb26a5594678def53ac 100644
+--- a/packages/client/src/components/OriginalDialog.tsx
++++ b/packages/client/src/components/OriginalDialog.tsx
+@@ -5,6 +5,7 @@ import { cx } from 'class-variance-authority';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ import type { FocusOutline } from './Focus';
+ import { focusOutlineVariants } from './Focus';
++import DialogRoot from './DialogRoot';
+ import { cn } from '~/utils';
+ 
+ const DialogDepthContext = React.createContext(0);
+@@ -116,9 +117,9 @@ const Dialog: React.ForwardRefExoticComponent<OGDialogProps & React.RefAttribute
+ 
+       return (
+         <DialogDepthContext.Provider value={currentDepth}>
+-          <DialogPrimitive.Root {...props} onOpenChange={handleOpenChange}>
++          <DialogRoot {...props} onOpenChange={handleOpenChange}>
+             {children}
+-          </DialogPrimitive.Root>
++          </DialogRoot>
+         </DialogDepthContext.Provider>
+       );
+     },
+diff --git a/packages/client/src/components/__tests__/dialogBack.spec.tsx b/packages/client/src/components/__tests__/dialogBack.spec.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..362cfe247596ab1711b374c746a2e99656784778
+--- /dev/null
++++ b/packages/client/src/components/__tests__/dialogBack.spec.tsx
+@@ -0,0 +1,124 @@
++import { useState } from 'react';
++import '@testing-library/jest-dom';
++import * as Primitive from '@radix-ui/react-dialog';
++import { act, fireEvent, render, screen } from '@testing-library/react';
++import type { OverlayRegistration, RegisterOverlay } from '../../Providers/Overlay';
++import { OverlayBackProvider } from '../../Providers/Overlay';
++import { Dialog, OGDialog } from '../OriginalDialog';
++import { AlertDialog } from '../AlertDialog';
++
++describe.each([
++  ['OGDialog', OGDialog],
++  ['Dialog', Dialog],
++] as const)('%s mobile back registration', (_name, Root) => {
++  let layers: Map<string, OverlayRegistration>;
++  let register: RegisterOverlay;
++  beforeEach(() => {
++    layers = new Map();
++    register = (layer) => {
++      layers.set(layer.id, layer);
++      return () => {
++        layers.delete(layer.id);
++      };
++    };
++  });
++
++  it('dismisses a trigger-owned dialog through its normal open-change callback', () => {
++    const onOpenChange = jest.fn();
++    render(
++      <OverlayBackProvider value={register}>
++        <Root onOpenChange={onOpenChange}>
++          <Primitive.Trigger>Open</Primitive.Trigger>
++          <Primitive.Content aria-describedby={undefined}>
++            <Primitive.Title>Editor</Primitive.Title>
++          </Primitive.Content>
++        </Root>
++      </OverlayBackProvider>,
++    );
++    expect(layers.size).toBe(0);
++    fireEvent.click(screen.getByText('Open'));
++    expect(layers.size).toBe(1);
++    act(() => {
++      [...layers.values()][0].onClose();
++    });
++    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
++    expect(onOpenChange).toHaveBeenLastCalledWith(false);
++    expect(layers.size).toBe(0);
++  });
++
++  it('keeps controlled visibility authoritative when dismissal is refused', () => {
++    const onOpenChange = jest.fn();
++    const view = render(
++      <OverlayBackProvider value={register}>
++        <Root open onOpenChange={onOpenChange} />
++      </OverlayBackProvider>,
++    );
++    act(() => {
++      [...layers.values()][0].onClose();
++    });
++    expect(onOpenChange).toHaveBeenCalledWith(false);
++    expect(layers.size).toBe(1);
++    view.unmount();
++    expect(layers.size).toBe(0);
++  });
++
++  it('supports default-open roots and does not register non-modal dialogs', () => {
++    render(
++      <OverlayBackProvider value={register}>
++        <Root defaultOpen />
++        <Root defaultOpen modal={false} />
++      </OverlayBackProvider>,
++    );
++    expect(layers.size).toBe(1);
++  });
++
++  it('keeps nested depth and uses the latest close callback without re-registering', () => {
++    const callbacks = [jest.fn(), jest.fn()];
++    function Nested() {
++      const [version, setVersion] = useState(0);
++      return (
++        <Root open onOpenChange={callbacks[version]}>
++          <button onClick={() => setVersion(1)}>Update callback</button>
++          <Root defaultOpen />
++        </Root>
++      );
++    }
++    render(
++      <OverlayBackProvider value={register}>
++        <Nested />
++      </OverlayBackProvider>,
++    );
++    const outer = [...layers.values()].find((layer) => layer.depth === 1);
++    expect([...layers.values()].map((layer) => layer.depth).sort()).toEqual([1, 2]);
++    fireEvent.click(screen.getByText('Update callback'));
++    expect([...layers.values()].find((layer) => layer.depth === 1)).toBe(outer);
++    act(() => {
++      outer?.onClose();
++    });
++    expect(callbacks[0]).not.toHaveBeenCalled();
++    expect(callbacks[1]).toHaveBeenCalledWith(false);
++  });
++});
++
++it('registers an alert dialog as cancellation, never confirmation', () => {
++  let layer: OverlayRegistration | undefined;
++  const onOpenChange = jest.fn();
++  render(
++    <OverlayBackProvider
++      value={(value) => {
++        layer = value;
++        return () => {
++          layer = undefined;
++        };
++      }}
++    >
++      <AlertDialog defaultOpen onOpenChange={onOpenChange} />
++    </OverlayBackProvider>,
++  );
++  expect(layer).toBeDefined();
++  act(() => {
++    layer?.onClose();
++  });
++  expect(onOpenChange).toHaveBeenCalledWith(false);
++  expect(layer).toBeUndefined();
++});

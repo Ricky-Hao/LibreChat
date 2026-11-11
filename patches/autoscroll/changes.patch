@@ -1,0 +1,2142 @@
+diff --git a/client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx b/client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx
+index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88982fc89f 100644
+--- a/client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx
++++ b/client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx
+@@ -1,700 +1,477 @@
+ import React from 'react';
+-import { RecoilRoot } from 'recoil';
+ import { Provider, createStore } from 'jotai';
+ import { act, fireEvent, render, screen } from '@testing-library/react';
+ import type { TConversation, TMessage } from 'librechat-data-provider';
+-import {
+-  MessagesViewContext,
+-  type MessagesViewContextValue,
+-} from '~/Providers/MessagesViewContext';
+-
+-type MockScrollToBottom = jest.Mock & {
+-  cancel: jest.Mock;
+-  flush: jest.Mock;
+-};
+-
+-const mockScrollToBottom = jest.fn() as MockScrollToBottom;
+-mockScrollToBottom.cancel = jest.fn();
+-mockScrollToBottom.flush = jest.fn();
+-const mockHandleSmoothToRef = jest.fn();
+-let mockScrollCallback: (() => void) | undefined;
+-
+-jest.mock('~/hooks/useScrollToRef', () => ({
+-  __esModule: true,
+-  default: ({ callback }: { callback: () => void }) => {
+-    mockScrollCallback = callback;
+-    return {
+-      scrollToRef: mockScrollToBottom,
+-      handleSmoothToRef: mockHandleSmoothToRef,
+-    };
+-  },
+-}));
+-
+-jest.mock('../messageLayout', () => ({
+-  reconcileMessageContentLayout: jest.fn(),
+-}));
+-
++import type { MessagesViewContextValue } from '~/Providers/MessagesViewContext';
++import type { ScrollNavigation } from '../useMessageScrolling';
++import { MessagesViewContext } from '~/Providers/MessagesViewContext';
+ import useMessageScrolling from '../useMessageScrolling';
+-import { reconcileMessageContentLayout } from '../messageLayout';
+ import { autoScrollAtom } from '~/store/autoScroll';
+ 
+-const mockReconcileMessageContentLayout = reconcileMessageContentLayout as jest.Mock;
+-
+-class MockResizeObserver {
+-  static instances: MockResizeObserver[] = [];
+-
+-  static reset() {
+-    MockResizeObserver.instances = [];
+-  }
+-
+-  static last(): MockResizeObserver | undefined {
+-    return MockResizeObserver.instances[MockResizeObserver.instances.length - 1];
+-  }
+-
+-  readonly callback: ResizeObserverCallback;
++class ResizeObserverMock {
++  static instances: ResizeObserverMock[] = [];
+   observe = jest.fn();
+-  unobserve = jest.fn();
+   disconnect = jest.fn();
+-
+-  constructor(callback: ResizeObserverCallback) {
+-    this.callback = callback;
+-    MockResizeObserver.instances.push(this);
+-  }
+-
+-  trigger() {
+-    this.callback([], this as unknown as ResizeObserver);
+-  }
+-}
+-
+-class MockIntersectionObserver {
+-  static instances: MockIntersectionObserver[] = [];
+-
+-  static reset() {
+-    MockIntersectionObserver.instances = [];
+-  }
+-
+-  readonly callback: IntersectionObserverCallback;
+-  observe = jest.fn();
+   unobserve = jest.fn();
+-  disconnect = jest.fn();
+-  takeRecords = jest.fn(() => []);
++  constructor(readonly listener: ResizeObserverCallback) {
++    ResizeObserverMock.instances.push(this);
++  }
+ 
+-  constructor(callback: IntersectionObserverCallback) {
+-    this.callback = callback;
+-    MockIntersectionObserver.instances.push(this);
++  callback() {
++    this.listener([], this);
+   }
+ }
+ 
+-/** Matches the hook's glide fallback, the window in which a landing is still pending. */
+-const glideWindow = 700;
+-
+ const originalResizeObserver = global.ResizeObserver;
+-const originalIntersectionObserver = global.IntersectionObserver;
+-
+-function setRect(element: HTMLElement, rect: Partial<DOMRect>): void {
+-  element.getBoundingClientRect = jest.fn(
+-    () =>
+-      ({
+-        x: rect.x ?? 0,
+-        y: rect.y ?? 0,
+-        top: rect.top ?? 0,
+-        left: rect.left ?? 0,
+-        right: rect.right ?? 0,
+-        bottom: rect.bottom ?? 0,
+-        width: rect.width ?? 0,
+-        height: rect.height ?? 0,
+-        toJSON: () => ({}),
+-      }) as DOMRect,
++const treeFor = (conversationId: string): TMessage[] =>
++  [
++    { conversationId, messageId: `${conversationId}-response`, isCreatedByUser: false },
++  ] as TMessage[];
++
++type Props = {
++  route: string;
++  context: string;
++  tree: TMessage[] | null;
++  submitting: boolean;
++  ready: boolean;
++  sendId?: string;
++  abort?: boolean;
++  targetId?: string;
++};
++
++let latestScroll: ReturnType<typeof useMessageScrolling>;
++let height = 1000;
++const scrollTo = jest.fn();
++const setAbortScroll = jest.fn();
++const bottomLabel = 'Bottom';
++const oldButtonLabel = 'Old button';
++
++function Harness({ tree, route, ready, sendId, targetId }: Props) {
++  const navigation: ScrollNavigation = {
++    conversationKey: route,
++    ready,
++    explicitSendId: sendId,
++    targetMessageId: targetId,
++  };
++  const scrolling = useMessageScrolling(tree, navigation);
++  latestScroll = scrolling;
++  return (
++    <>
++      <div
++        data-testid="scrollable"
++        onScroll={scrolling.debouncedHandleScroll}
++        ref={(el) => {
++          scrolling.scrollableRef.current = el;
++          if (el) {
++            Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height });
++            Object.defineProperty(el, 'clientHeight', { configurable: true, value: 200 });
++            el.scrollTo = scrollTo;
++          }
++        }}
++      >
++        <div ref={scrolling.contentRef} data-testid="content">
++          <textarea aria-label="Edit" />
++          {targetId && (
++            <div
++              id={targetId}
++              ref={(el) => {
++                if (el)
++                  el.getBoundingClientRect = () =>
++                    new DOMRect(
++                      0,
++                      500 - (scrolling.scrollableRef.current?.scrollTop ?? 0),
++                      100,
++                      100,
++                    );
++              }}
++            />
++          )}
++          <div ref={scrolling.messagesEndRef} />
++        </div>
++      </div>
++      <button onClick={scrolling.handleSmoothToRef}>{bottomLabel}</button>
++    </>
+   );
+ }
+ 
+-const conversation = {
+-  conversationId: 'conversation-1',
+-  endpoint: 'openAI',
+-  model: 'gpt-4',
+-} as TConversation;
+-
+-const message = {
+-  messageId: 'message-1',
+-  conversationId: conversation.conversationId,
+-  isCreatedByUser: false,
+-} as TMessage;
+-
+-function createContextValue(
+-  overrides: Partial<MessagesViewContextValue> = {},
+-): MessagesViewContextValue {
+-  return {
+-    conversation,
+-    conversationId: conversation.conversationId,
+-    isSubmitting: true,
+-    abortScroll: false,
+-    setAbortScroll: jest.fn(),
+-    ask: jest.fn(),
+-    regenerate: jest.fn(),
+-    handleContinue: jest.fn(),
+-    index: 0,
+-    latestMessageId: message.messageId,
+-    latestMessageDepth: 0,
+-    getMessages: jest.fn(),
+-    setMessages: jest.fn(),
++function setup(overrides: Partial<Props> = {}, autoScroll = true) {
++  const store = createStore();
++  store.set(autoScrollAtom, autoScroll);
++  let props: Props = {
++    route: 'a',
++    context: 'a',
++    tree: treeFor('a'),
++    submitting: false,
++    ready: true,
+     ...overrides,
+-  } as MessagesViewContextValue;
++  };
++  const renderTree = () => {
++    const value: MessagesViewContextValue = {
++      conversation: { conversationId: props.context } as TConversation,
++      conversationId: props.context,
++      isSubmitting: props.submitting,
++      abortScroll: props.abort ?? false,
++      setAbortScroll,
++      readOnly: false,
++      ask: jest.fn(),
++      regenerate: jest.fn(),
++      handleContinue: jest.fn(),
++      index: 0,
++      latestMessageId: undefined,
++      latestMessageDepth: undefined,
++      getMessages: jest.fn(),
++      setMessages: jest.fn(),
++    };
++    return (
++      <Provider store={store}>
++        <MessagesViewContext.Provider value={value}>
++          <Harness {...props} />
++        </MessagesViewContext.Provider>
++      </Provider>
++    );
++  };
++  const view = render(renderTree(), { wrapper: React.StrictMode });
++  return {
++    ...view,
++    el: screen.getByTestId('scrollable'),
++    update: (next: Partial<Props>) => {
++      props = { ...props, ...next };
++      view.rerender(renderTree());
++    },
++    toggle: (value: boolean) => act(() => store.set(autoScrollAtom, value)),
++  };
+ }
+ 
+-function ScrollingHarness({ messagesTree }: { messagesTree?: TMessage[] | null }) {
+-  const { contentRef, scrollableRef, messagesEndRef, debouncedHandleScroll } =
+-    useMessageScrolling(messagesTree);
+-
+-  return (
+-    <div ref={scrollableRef} onScroll={debouncedHandleScroll} data-testid="scrollable">
+-      <div ref={contentRef} data-testid="content">
+-        <div ref={messagesEndRef} data-testid="end" />
+-      </div>
+-    </div>
+-  );
++function resize(nextHeight: number) {
++  height = nextHeight;
++  act(() => ResizeObserverMock.instances.at(-1)?.callback());
+ }
+ 
+-function renderScrolling({
+-  contextOverrides,
+-  messagesTree,
+-}: {
+-  contextOverrides?: Partial<MessagesViewContextValue>;
+-  messagesTree?: TMessage[] | null;
+-} = {}) {
+-  return render(
+-    <RecoilRoot>
+-      <MessagesViewContext.Provider value={createContextValue(contextOverrides)}>
+-        <ScrollingHarness messagesTree={messagesTree} />
+-      </MessagesViewContext.Provider>
+-    </RecoilRoot>,
+-  );
++it('centers an explicit target and keeps it detached from later growth', () => {
++  const { el, update } = setup({ targetId: 'target-message' });
++  expect(el.scrollTop).toBe(400);
++  resize(2000);
++  expect(el.scrollTop).toBe(400);
++  update({ targetId: 'other-message' });
++  expect(el.scrollTop).toBe(400);
++});
++
++function upward(el: HTMLElement, method: string) {
++  if (method === 'wheel') fireEvent.wheel(el, { deltaY: -100 });
++  if (method === 'keyboard') fireEvent.keyDown(el, { key: 'PageUp' });
++  if (method === 'touch') {
++    fireEvent.touchStart(el, { touches: [{ clientY: 100 }] });
++    fireEvent.touchMove(el, { touches: [{ clientY: 200 }] });
++  }
++  if (method === 'scrollbar') fireEvent.pointerDown(el);
++  el.scrollTop = 300;
++  fireEvent.scroll(el);
+ }
+ 
+-describe('useMessageScrolling resize reconciliation', () => {
++describe('conversation scroll ownership', () => {
+   beforeEach(() => {
+-    MockResizeObserver.reset();
+-    MockIntersectionObserver.reset();
+-    mockScrollToBottom.mockClear();
+-    mockScrollToBottom.cancel.mockClear();
+-    mockScrollToBottom.flush.mockClear();
+-    mockHandleSmoothToRef.mockClear();
+-    mockReconcileMessageContentLayout.mockClear();
+-    mockScrollCallback = undefined;
+-    (global as unknown as { ResizeObserver: typeof MockResizeObserver }).ResizeObserver =
+-      MockResizeObserver;
+-    (
+-      global as unknown as { IntersectionObserver: typeof MockIntersectionObserver }
+-    ).IntersectionObserver = MockIntersectionObserver;
++    jest.useFakeTimers();
++    height = 1000;
++    ResizeObserverMock.instances = [];
++    global.ResizeObserver = ResizeObserverMock;
++    scrollTo.mockReset();
++    setAbortScroll.mockReset();
+   });
+-
+   afterEach(() => {
+-    (global as unknown as { ResizeObserver: typeof ResizeObserver | undefined }).ResizeObserver =
+-      originalResizeObserver;
+-    (
+-      global as unknown as { IntersectionObserver: typeof IntersectionObserver | undefined }
+-    ).IntersectionObserver = originalIntersectionObserver;
++    global.ResizeObserver = originalResizeObserver;
++    jest.clearAllTimers();
++    jest.useRealTimers();
+   });
+ 
+-  it('rides the bottom when streaming content resizes and auto-scroll is active', () => {
+-    renderScrolling();
+-
+-    const observer = MockResizeObserver.last();
+-    expect(observer?.observe).toHaveBeenCalledWith(screen.getByTestId('content'));
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-    scrollable.scrollTop = 700;
+-
+-    act(() => {
+-      observer?.trigger();
+-    });
+-
+-    /** Written straight to the element rather than routed through the throttled
+-     *  scrollIntoView helper, so an answer arriving a few pixels at a time flows
+-     *  instead of lurching once every throttle window. */
+-    expect(scrollable.scrollTop).toBe(800);
++  it.each([false, true])('lands running navigation only with preference %s', (enabled) => {
++    const { el, update } = setup({ submitting: true }, enabled);
++    expect(el.scrollTop).toBe(enabled ? 800 : 0);
++    update({ tree: treeFor('a') });
++    resize(1400);
++    expect(el.scrollTop).toBe(enabled ? 1200 : 0);
++    expect(scrollTo).not.toHaveBeenCalled();
+   });
+ 
+-  it('reconciles message layout after an explicit scroll to bottom', () => {
+-    renderScrolling();
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    act(() => {
+-      mockScrollCallback?.();
+-    });
+-
+-    expect(mockReconcileMessageContentLayout).toHaveBeenCalledWith(scrollable);
++  it.each([false, true])('preserves non-running opening preference %s', (enabled) => {
++    expect(setup({}, enabled).el.scrollTop).toBe(enabled ? 800 : 0);
+   });
+ 
+-  /**
+-   * `useMessageProcess` raises the abort flag on any wheel at all, downward ones
+-   * included, through a throttle whose trailing call lands after the gesture has
+-   * ended. Gating on it meant scrolling down to the newest word could never resume
+-   * the ride, while the scroll-to-bottom button, which touches no wheel, always
+-   * could. Position and direction answer that question instead.
+-   */
+-  it('rides the bottom for a reader who is on it, even with the abort flag raised', () => {
+-    renderScrolling({ contextOverrides: { abortScroll: true } });
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-    scrollable.scrollTop = 700;
+-
+-    act(() => {
+-      MockResizeObserver.last()?.trigger();
++  it('waits for route, context, rendered tree and visible route readiness', () => {
++    const { el, update } = setup({
++      route: 'b',
++      context: 'a',
++      tree: treeFor('a'),
++      submitting: true,
+     });
+-
+-    expect(scrollable.scrollTop).toBe(800);
++    expect(el.scrollTop).toBe(0);
++    update({ tree: treeFor('b') });
++    resize(1200);
++    expect(el.scrollTop).toBe(0);
++    update({ context: 'b', ready: false });
++    expect(el.scrollTop).toBe(0);
++    update({ ready: true });
++    expect(el.scrollTop).toBe(1000);
+   });
+ 
+-  it('does not follow resizes after the user scrolls away from the bottom', () => {
+-    renderScrolling();
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-    scrollable.scrollTop = 100;
+-
+-    fireEvent.scroll(scrollable);
+-
+-    act(() => {
+-      MockResizeObserver.last()?.trigger();
+-    });
+-
+-    expect(mockScrollToBottom).not.toHaveBeenCalled();
++  it('lands cold history and follows delayed revalidation, resume and row bodies', () => {
++    const { el, update } = setup({ tree: null });
++    expect(el.scrollTop).toBe(0);
++    update({ tree: treeFor('a') });
++    expect(el.scrollTop).toBe(800);
++    resize(1800);
++    expect(el.scrollTop).toBe(1600);
++    update({ submitting: true });
++    resize(2200);
++    expect(el.scrollTop).toBe(2000);
+   });
+ 
+-  it('judges the first scroll against a real previous position, not against the top', () => {
+-    const setAbortScroll = jest.fn();
+-    renderScrolling({ contextOverrides: { setAbortScroll } });
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-
+-    /** A thread opens at its end, so the reader's first gesture carries a large
+-     *  positive scrollTop. Measured from 0 it read as a jump down onto the end, and
+-     *  the reader was re-pinned to the stream they were trying to leave. */
+-    setAbortScroll.mockClear();
+-    scrollable.scrollTop = 700;
+-    fireEvent.scroll(scrollable);
+-
+-    expect(setAbortScroll).not.toHaveBeenCalled();
+-
+-    /** With a baseline taken, the same gesture is judged on its real delta. */
+-    scrollable.scrollTop = 500;
+-    fireEvent.scroll(scrollable);
+-
+-    act(() => {
+-      MockResizeObserver.last()?.trigger();
+-    });
+-
+-    expect(scrollable.scrollTop).toBe(500);
+-  });
+-
+-  it('obeys the first scroll away from a thread that was placed at its end', () => {
+-    renderScrolling();
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-
+-    /** The thread opens at its end without the reader touching it, so the position
+-     *  it was placed at is what their first gesture has to be judged against. */
+-    scrollable.scrollTop = 800;
+-    act(() => {
+-      mockScrollCallback?.();
+-    });
+-
+-    /** One PageUp, and it is the first event the handler sees. A key press buys a
+-     *  single resize of grace and clears no flag of its own, so if the gesture is
+-     *  spent taking a baseline the reader is ridden straight back to the end. */
+-    fireEvent.keyDown(screen.getByTestId('content'), { key: 'PageUp' });
+-    scrollable.scrollTop = 300;
+-    fireEvent.scroll(scrollable);
+-
+-    act(() => {
+-      MockResizeObserver.last()?.trigger();
+-      MockResizeObserver.last()?.trigger();
+-    });
+-
+-    expect(scrollable.scrollTop).toBe(300);
++  it('keeps following when replacement history clamps the browser to a shorter bottom', () => {
++    const { el, update } = setup({ submitting: true });
++    expect(el.scrollTop).toBe(800);
++    // A recent-history replacement can shrink the range before the resume snapshot arrives.
++    height = 700;
++    el.scrollTop = 500;
++    fireEvent.scroll(el);
++    update({ tree: treeFor('a') });
++    resize(1400);
++    expect(el.scrollTop).toBe(1200);
+   });
+ 
+-  it('does not follow the next resize after user interaction inside message content', () => {
+-    renderScrolling();
+-
+-    fireEvent.pointerDown(screen.getByTestId('content'));
+-
+-    act(() => {
+-      MockResizeObserver.last()?.trigger();
+-    });
+-
+-    expect(mockScrollToBottom).not.toHaveBeenCalled();
++  it('re-arms running A -> running B while isSubmitting stays true', () => {
++    const { el, update } = setup({ submitting: true });
++    upward(el, 'wheel');
++    update({ route: 'b', tree: treeFor('b') });
++    expect(el.scrollTop).toBe(300);
++    update({ context: 'b' });
++    expect(el.scrollTop).toBe(800);
++    resize(1300);
++    expect(el.scrollTop).toBe(1100);
+   });
+ 
+-  /**
+-   * One interaction rarely settles in a single frame: expanding a tool result renders
+-   * the container, then its contents arrive and grow it again. Only the first resize
+-   * was credited to the interaction, so the second read the reader as still riding the
+-   * stream and put them back on the bottom they had just deliberately left.
+-   */
+-  it('keeps an interaction that settles over several resizes from re-pinning the reader', () => {
+-    renderScrolling();
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-    scrollable.scrollTop = 800;
+-
+-    fireEvent.pointerDown(screen.getByTestId('content'));
+-
+-    /** The expansion renders, which is the resize the interaction is credited with. */
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 2000, configurable: true });
+-    act(() => {
+-      MockResizeObserver.last()?.trigger();
+-    });
+-    expect(scrollable.scrollTop).toBe(800);
+-
+-    /** Its contents then load. This belongs to the same interaction, not to the stream. */
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 2600, configurable: true });
+-    act(() => {
+-      MockResizeObserver.last()?.trigger();
+-    });
+-
+-    expect(scrollable.scrollTop).toBe(800);
++  it('re-arms the same id via new chat, even with the outgoing tree still cached', () => {
++    const { el, update } = setup({ submitting: true });
++    upward(el, 'wheel');
++    update({ route: 'new' });
++    update({ route: 'a' });
++    expect(el.scrollTop).toBe(800);
+   });
+ 
+-  it('clamps the scroll position back to content after a resize shrink', () => {
+-    renderScrolling({ contextOverrides: { abortScroll: true } });
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 500, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-    scrollable.scrollTop = 450;
+-
+-    act(() => {
+-      MockResizeObserver.last()?.trigger();
+-    });
+-
+-    expect(scrollable.scrollTop).toBe(300);
+-    expect(mockScrollToBottom).not.toHaveBeenCalled();
++  it('records the bottom of a short thread before its first growth', () => {
++    height = 100;
++    const { el } = setup({ submitting: true });
++    expect(el.scrollTop).toBe(0);
++    resize(1100);
++    expect(el.scrollTop).toBe(900);
+   });
+ 
+-  /**
+-   * Sending arms a smooth glide down to the newest word, and the landing re-pins the
+-   * thread to the bottom. The landing is scheduled for the whole glide window, so a
+-   * reader who changes their mind and heads up mid-flight was pinned again anyway and
+-   * dragged back on the next streaming resize.
+-   */
+-  it('lets an upward gesture during the send glide beat the pending landing', () => {
+-    jest.useFakeTimers();
+-    try {
+-      const view = render(
+-        <RecoilRoot>
+-          <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
+-            <ScrollingHarness messagesTree={[message]} />
+-          </MessagesViewContext.Provider>
+-        </RecoilRoot>,
+-      );
+-
+-      const scrollable = screen.getByTestId('scrollable');
+-      const scrollTo = jest.fn();
+-      (scrollable as unknown as { scrollTo: jest.Mock }).scrollTo = scrollTo;
+-      Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-      Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-      scrollable.scrollTop = 0;
+-
+-      view.rerender(
+-        <RecoilRoot>
+-          <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
+-            <ScrollingHarness messagesTree={[message]} />
+-          </MessagesViewContext.Provider>
+-        </RecoilRoot>,
+-      );
+-
+-      expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' });
+-
+-      /** The reader heads up while the glide is still in flight. */
+-      scrollable.scrollTop = 400;
+-      fireEvent.wheel(scrollable, { deltaY: -120 });
++  it.each(['wheel', 'keyboard', 'touch', 'scrollbar'])(
++    'lets upward %s beat late history, resume, resize and glide timeout',
++    (method) => {
++      const { el, update } = setup();
++      upward(el, method);
++      update({ tree: treeFor('a'), submitting: true });
++      resize(1600);
++      act(() => jest.advanceTimersByTime(1000));
++      expect(el.scrollTop).toBe(300);
++      expect(scrollTo).not.toHaveBeenCalled();
++    },
++  );
+ 
+-      act(() => {
+-        jest.advanceTimersByTime(glideWindow);
+-      });
++  it.each(['wheel', 'keyboard', 'touch', 'scrollbar'])(
++    'lets %s during identity recovery consume the pending navigation',
++    (method) => {
++      const { el, update } = setup({ context: 'b', ready: false });
++      el.scrollTop = 600;
++      fireEvent.pointerDown(el);
++      upward(el, method);
++      update({ context: 'a', ready: true, submitting: true });
++      resize(1600);
++      expect(el.scrollTop).toBe(300);
++    },
++  );
+ 
+-      Object.defineProperty(scrollable, 'scrollHeight', { value: 1200, configurable: true });
+-      act(() => {
+-        MockResizeObserver.last()?.trigger();
+-      });
++  it.each(['wheel', 'keyboard', 'touch'])(
++    'honors %s intent even when a short thread cannot move yet',
++    (method) => {
++      height = 100;
++      const { el, update } = setup();
++      if (method === 'wheel') fireEvent.wheel(el, { deltaY: -1 });
++      if (method === 'keyboard') fireEvent.keyDown(el, { key: 'ArrowUp' });
++      if (method === 'touch') {
++        fireEvent.touchStart(el, { touches: [{ clientY: 0 }] });
++        fireEvent.touchMove(el, { touches: [{ clientY: 10 }] });
++      }
++      update({ submitting: true });
++      resize(1100);
++      expect(el.scrollTop).toBe(0);
++    },
++  );
+ 
+-      expect(scrollable.scrollTop).toBe(400);
+-    } finally {
+-      jest.useRealTimers();
+-    }
++  it('does not mistake editing keys for a scroll gesture', () => {
++    const { el } = setup();
++    fireEvent.keyDown(screen.getByLabelText('Edit'), { key: 'Home' });
++    resize(1000);
++    resize(1200);
++    expect(el.scrollTop).toBe(1000);
+   });
+ 
+-  /**
+-   * A reader who scrolls away during one answer leaves the abort flag raised, and
+-   * nothing lowers it until the next connection opens, which is after the send has
+-   * already been seen. Spending the start of the turn on that first pass left the
+-   * answer the reader had just asked for streaming offscreen.
+-   */
+-  it('starts the turn once a stale abort flag clears', () => {
+-    const view = render(
+-      <RecoilRoot>
+-        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
+-          <ScrollingHarness messagesTree={[message]} />
+-        </MessagesViewContext.Provider>
+-      </RecoilRoot>,
+-    );
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    const scrollTo = jest.fn();
+-    (scrollable as unknown as { scrollTo: jest.Mock }).scrollTo = scrollTo;
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-    scrollable.scrollTop = 0;
+-
+-    /** They left the bottom during the previous answer, which is what raised it. */
+-    fireEvent.wheel(scrollable, { deltaY: -120 });
+-
+-    view.rerender(
+-      <RecoilRoot>
+-        <MessagesViewContext.Provider
+-          value={createContextValue({ isSubmitting: true, abortScroll: true })}
+-        >
+-          <ScrollingHarness messagesTree={[message]} />
+-        </MessagesViewContext.Provider>
+-      </RecoilRoot>,
+-    );
+-
++  it.each([false, true])('explicit sends retain their glide with preference %s', (enabled) => {
++    const { el, update } = setup({}, enabled);
++    upward(el, 'wheel');
++    update({ submitting: true, sendId: 'send-1', abort: true });
+     expect(scrollTo).not.toHaveBeenCalled();
+-
+-    /** The connection opens and lowers the flag. */
+-    view.rerender(
+-      <RecoilRoot>
+-        <MessagesViewContext.Provider
+-          value={createContextValue({ isSubmitting: true, abortScroll: false })}
+-        >
+-          <ScrollingHarness messagesTree={[message]} />
+-        </MessagesViewContext.Provider>
+-      </RecoilRoot>,
+-    );
+-
+-    expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' });
+-  });
+-
+-  it('leaves the send glide alone while the answer streams in', () => {
+-    const view = render(
+-      <RecoilRoot>
+-        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
+-          <ScrollingHarness messagesTree={[message]} />
+-        </MessagesViewContext.Provider>
+-      </RecoilRoot>,
+-    );
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    const scrollTo = jest.fn();
+-    (scrollable as unknown as { scrollTo: jest.Mock }).scrollTo = scrollTo;
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-    scrollable.scrollTop = 0;
+-
+-    view.rerender(
+-      <RecoilRoot>
+-        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
+-          <ScrollingHarness messagesTree={[message]} />
+-        </MessagesViewContext.Provider>
+-      </RecoilRoot>,
+-    );
+-
+-    expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' });
+-
+-    /** The next delta of the answer arrives while the glide is still travelling. */
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1100, configurable: true });
+-    view.rerender(
+-      <RecoilRoot>
+-        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
+-          <ScrollingHarness messagesTree={[message, message]} />
+-        </MessagesViewContext.Provider>
+-      </RecoilRoot>,
+-    );
+-
+-    /** A plain follow would have written scrollTop outright and killed the animation. */
+-    expect(scrollable.scrollTop).toBe(0);
++    update({ abort: false });
++    expect(scrollTo).toHaveBeenLastCalledWith({ top: 800, behavior: 'smooth' });
++    resize(1500);
++    expect(el.scrollTop).toBe(300);
++    fireEvent(el, new Event('scrollend'));
++    expect(el.scrollTop).toBe(1300);
+   });
+ 
+-  /**
+-   * Following stands down for the length of the glide, so an answer that arrives
+-   * while it travels moves the bottom past the target the glide aimed at. Landing
+-   * has to close that gap, or a short response settles short of its own end.
+-   */
+-  it('catches up to the new bottom when the glide lands', () => {
+-    const view = render(
+-      <RecoilRoot>
+-        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
+-          <ScrollingHarness messagesTree={[message]} />
+-        </MessagesViewContext.Provider>
+-      </RecoilRoot>,
+-    );
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    (scrollable as unknown as { scrollTo: jest.Mock }).scrollTo = jest.fn();
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-    scrollable.scrollTop = 0;
+-
+-    view.rerender(
+-      <RecoilRoot>
+-        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
+-          <ScrollingHarness messagesTree={[message]} />
+-        </MessagesViewContext.Provider>
+-      </RecoilRoot>,
+-    );
+-
+-    /** The whole answer arrives before the glide reports that it landed. */
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1400, configurable: true });
+-    act(() => {
+-      fireEvent(scrollable, new Event('scrollend'));
+-    });
+-
+-    expect(scrollable.scrollTop).toBe(1200);
++  it('a gesture while an explicit send waits for connection cancels its pending glide', () => {
++    const { el, update } = setup({}, false);
++    update({ submitting: true, sendId: 'send', abort: true });
++    upward(el, 'keyboard');
++    update({ abort: false });
++    resize(1500);
++    expect(scrollTo).not.toHaveBeenCalled();
++    expect(el.scrollTop).toBe(300);
+   });
+ 
+-  it('does not clamp to rendered content bottom during general resize reconciliation', () => {
+-    renderScrolling();
+-
+-    const scrollable = screen.getByTestId('scrollable');
+-    const content = screen.getByTestId('content');
+-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+-
+-    /** Move away from the end so the reader is left alone, which is the state this
+-     *  is about: reconciliation must not drag them to the rendered content bottom. */
+-    scrollable.scrollTop = 900;
+-    fireEvent.scroll(scrollable);
+-    scrollable.scrollTop = 700;
+-    fireEvent.scroll(scrollable);
+-
+-    setRect(scrollable, { top: 0, bottom: 200, height: 200 });
+-    setRect(content, { top: -700, bottom: -200, height: 500 });
+-
+-    act(() => {
+-      MockResizeObserver.last()?.trigger();
+-    });
+-
+-    expect(scrollable.scrollTop).toBe(700);
+-    expect(mockScrollToBottom).not.toHaveBeenCalled();
++  it('cancels both browser glide and timeout when the reader takes over', () => {
++    const { el, update } = setup({}, false);
++    update({ submitting: true, sendId: 'send' });
++    upward(el, 'wheel');
++    expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'instant' });
++    fireEvent(el, new Event('scrollend'));
++    act(() => jest.advanceTimersByTime(1000));
++    resize(1500);
++    expect(el.scrollTop).toBe(300);
+   });
+-});
+ 
+-describe('useMessageScrolling navigation landing', () => {
+-  const treeFor = (conversationId: string): TMessage[] => [
+-    { ...message, conversationId } as TMessage,
+-  ];
+-
+-  const harness = (
+-    store: ReturnType<typeof createStore>,
+-    conversationId: string,
+-    messagesTree: TMessage[] | null,
+-  ) => (
+-    <RecoilRoot>
+-      <Provider store={store}>
+-        <MessagesViewContext.Provider
+-          value={createContextValue({
+-            isSubmitting: false,
+-            conversation: { ...conversation, conversationId } as TConversation,
+-            conversationId,
+-          })}
+-        >
+-          <ScrollingHarness messagesTree={messagesTree} />
+-        </MessagesViewContext.Provider>
+-      </Provider>
+-    </RecoilRoot>
++  it.each(['scroll', 'button'])(
++    'returning by %s resumes following even with preference off',
++    (method) => {
++      const { el, update } = setup({ submitting: true }, false);
++      el.scrollTop = 500;
++      fireEvent.pointerDown(el);
++      upward(el, 'wheel');
++      if (method === 'scroll') {
++        fireEvent.keyDown(screen.getByTestId('content'), { key: 'End' });
++        el.scrollTop = 800;
++        fireEvent.scroll(el);
++      } else {
++        fireEvent.click(screen.getByRole('button', { name: 'Bottom' }));
++        fireEvent(el, new Event('scrollend'));
++      }
++      update({ abort: true });
++      resize(1500);
++      expect(el.scrollTop).toBe(1300);
++    },
+   );
+ 
+-  function renderLanding(
+-    conversationId: string,
+-    messagesTree: TMessage[] | null,
+-    autoScroll = true,
+-  ) {
+-    const store = createStore();
+-    store.set(autoScrollAtom, autoScroll);
+-    const view = render(harness(store, conversationId, messagesTree));
+-    return {
+-      ...view,
+-      rerenderWith: (nextId: string, nextTree: TMessage[] | null) =>
+-        view.rerender(harness(store, nextId, nextTree)),
+-    };
+-  }
+-
+-  beforeEach(() => {
+-    MockResizeObserver.reset();
+-    MockIntersectionObserver.reset();
+-    mockScrollToBottom.mockClear();
+-    mockScrollToBottom.cancel.mockClear();
+-    (global as unknown as { ResizeObserver: typeof MockResizeObserver }).ResizeObserver =
+-      MockResizeObserver;
+-    (
+-      global as unknown as { IntersectionObserver: typeof MockIntersectionObserver }
+-    ).IntersectionObserver = MockIntersectionObserver;
++  it('never reattaches on a stationary scroll event after upward intent', () => {
++    const { el } = setup({ submitting: true });
++    fireEvent.wheel(el, { deltaY: -1 });
++    fireEvent.scroll(el);
++    resize(1500);
++    expect(el.scrollTop).toBe(800);
+   });
+ 
+-  afterEach(() => {
+-    (global as unknown as { ResizeObserver: typeof ResizeObserver | undefined }).ResizeObserver =
+-      originalResizeObserver;
+-    (
+-      global as unknown as { IntersectionObserver: typeof IntersectionObserver | undefined }
+-    ).IntersectionObserver = originalIntersectionObserver;
++  it('honors a small upward scrollbar movement inside the arrival threshold', () => {
++    const { el, update } = setup();
++    fireEvent.pointerDown(el);
++    el.scrollTop -= 10;
++    fireEvent.scroll(el);
++    update({ submitting: true });
++    resize(1400);
++    expect(el.scrollTop).toBe(790);
+   });
+ 
+-  it('waits for the opened conversation to own the rendered rows', () => {
+-    /** The id reaches the hook commits before the tree does. Landing on the
+-     *  outgoing thread spends the one scroll this navigation gets, and leaves
+-     *  the reader at the top of the thread they actually asked for. */
+-    renderLanding('conversation-2', treeFor('conversation-1'));
+-
+-    expect(mockScrollToBottom).not.toHaveBeenCalled();
++  it('a gesture in a running visit survives a later false-to-true submission transition', () => {
++    const { el, update } = setup({ submitting: true });
++    upward(el, 'wheel');
++    update({ submitting: false });
++    update({ submitting: true });
++    resize(1600);
++    expect(el.scrollTop).toBe(300);
+   });
+ 
+-  it('lands once the rendered tree names the opened conversation', () => {
+-    const { rerenderWith } = renderLanding('conversation-2', treeFor('conversation-1'));
+-    expect(mockScrollToBottom).not.toHaveBeenCalled();
+-
+-    rerenderWith('conversation-2', treeFor('conversation-2'));
+-
+-    expect(mockScrollToBottom).toHaveBeenCalledTimes(1);
++  it('scopes old resize, button, jump, scrollend and wheel frame callbacks to their visit', () => {
++    const { el, update } = setup({ submitting: true });
++    const old = latestScroll;
++    render(<button onClick={old.handleSmoothToRef}>{oldButtonLabel}</button>);
++    const observer = ResizeObserverMock.instances.at(-1);
++    fireEvent.wheel(el, { deltaY: 10 });
++    fireEvent.click(screen.getByRole('button', { name: 'Bottom' }));
++    update({ route: 'b', context: 'b', tree: treeFor('b') });
++    upward(el, 'wheel');
++    setAbortScroll.mockClear();
++    act(() => {
++      old.scrollToBottom();
++      fireEvent.click(screen.getByRole('button', { name: 'Old button' }));
++      observer?.callback();
++      jest.advanceTimersByTime(1000);
++    });
++    fireEvent(el, new Event('scrollend'));
++    expect(el.scrollTop).toBe(300);
++    expect(setAbortScroll).not.toHaveBeenCalled();
+   });
+ 
+-  it('does not re-land on the tree identities a stream mints', () => {
+-    const { rerenderWith } = renderLanding('conversation-2', treeFor('conversation-2'));
+-    expect(mockScrollToBottom).toHaveBeenCalledTimes(1);
+-
+-    /** Every delta writes a fresh array; re-landing on those would haul back a
+-     *  reader who deliberately scrolled up. */
+-    rerenderWith('conversation-2', treeFor('conversation-2'));
+-    rerenderWith('conversation-2', treeFor('conversation-2'));
+-
+-    expect(mockScrollToBottom).toHaveBeenCalledTimes(1);
++  it('a navigation during a glide cancels its old completion', () => {
++    const { el, update } = setup({}, false);
++    update({ submitting: true, sendId: 'send' });
++    update({ route: 'b', context: 'b', tree: treeFor('b'), sendId: undefined });
++    el.scrollTop = 200;
++    act(() => jest.advanceTimersByTime(1000));
++    fireEvent(el, new Event('scrollend'));
++    expect(el.scrollTop).toBe(200);
+   });
+ 
+-  it('lands again for the next conversation opened', () => {
+-    const { rerenderWith } = renderLanding('conversation-2', treeFor('conversation-2'));
+-    expect(mockScrollToBottom).toHaveBeenCalledTimes(1);
+-
+-    rerenderWith('conversation-3', treeFor('conversation-2'));
+-    expect(mockScrollToBottom).toHaveBeenCalledTimes(1);
++  it.each([false, true])(
++    'preserves first-send ownership across admission (detached=%s)',
++    (detached) => {
++      height = 100;
++      const { el, update } = setup(
++        {
++          route: 'new',
++          context: 'new',
++          tree: treeFor('new'),
++          submitting: true,
++          sendId: 'first',
++        },
++        false,
++      );
++      if (detached) fireEvent.wheel(el, { deltaY: -1 });
++      update({ route: 'a', context: 'a', tree: treeFor('a') });
++      resize(1000);
++      expect(el.scrollTop).toBe(detached ? 0 : 800);
++    },
++  );
+ 
+-    rerenderWith('conversation-3', treeFor('conversation-3'));
+-    expect(mockScrollToBottom).toHaveBeenCalledTimes(2);
++  it('turning off stops navigation following, and enabling honors a fresh opening', () => {
++    const { el, toggle } = setup({ submitting: true }, false);
++    toggle(true);
++    expect(el.scrollTop).toBe(800);
++    toggle(false);
++    resize(1400);
++    expect(el.scrollTop).toBe(800);
+   });
+ 
+-  it('stays put when the setting is off', () => {
+-    renderLanding('conversation-2', treeFor('conversation-2'), false);
++  it('keeps multi-resize content expansion detached', () => {
++    const { el } = setup({ submitting: true });
++    fireEvent.pointerDown(screen.getByTestId('content'));
++    resize(1800);
++    resize(2200);
++    expect(el.scrollTop).toBe(800);
++  });
+ 
+-    expect(mockScrollToBottom).not.toHaveBeenCalled();
++  it('clamps a shrunken scroll range without reattaching', () => {
++    const { el } = setup({ submitting: true });
++    upward(el, 'wheel');
++    resize(400);
++    expect(el.scrollTop).toBe(200);
++    resize(1400);
++    expect(el.scrollTop).toBe(200);
+   });
+ });
+diff --git a/client/src/hooks/Messages/useMessageScrolling.ts b/client/src/hooks/Messages/useMessageScrolling.ts
+index cd5ae9df63f8d04983291363c85145b8018a7c41..72f93040c00422d0a33fd32aec86e9ebab033371 100644
+--- a/client/src/hooks/Messages/useMessageScrolling.ts
++++ b/client/src/hooks/Messages/useMessageScrolling.ts
+@@ -1,472 +1,375 @@
+-import { useRef, useCallback, useEffect } from 'react';
++import { useRef, useMemo, useCallback, useLayoutEffect, useEffect } from 'react';
+ import { useAtomValue } from 'jotai';
+ import { Constants } from 'librechat-data-provider';
++import type { ScrollNavigation } from '@librechat/chat/react';
+ import type { TMessage } from 'librechat-data-provider';
++import type { MouseEventHandler } from 'react';
+ import { useMessagesConversation, useMessagesSubmission } from '~/Providers';
+ import { reconcileMessageContentLayout } from './messageLayout';
+-import useScrollToRef from '~/hooks/useScrollToRef';
+ import { autoScrollAtom } from '~/store/autoScroll';
+ 
+ const resizeFollowThreshold = 120;
+-
+-/** How long a glide is given to land before per-frame following resumes. */
+-const glideTimeout = 700;
+-
+-/** Arriving counts from further out than leaving does, because while an answer
+- *  streams the end is a moving target: it recedes between the reader's last
+- *  wheel tick and the frame that measures it, so someone scrolling all the way
+- *  down still lands tens of pixels short. Judging arrival as tightly as
+- *  departure means they can never quite catch it. */
+ const attachThreshold = 150;
+-const detachThreshold = 24;
++/** Fallback for browsers that do not report scrollend. */
++const glideTimeout = 700;
+ 
+-const prefersReducedMotion = () =>
+-  typeof window !== 'undefined' &&
+-  typeof window.matchMedia === 'function' &&
+-  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
++export type { ScrollNavigation } from '@librechat/chat/react';
+ 
+-export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
++export default function useMessageScrolling(
++  messagesTree?: TMessage[] | null,
++  navigation?: ScrollNavigation,
++) {
+   const autoScroll = useAtomValue(autoScrollAtom);
++  const { conversation, conversationId } = useMessagesConversation();
++  const { setAbortScroll, isSubmitting, abortScroll } = useMessagesSubmission();
++  const conversationKey = navigation?.conversationKey ?? conversationId;
++  const treeId = messagesTree?.[0]?.conversationId ?? conversationKey;
++  const ready =
++    navigation?.ready !== false &&
++    conversationKey === conversationId &&
++    treeId === conversationKey &&
++    !!messagesTree?.length;
+ 
+   const scrollableRef = useRef<HTMLDivElement | null>(null);
+   const contentRef = useRef<HTMLDivElement | null>(null);
+   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+-  const isNearBottomRef = useRef(true);
+-  /** The single authority for whether the thread is riding the stream. Driven only
+-   *  by what the reader does, never by the observer, whose zero-height sentinel
+-   *  flickers as content grows and was the source of the attach/detach churn. */
+-  const isStuckRef = useRef(true);
+-  const isGlidingRef = useRef(false);
+-  /** Raised wherever a reader gesture lets go of the bottom, so a glide already in
+-   *  flight knows not to re-pin them when it lands. */
+-  const glideInterruptedRef = useRef(false);
+-  const glideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+-  /** Seeded below zero rather than at 0 so the first event after mount is read as
+-   *  "no previous sample" instead of as a jump down from the top. Every
+-   *  programmatic move writes the position it left the thread at, so this stands
+-   *  only until something has actually placed the thread. */
++  /** A visit, not a conversation id: A -> new -> A must arm again. */
++  const visit = useMemo(() => ({ conversationKey }), [conversationKey]);
++  const initializedVisitRef = useRef<object | null>(null);
++  const targetedVisitRef = useRef<{ visit: object; targetId: string } | null>(null);
++  const activeVisitRef = useRef<object | null>(null);
++  const readyRef = useRef(false);
++  const isStuckRef = useRef(false);
++  const detachedRef = useRef(false);
++  const navigationFollowRef = useRef(false);
+   const lastScrollTopRef = useRef(-1);
+-  const wasSubmittingRef = useRef(false);
++  const lastSendRef = useRef<string>();
++  const previousKeyRef = useRef<typeof conversationKey>();
++  const explicitSendRef = useRef(navigation?.explicitSendId);
++  const pendingSendRef = useRef(false);
+   const suppressNextResizeFollowRef = useRef(false);
+-  /** The conversation whose newest message has already been landed on, so the
+-   *  stream deltas that follow cannot re-take a reader who scrolled away. */
+-  const landedConversationRef = useRef<string | null>(null);
+-  const { conversation, conversationId } = useMessagesConversation();
+-  const { setAbortScroll, isSubmitting, abortScroll } = useMessagesSubmission();
++  const cancelGlideRef = useRef<(() => void) | null>(null);
+ 
+-  const getIsNearBottom = useCallback(() => {
+-    const scrollEl = scrollableRef.current;
+-    if (!scrollEl) {
+-      return true;
+-    }
+-    const distance = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+-    return distance <= resizeFollowThreshold;
++  const cancelGlide = useCallback(() => {
++    cancelGlideRef.current?.();
++    cancelGlideRef.current = null;
+   }, []);
+ 
+-  /** The scroll-to-bottom button owns the IntersectionObserver (so its visibility
+-   * state never re-renders the message tree host) and reports intersection back
+-   * through this callback.
+-   *
+-   * It reports only. The sentinel it watches has no height and is observed at a
+-   * 0.85 threshold, a ratio a zero-area box cannot reach, so it flickers while an
+-   * answer streams. Letting it decide whether to ride the stream is what made the
+-   * thread attach and detach on its own.
+-   */
+-  const handleNearBottomChange = useCallback((isNearBottom: boolean) => {
+-    isNearBottomRef.current = isNearBottom;
+-  }, []);
+-
+-  const distanceFromEnd = useCallback(() => {
+-    const scrollEl = scrollableRef.current;
+-    if (!scrollEl) {
+-      return 0;
+-    }
+-    return scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+-  }, []);
++  useLayoutEffect(() => {
++    explicitSendRef.current = navigation?.explicitSendId;
++  });
+ 
+-  /** Direction is judged against the last sample, so anything that moves the thread
+-   *  on the reader's behalf has to leave one behind. A thread opening at its end, or
+-   *  ridden down by the stream, is placed without the reader touching it; with no
+-   *  record of where it was put, their first gesture is spent taking the baseline
+-   *  instead of being obeyed, and a keyboard scroll away from the end is lost. */
+-  const rememberScrollPosition = useCallback(() => {
+-    const scrollEl = scrollableRef.current;
+-    if (!scrollEl) {
+-      return;
++  useLayoutEffect(() => {
++    activeVisitRef.current = visit;
++    // Admission replaces /c/new with the durable id. That is still the same
++    // explicit send, including any reader gesture made before admission.
++    const promotedSend =
++      previousKeyRef.current === Constants.NEW_CONVO &&
++      explicitSendRef.current != null &&
++      explicitSendRef.current === lastSendRef.current;
++    previousKeyRef.current = conversationKey;
++    if (initializedVisitRef.current !== visit && !promotedSend) {
++      isStuckRef.current = false;
++      detachedRef.current = false;
++      navigationFollowRef.current = false;
++      lastScrollTopRef.current = -1;
++      pendingSendRef.current = false;
++      suppressNextResizeFollowRef.current = false;
+     }
+-    lastScrollTopRef.current = scrollEl.scrollTop;
+-  }, []);
++    initializedVisitRef.current = visit;
++    return () => {
++      activeVisitRef.current = null;
++      cancelGlide();
++    };
++  }, [visit, cancelGlide, conversationKey]);
+ 
+-  const debouncedHandleScroll = useCallback(() => {
+-    const scrollEl = scrollableRef.current;
+-    isNearBottomRef.current = getIsNearBottom();
+-    if (!scrollEl) {
+-      return;
++  useLayoutEffect(() => {
++    readyRef.current = ready;
++    if (!ready) {
++      cancelGlide();
+     }
++  }, [ready, cancelGlide]);
+ 
+-    /** Direction comes from where the thread actually moved, which covers the
+-     *  wheel, a trackpad and a dragged scrollbar alike. */
+-    const top = scrollEl.scrollTop;
+-    const previousTop = lastScrollTopRef.current;
+-    lastScrollTopRef.current = top;
++  const isCurrent = useCallback(() => activeVisitRef.current === visit, [visit]);
++  const distanceFromEnd = useCallback(() => {
++    const el = scrollableRef.current;
++    return el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
++  }, []);
+ 
+-    /** A thread opens already scrolled to its end, so the first event carries a
+-     *  large positive `scrollTop` with nothing to compare it against. Measuring it
+-     *  from 0 calls it downward, and the gesture that produced it, a reader pushing
+-     *  up and away from the stream, is swallowed: a single PageUp reads as an
+-     *  arrival and leaves the thread riding the answer. Take this one as the
+-     *  baseline and judge direction from the next. */
+-    if (previousTop < 0) {
++  const detach = useCallback(() => {
++    if (!isCurrent()) {
+       return;
+     }
++    detachedRef.current = true;
++    isStuckRef.current = false;
++    pendingSendRef.current = false;
++    cancelGlide();
++  }, [cancelGlide, isCurrent]);
++
++  /** Direct measurement includes padding and content mounted after the sentinel's
++   * first commit. No throttled callback can re-attach a later visit or gesture. */
++  const followBottom = useCallback(
++    (behavior: ScrollBehavior = 'auto') => {
++      const el = scrollableRef.current;
++      if (!isCurrent() || !readyRef.current || !el || el.clientHeight === 0) {
++        return;
++      }
++      const target = Math.max(0, el.scrollHeight - el.clientHeight);
++      const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
++      if (behavior !== 'smooth' || reducedMotion || Math.abs(el.scrollTop - target) < 1) {
++        el.scrollTop = target;
++        lastScrollTopRef.current = el.scrollTop;
++        return;
++      }
+ 
+-    const movingDown = top >= previousTop;
+-    const distance = distanceFromEnd();
++      cancelGlide();
++      const cancel = () => {
++        clearTimeout(timer);
++        el.removeEventListener('scrollend', land);
++        // Stop the browser's animation as well as its completion callback.
++        el.scrollTo({ top: el.scrollTop, behavior: 'instant' });
++      };
++      const land = () => {
++        if (cancelGlideRef.current !== cancel) {
++          return;
++        }
++        cancelGlideRef.current = null;
++        clearTimeout(timer);
++        el.removeEventListener('scrollend', land);
++        if (!isCurrent() || !readyRef.current || !isStuckRef.current) {
++          return;
++        }
++        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
++        lastScrollTopRef.current = el.scrollTop;
++      };
++      cancelGlideRef.current = cancel;
++      el.addEventListener('scrollend', land);
++      const timer = setTimeout(land, glideTimeout);
++      lastScrollTopRef.current = el.scrollTop;
++      el.scrollTo({ top: target, behavior: 'smooth' });
++    },
++    [cancelGlide, isCurrent],
++  );
+ 
+-    /** Arriving is judged here rather than on the wheel tick that started it: the
+-     *  browser animates wheel scrolling, so at tick time the thread is still far
+-     *  short of where that tick is taking it, and reading the distance then calls
+-     *  a gesture that lands on the end a miss. */
+-    if (movingDown) {
+-      if (distance <= attachThreshold) {
+-        isStuckRef.current = true;
+-        /** Cleared unconditionally rather than on a read of the current value.
+-         *  `Message` raises this on every wheel tick, downward ones included, so
+-         *  it is set again on the way here; and the value this closure can see is
+-         *  a render behind, so a conditional clear loses the race and leaves the
+-         *  ride vetoed for the rest of the answer. Recoil no-ops an unchanged
+-         *  write, so repeating it costs nothing. */
+-        setAbortScroll(false);
+-      }
++  const scrollToBottom = useCallback(() => {
++    if (!isCurrent() || !readyRef.current) {
+       return;
+     }
+-
+-    if (distance > detachThreshold) {
+-      isStuckRef.current = false;
+-      glideInterruptedRef.current = true;
+-    }
+-  }, [distanceFromEnd, getIsNearBottom, setAbortScroll]);
+-
+-  const scrollCallback = () => {
+-    reconcileMessageContentLayout(scrollableRef.current);
+-    isNearBottomRef.current = true;
++    cancelGlide();
++    detachedRef.current = false;
+     isStuckRef.current = true;
+-    rememberScrollPosition();
+-  };
++    followBottom();
++    reconcileMessageContentLayout(scrollableRef.current);
++  }, [cancelGlide, followBottom, isCurrent]);
+ 
+-  const { scrollToRef: scrollToBottom, handleSmoothToRef } = useScrollToRef({
+-    targetRef: messagesEndRef,
+-    callback: scrollCallback,
+-    smoothCallback: () => {
+-      scrollCallback();
++  const handleSmoothToRef: MouseEventHandler<HTMLButtonElement> = useCallback(
++    (event) => {
++      event.preventDefault();
++      if (!isCurrent() || !readyRef.current) {
++        return;
++      }
++      detachedRef.current = false;
++      isStuckRef.current = true;
++      suppressNextResizeFollowRef.current = false;
+       setAbortScroll(false);
++      followBottom('smooth');
+     },
+-  });
++    [followBottom, isCurrent, setAbortScroll],
++  );
+ 
+-  /**
+-   * Ride the bottom of the thread.
+-   *
+-   * Written straight to `scrollTop` rather than routed through the throttled
+-   * `scrollIntoView` helper: an answer arrives a few pixels at a time, so
+-   * correcting on every frame reads as the text simply flowing upward, while
+-   * correcting every 145ms reads as a thread that lurches.
+-   *
+-   * The glide is for distance only, when a send has to travel from wherever the
+-   * reader was down to the newest word. Following while one is in flight would
+-   * cancel it on the first frame.
+-   */
+-  const followBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+-    const scrollEl = scrollableRef.current;
+-    if (!scrollEl) {
++  const debouncedHandleScroll = useCallback(() => {
++    const el = scrollableRef.current;
++    if (!isCurrent() || !el) {
+       return;
+     }
+-    const target = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+-    if (Math.abs(scrollEl.scrollTop - target) < 1) {
++    const previous = lastScrollTopRef.current;
++    lastScrollTopRef.current = el.scrollTop;
++    if (previous < 0) {
+       return;
+     }
+-
+-    if (behavior !== 'smooth' || prefersReducedMotion()) {
+-      scrollEl.scrollTop = target;
+-      /** Riding the bottom re-affirms that we are on it. The throttled helper this
+-       *  replaced did the same through its callback, and without it a single
+-       *  under-reported intersection ends the ride for the rest of the turn. */
+-      isNearBottomRef.current = true;
++    const distance = distanceFromEnd();
++    if (el.scrollTop < previous) {
++      // Replacing history can shrink the range and clamp the browser at its new bottom.
++      // Upward gestures already release ownership before their scroll event arrives.
++      if (isStuckRef.current && distance <= 1) return;
++      detach();
++    } else if (el.scrollTop > previous && distance <= attachThreshold) {
++      detachedRef.current = false;
+       isStuckRef.current = true;
+-      lastScrollTopRef.current = target;
+-      return;
++      suppressNextResizeFollowRef.current = false;
++      setAbortScroll(false);
+     }
++  }, [detach, distanceFromEnd, isCurrent, setAbortScroll]);
+ 
+-    isGlidingRef.current = true;
+-    glideInterruptedRef.current = false;
+-    if (glideTimerRef.current != null) {
+-      clearTimeout(glideTimerRef.current);
+-    }
+-    const land = () => {
+-      isGlidingRef.current = false;
+-      scrollEl.removeEventListener('scrollend', land);
+-      if (glideTimerRef.current != null) {
+-        clearTimeout(glideTimerRef.current);
+-        glideTimerRef.current = null;
+-      }
+-      /** Scrolling up during the glide is the reader taking over. Re-pinning them
+-       *  here would hand the thread straight back to the stream on the next resize,
+-       *  and the timeout fires for the whole glide window even once the animation
+-       *  has visibly settled, so the gesture has to win outright. */
+-      if (glideInterruptedRef.current) {
+-        return;
++  // Intersection controls the button, not follow ownership: a growing zero-height
++  // sentinel can flicker without any reader movement.
++  const handleNearBottomChange = useCallback((_isNearBottom: boolean) => {}, []);
++
++  useLayoutEffect(() => {
++    if (!autoScroll) {
++      if (navigationFollowRef.current) {
++        isStuckRef.current = false;
++        cancelGlide();
+       }
+-      isNearBottomRef.current = true;
++      navigationFollowRef.current = false;
++      return;
++    }
++    if (!navigationFollowRef.current && !detachedRef.current) {
++      navigationFollowRef.current = true;
+       isStuckRef.current = true;
+-      /** Following stands down for the whole trip, so anything that streamed in
+-       *  meanwhile moved the bottom past the target this glide aimed at. Close that
+-       *  gap on arrival, or a short answer settles a few lines short of its end. */
+-      const settled = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+-      if (Math.abs(scrollEl.scrollTop - settled) >= 1) {
+-        scrollEl.scrollTop = settled;
+-      }
+-      lastScrollTopRef.current = scrollEl.scrollTop;
+-    };
+-    scrollEl.addEventListener('scrollend', land, { once: true });
+-    glideTimerRef.current = setTimeout(land, glideTimeout);
+-    scrollEl.scrollTo({ top: target, behavior: 'smooth' });
+-  }, []);
+-
+-  const clampScrollToContent = useCallback(() => {
+-    const scrollEl = scrollableRef.current;
+-    if (!scrollEl) {
+-      return false;
+     }
+-
+-    const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+-    if (scrollEl.scrollTop <= maxScrollTop) {
+-      return false;
++  }, [autoScroll, visit, cancelGlide]);
++
++  useLayoutEffect(() => {
++    const sendId = navigation?.explicitSendId;
++    if (sendId != null && sendId !== lastSendRef.current) {
++      lastSendRef.current = sendId;
++      pendingSendRef.current = true;
++      detachedRef.current = false;
+     }
++    if (!ready) {
++      return;
++    }
++    if (pendingSendRef.current && isSubmitting && !abortScroll) {
++      pendingSendRef.current = false;
++      navigationFollowRef.current = false;
++      isStuckRef.current = true;
++      followBottom('smooth');
++    } else if (isStuckRef.current && !cancelGlideRef.current) {
++      followBottom();
++    }
++  }, [
++    navigation?.explicitSendId,
++    ready,
++    isSubmitting,
++    abortScroll,
++    messagesTree,
++    autoScroll,
++    followBottom,
++  ]);
+ 
+-    scrollEl.scrollTop = maxScrollTop;
+-    isNearBottomRef.current = getIsNearBottom();
+-    return true;
+-  }, [getIsNearBottom]);
+-
+-  const reconcileContentResize = useCallback(
+-    (shouldFollowResize = true) => {
+-      if (clampScrollToContent()) {
++  useEffect(() => {
++    const el = scrollableRef.current;
++    const content = contentRef.current;
++    if (!el || !content || typeof ResizeObserver === 'undefined') {
++      return;
++    }
++    const observer = new ResizeObserver(() => {
++      if (!isCurrent() || !readyRef.current) {
+         return;
+       }
+-
+-      if (suppressNextResizeFollowRef.current) {
+-        suppressNextResizeFollowRef.current = false;
+-        isNearBottomRef.current = getIsNearBottom();
+-        /** An interaction rarely settles in one frame: a tool result expands, then its
+-         *  contents arrive and grow it again. Only the first resize is credited to the
+-         *  gesture, so letting go of the ride has to happen here. Leaving it to the
+-         *  resize that follows means reading a reader who has just been pushed far up
+-         *  their own thread as still riding the stream, and handing them back to the
+-         *  bottom they deliberately left. Where the interaction actually left them
+-         *  decides it, so one that kept them on the end keeps streaming. */
+-        isStuckRef.current = isNearBottomRef.current;
++      const max = Math.max(0, el.scrollHeight - el.clientHeight);
++      if (el.scrollTop > max) {
++        el.scrollTop = max;
++        lastScrollTopRef.current = el.scrollTop;
+         return;
+       }
+-
+-      /** A glide already on its way to the bottom is heading exactly where this
+-       *  would put us, and touching the position would cancel it. */
+-      if (isGlidingRef.current) {
++      if (suppressNextResizeFollowRef.current) {
++        suppressNextResizeFollowRef.current = false;
++        if (distanceFromEnd() > resizeFollowThreshold) {
++          detach();
++        }
+         return;
+       }
+-
+-      /** Deliberately not gated on `abortScroll`. `useMessageProcess` raises that on
+-       *  any wheel at all, downward ones included, through a 500ms throttle whose
+-       *  trailing call lands after the gesture has ended: no clear timed to the
+-       *  gesture can outlive it, which is why scrolling down to the newest word
+-       *  could never resume the ride while the button, which touches no wheel,
+-       *  always could. Whether the reader is riding the stream is answered here by
+-       *  where they actually are and which way they were going. */
+-      if (shouldFollowResize && isSubmitting && isStuckRef.current) {
++      if (
++        isStuckRef.current &&
++        !cancelGlideRef.current &&
++        (isSubmitting || navigationFollowRef.current)
++      ) {
+         followBottom();
+       }
+-    },
+-    [clampScrollToContent, followBottom, getIsNearBottom, isSubmitting],
+-  );
+-
+-  useEffect(() => {
+-    const contentEl = contentRef.current;
+-    if (!contentEl || typeof ResizeObserver === 'undefined') {
+-      return;
+-    }
+-
+-    const observer = new ResizeObserver(() => reconcileContentResize());
+-    observer.observe(contentEl);
++    });
++    observer.observe(content);
++    observer.observe(el);
+     return () => observer.disconnect();
+-  }, [reconcileContentResize]);
+-
+-  useEffect(() => {
+-    const contentEl = contentRef.current;
+-    if (!contentEl) {
++  }, [detach, distanceFromEnd, followBottom, isCurrent, isSubmitting]);
++
++  useLayoutEffect(() => {
++    const targetId = navigation?.targetMessageId;
++    const container = scrollableRef.current;
++    if (
++      !ready ||
++      !targetId ||
++      !container ||
++      (targetedVisitRef.current?.visit === visit && targetedVisitRef.current.targetId === targetId)
++    )
+       return;
+-    }
+-
+-    const suppressNextResizeFollow = () => {
+-      suppressNextResizeFollowRef.current = true;
+-    };
+-
+-    contentEl.addEventListener('pointerdown', suppressNextResizeFollow, true);
+-    contentEl.addEventListener('keydown', suppressNextResizeFollow, true);
+-    return () => {
+-      contentEl.removeEventListener('pointerdown', suppressNextResizeFollow, true);
+-      contentEl.removeEventListener('keydown', suppressNextResizeFollow, true);
+-    };
+-  }, []);
++    const row = document.getElementById(targetId);
++    if (!row || !contentRef.current?.contains(row)) return;
++    targetedVisitRef.current = { visit, targetId };
++    detach();
++    container.scrollTop +=
++      row.getBoundingClientRect().top -
++      container.getBoundingClientRect().top -
++      container.clientHeight / 2;
++  }, [ready, navigation?.targetMessageId, messagesTree, visit, detach]);
+ 
+   useEffect(() => {
+-    const scrollEl = scrollableRef.current;
+-    if (!scrollEl || typeof window === 'undefined') {
++    const el = scrollableRef.current;
++    const content = contentRef.current;
++    if (!el || !content) {
+       return;
+     }
+-
+-    /** Direction decides, not position. Heading up lets go at once and stays let
+-     *  go, however close to the end the reader still is; anything position-based
+-     *  drags them back before they have cleared the band, which reads as the
+-     *  thread refusing to be scrolled.
+-     *
+-     *  Heading down only re-attaches on arrival at the end.
+-     *
+-     *  `Message` aborts auto-scroll on `wheel` alone, and a tick against the end
+-     *  moves nothing and so fires no `scroll`, leaving that flag set with nothing
+-     *  to clear it. Clearing it on arrival is what lets the ride resume; the
+-     *  button escaped the problem only by never touching the wheel. */
+-    /** An upward tick releases immediately, without waiting to see where it lands.
+-     *  Re-attaching is left entirely to arrival, handled on scroll.
+-     *
+-     *  A downward tick clears the abort flag outright. `Message` raises it on any
+-     *  wheel at all, and a tick against the end moves nothing, so it fires no
+-     *  `scroll` for the arrival handler to answer: the last tick of scrolling down
+-     *  to the newest word leaves the ride vetoed with nothing left to lift it.
+-     *  Scrolling down is never an intent to abandon the stream. */
++    let frame: number | undefined;
++    let touchY: number | undefined;
+     const onWheel = (event: WheelEvent) => {
+       if (event.deltaY < 0) {
+-        isStuckRef.current = false;
+-        glideInterruptedRef.current = true;
+-        return;
++        detach();
++      } else if (event.deltaY > 0) {
++        // The message's bubbling wheel handler raises abortScroll after this one.
++        if (frame != null) cancelAnimationFrame(frame);
++        frame = requestAnimationFrame(() => {
++          if (isCurrent()) setAbortScroll(false);
++        });
+       }
+-      /** Next frame, not now: React binds `Message`'s handler at the root, above
+-       *  this container, so it runs after this one and would put the flag straight
+-       *  back. Clearing once the event has finished dispatching is what makes it
+-       *  stick. */
+-      window.requestAnimationFrame(() => setAbortScroll(false));
+     };
+-
+-    scrollEl.addEventListener('wheel', onWheel, { passive: true });
+-    return () => {
+-      scrollEl.removeEventListener('wheel', onWheel);
+-    };
+-  }, [setAbortScroll]);
+-
+-  useEffect(
+-    () => () => {
+-      if (glideTimerRef.current != null) {
+-        clearTimeout(glideTimerRef.current);
++    const onKeyDown = (event: KeyboardEvent) => {
++      const target = event.target;
++      if (
++        target instanceof HTMLElement &&
++        target.closest('input, textarea, select, [contenteditable="true"]')
++      ) {
++        return;
+       }
+-    },
+-    [],
+-  );
+-
+-  useEffect(() => {
+-    if (!messagesTree || messagesTree.length === 0) {
+-      return;
+-    }
+-
+-    if (!messagesEndRef.current || !scrollableRef.current) {
+-      return;
+-    }
+-
+-    const startedSubmitting = isSubmitting && !wasSubmittingRef.current;
+-
+-    if (!isSubmitting) {
+-      wasSubmittingRef.current = false;
+-    }
+-
+-    /** The start of a turn is spent only once it can be acted on. A reader who
+-     *  scrolled away during the last answer leaves the abort flag raised, and
+-     *  nothing lowers it until the next connection opens, which is after this effect
+-     *  has already seen the send. Marking the turn as started on that first pass
+-     *  spent it against a closed gate: by the time the flag cleared there was no
+-     *  start left to honour and the reader was still detached, so the answer they
+-     *  had just asked for streamed on offscreen. */
+-    if (isSubmitting && abortScroll !== true) {
+-      wasSubmittingRef.current = true;
+-      /** Sending re-attaches: the reader asked for this answer, so take them to it.
+-       *  The one long trip of a turn, and the only one worth animating. */
+-      if (startedSubmitting) {
+-        isNearBottomRef.current = true;
+-        isStuckRef.current = true;
+-        followBottom('smooth');
+-      } else if (isStuckRef.current && !isGlidingRef.current) {
+-        /** Every delta of the answer reruns this effect, and a plain follow writes
+-         *  scrollTop outright, which cancels an animation on its first frame. The
+-         *  glide is left to finish the trip it started. */
+-        followBottom();
++      if (
++        ['ArrowUp', 'PageUp', 'Home'].includes(event.key) ||
++        (event.key === ' ' && event.shiftKey)
++      ) {
++        detach();
+       }
+-    }
+-
++    };
++    const onTouchStart = (event: TouchEvent) => {
++      touchY = event.touches[0]?.clientY;
++    };
++    const onTouchMove = (event: TouchEvent) => {
++      const next = event.touches[0]?.clientY;
++      if (next != null && touchY != null && next > touchY) detach();
++      touchY = next;
++    };
++    const remember = () => {
++      lastScrollTopRef.current = el.scrollTop;
++    };
++    const suppress = () => {
++      suppressNextResizeFollowRef.current = true;
++    };
++    el.addEventListener('wheel', onWheel, { passive: true });
++    el.addEventListener('keydown', onKeyDown);
++    el.addEventListener('touchstart', onTouchStart, { passive: true });
++    el.addEventListener('touchmove', onTouchMove, { passive: true });
++    el.addEventListener('pointerdown', remember);
++    content.addEventListener('pointerdown', suppress, true);
++    content.addEventListener('keydown', suppress, true);
+     return () => {
+-      if (abortScroll === true) {
+-        scrollToBottom && scrollToBottom.cancel();
+-      }
++      if (frame != null) cancelAnimationFrame(frame);
++      el.removeEventListener('wheel', onWheel);
++      el.removeEventListener('keydown', onKeyDown);
++      el.removeEventListener('touchstart', onTouchStart);
++      el.removeEventListener('touchmove', onTouchMove);
++      el.removeEventListener('pointerdown', remember);
++      content.removeEventListener('pointerdown', suppress, true);
++      content.removeEventListener('keydown', suppress, true);
+     };
+-  }, [isSubmitting, messagesTree, scrollToBottom, abortScroll, followBottom]);
+-
+-  /**
+-   * Land on the newest message when a conversation is opened.
+-   *
+-   * Keyed on the conversation whose rows are actually MOUNTED, not on the id
+-   * alone. The id reaches this hook a commit or more before the tree does, and
+-   * firing on it scrolled the outgoing thread to its end and then never ran
+-   * again — the reader was left wherever that put them, which on a long thread
+-   * is the top. Waiting for the rendered tree to name the same conversation
+-   * costs nothing and is the only moment `messages-end` is where the reader
+-   * expects it.
+-   *
+-   * One landing per conversation: the tree's identity changes on every stream
+-   * delta and cache reconcile, and re-running on those would drag a reader who
+-   * has scrolled away back to the bottom.
+-   */
+-  useEffect(() => {
+-    if (!autoScroll) {
+-      /** Switching the setting off releases the landing, so switching it back
+-       *  on while the same conversation is open honours it again. */
+-      landedConversationRef.current = null;
+-      return;
+-    }
+-
+-    if (conversationId == null || conversationId === Constants.NEW_CONVO) {
+-      return;
+-    }
+-
+-    if (!scrollToBottom || !messagesEndRef.current || !scrollableRef.current) {
+-      return;
+-    }
+-
+-    /** Rows are gated by the progressive mount window during a first commit,
+-     *  but that window only ever grows UPWARD from the newest row, so the end
+-     *  of the mounted content is already the end of the thread. */
+-    if (!messagesTree?.length) {
+-      return;
+-    }
+-
+-    /** Same fallback `MessagesView` uses to key the mount window: a tree whose
+-     *  rows carry no conversation id is taken to be this conversation's, so a
+-     *  locally-built thread still lands instead of waiting forever. */
+-    const renderedConversationId = messagesTree[0]?.conversationId ?? conversationId;
+-    if (renderedConversationId !== conversationId) {
+-      return;
+-    }
+-
+-    if (landedConversationRef.current === conversationId) {
+-      return;
+-    }
+-
+-    landedConversationRef.current = conversationId;
+-    scrollToBottom();
+-  }, [autoScroll, conversationId, messagesTree, scrollToBottom]);
++  }, [detach, isCurrent, setAbortScroll]);
+ 
+   return {
+     conversation,
+@@ -477,5 +380,6 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
+     handleSmoothToRef,
+     debouncedHandleScroll,
+     handleNearBottomChange,
++    detachFromBottom: detach,
+   };
+ }
+diff --git a/e2e/setup/fake-model.js b/e2e/setup/fake-model.js
+index df796c9a752b208ae11f22bb59b16851b199ba3b..d66ae31d9c870c26515ea9201a5a5f4e9b6a77e0 100644
+--- a/e2e/setup/fake-model.js
++++ b/e2e/setup/fake-model.js
+@@ -10,6 +10,7 @@
+  * from the conversation and the agents' advertised tools.
+  */
+ const { FakeChatModel } = require('@librechat/agents');
++const { setTimeout: delay } = require('node:timers/promises');
+ const { ChatGenerationChunk } = require('@langchain/core/outputs');
+ const { AIMessageChunk } = require('@langchain/core/messages');
+ const { tryBindReplay } = require('./model-replay');
+@@ -47,6 +48,7 @@ const RETAINED_PREFIX_MARKER = 'E2E_RETAINED_PREFIX:';
+ const COUNTED_REPLY_MARKER = 'E2E_COUNTED_REPLY:';
+ const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
+ const SLOW_REPLY_MARKER = 'E2E_SLOW_REPLY:';
++const RUNNING_REPLY_MARKER = 'E2E_RUNNING_REPLY:';
+ const EMPTY_SLOW_REPLY_MARKER = 'E2E_EMPTY_SLOW_REPLY:';
+ const PRE_TOKEN_REPLY_MARKER = 'E2E_PRE_TOKEN_REPLY:';
+ /** A run that completes having produced no content at all: the shape a
+@@ -814,6 +816,15 @@ function replyResponses(text) {
+     };
+   }
+ 
++  const runningName = getMarkerValue(text, RUNNING_REPLY_MARKER);
++  if (runningName) {
++    return {
++      responses: [''],
++      sleep: SLOW_CHUNK_DELAY_MS,
++      resolveInvocation: async () => ({ runningReply: runningName }),
++    };
++  }
++
+   const slowName = getMarkerValue(text, SLOW_REPLY_MARKER);
+   if (slowName) {
+     return slowReplyResponses(slowName);
+@@ -894,6 +905,20 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
+     this.streamSleep = sleep ?? CHUNK_DELAY_MS;
+   }
+ 
++  /** Navigation tests need a live run until Stop, not a finite timing window. */
++  async *streamRunningResponseChunks(label, signal, runManager) {
++    yield* this.streamScriptedResponseChunks({
++      response: `E2E running reply ${label}`,
++      runManager,
++    });
++    for (let index = 0; ; index++) {
++      await delay(this.streamSleep, undefined, { signal });
++      const text = index % 2 === 0 ? ' ' : `chunk-${String((index - 1) / 2).padStart(3, '0')}`;
++      yield this._createResponseChunk(text);
++      void runManager?.handleLLMNewToken(text);
++    }
++  }
++
+   async *streamScriptedResponseChunks({
+     response,
+     toolCalls,
+@@ -990,7 +1015,13 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
+       ? null
+       : await this.resolveOnStream?.(messages, options, runManager);
+     let chunkStream;
+-    if (scriptedResponse) {
++    if (scriptedResponse?.runningReply) {
++      chunkStream = this.streamRunningResponseChunks(
++        scriptedResponse.runningReply,
++        options.signal,
++        runManager,
++      );
++    } else if (scriptedResponse) {
+       chunkStream = this.streamScriptedResponseChunks({
+         response: scriptedResponse.response ?? '',
+         toolCalls: scriptedResponse.toolCalls,
+diff --git a/e2e/specs/mock/running-autoscroll.spec.ts b/e2e/specs/mock/running-autoscroll.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d1483c529a7522097e804518a0055a237dae00e2
+--- /dev/null
++++ b/e2e/specs/mock/running-autoscroll.spec.ts
+@@ -0,0 +1,175 @@
++import { randomUUID } from 'node:crypto';
++import { expect, test } from '@playwright/test';
++import type { Page, Route } from '@playwright/test';
++import { seedConversations, seedMessages } from './db';
++import { getE2EUser } from '../../setup/user';
++import { MOCK_ENDPOINTS, selectMockEndpoint, sendMessage } from './helpers';
++
++const scroller = (page: Page) => page.locator('[data-chat-pane="0"] .scrollbar-gutter-stable');
++const gap = (page: Page) =>
++  scroller(page).evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
++const row = (page: Page, id: string) => page.locator(`nav [data-conversation-id="${id}"]`);
++const output = (page: Page) =>
++  page.locator('[data-testid="screenshot-target"] .message-render').last();
++
++async function setAutoScroll(page: Page, enabled: boolean) {
++  await page.getByTestId('nav-user').click();
++  await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
++  await page.getByRole('tab', { name: 'Chat', exact: true }).click();
++  const toggle = page.getByRole('switch', { name: 'Auto-Scroll to latest message on chat open' });
++  await toggle.setChecked(enabled);
++  await expect(toggle).toBeChecked({ checked: enabled });
++  await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
++  await expect
++    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('autoScroll') ?? 'true')))
++    .toBe(enabled);
++}
++
++async function seedThread() {
++  const id = randomUUID();
++  const email = getE2EUser().email;
++  await seedConversations(email, [
++    { conversationId: id, title: `Scroll ${id}`, updatedAt: new Date() },
++  ]);
++  let parent = '00000000-0000-0000-0000-000000000000';
++  await seedMessages(
++    email,
++    id,
++    Array.from({ length: 50 }, (_, index) => {
++      const messageId = randomUUID();
++      const result = {
++        messageId,
++        parentMessageId: parent,
++        text: `Navigation history row ${index}. This is synthetic scrolling test content.`,
++        isCreatedByUser: index % 2 === 0,
++        sender: index % 2 === 0 ? 'User' : 'Assistant',
++      };
++      parent = messageId;
++      return result;
++    }),
++  );
++  return id;
++}
++
++test.describe('running conversation navigation scrolling', () => {
++  test.use({ serviceWorkers: 'block', viewport: { width: 1100, height: 700 } });
++
++  for (const enabled of [false, true]) {
++    test(`navigation and resumed output honor autoScroll=${enabled}`, async ({ page }) => {
++      test.setTimeout(120_000);
++      const id = await seedThread();
++      const otherId = enabled ? await seedThread() : undefined;
++      await page.goto(`/c/${id}`);
++      await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
++      // Exercise the existing control and persistence, including the default true.
++      await setAutoScroll(page, !enabled);
++      await setAutoScroll(page, enabled);
++      await sendMessage(page, `E2E_RUNNING_REPLY:scroll-${enabled}`);
++      await expect(output(page)).toContainText('chunk-005', { timeout: 30_000 });
++      await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++      // Cold running load reads the stored preference before restoring submission.
++      await page.reload();
++      await expect(output(page)).toContainText('chunk-015', { timeout: 30_000 });
++      if (enabled) await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++      else await expect.poll(() => gap(page)).toBeGreaterThan(200);
++      await page.getByRole('link', { name: 'New chat', exact: true }).click();
++      await expect(page).toHaveURL(/\/c\/new/);
++      const resumed = page.waitForResponse(
++        (response) =>
++          response.url().includes(`/api/agents/chat/stream/${id}?`) &&
++          response.url().includes('resume=true'),
++      );
++      await row(page, id).click();
++      await resumed;
++      await expect(output(page)).toContainText('chunk-020', { timeout: 30_000 });
++      if (enabled) {
++        await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++        const height = await scroller(page).evaluate((el) => el.scrollHeight);
++        await expect
++          .poll(() => scroller(page).evaluate((el) => el.scrollHeight))
++          .toBeGreaterThan(height);
++        await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++        await scroller(page).hover();
++        await page.mouse.wheel(0, -600);
++        await expect.poll(() => gap(page)).toBeGreaterThan(200);
++        const top = await scroller(page).evaluate((el) => el.scrollTop);
++        await expect(output(page)).toContainText('chunk-070', { timeout: 30_000 });
++        await expect
++          .poll(() => scroller(page).evaluate((el) => el.scrollTop))
++          .toBeLessThanOrEqual(top + 2);
++      } else {
++        await expect.poll(() => gap(page)).toBeGreaterThan(200);
++        const top = await scroller(page).evaluate((el) => el.scrollTop);
++        await expect(output(page)).toContainText('chunk-070', { timeout: 30_000 });
++        expect(await scroller(page).evaluate((el) => el.scrollTop)).toBeLessThanOrEqual(top + 2);
++      }
++      await page
++        .getByRole('button', { name: 'Scroll to bottom', exact: true })
++        .and(page.locator(':not([data-msg-id])'))
++        .click();
++      await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++      await expect(output(page)).toContainText('chunk-090', { timeout: 30_000 });
++      await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++
++      // Sidebar navigation preserves the outgoing cache; New chat clears it.
++      // Keep both chats running while the return visit revalidates that cache.
++      if (otherId) {
++        await row(page, otherId).click();
++        await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
++        await sendMessage(page, 'E2E_RUNNING_REPLY:scroll-other');
++        await expect(output(page)).toContainText('chunk-005', { timeout: 30_000 });
++        let release!: () => void;
++        const historyGate = new Promise<void>((resolve) => {
++          release = resolve;
++        });
++        let requested!: (route: Route) => void;
++        const historyRequested = new Promise<Route>((resolve) => {
++          requested = resolve;
++        });
++        await page.route(
++          (url) => url.pathname === `/api/messages/${id}`,
++          async (route) => {
++            const response = await route.fetch();
++            requested(route);
++            await historyGate;
++            await route.fulfill({ response });
++          },
++          { times: 1 },
++        );
++        try {
++          await row(page, id).click();
++          const historyRoute = await historyRequested;
++          await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++          await scroller(page).hover();
++          await page.mouse.wheel(0, -600);
++          await expect.poll(() => gap(page)).toBeGreaterThan(200);
++          const top = await scroller(page).evaluate((el) => el.scrollTop);
++          const historyReturned = page.waitForResponse(
++            (response) => response.request() === historyRoute.request(),
++          );
++          release();
++          expect(await (await historyReturned).finished()).toBeNull();
++          await expect(output(page)).toContainText('chunk-130', { timeout: 30_000 });
++          expect(await scroller(page).evaluate((el) => el.scrollTop)).toBeLessThanOrEqual(top + 2);
++          await expect.poll(() => gap(page)).toBeGreaterThan(200);
++        } finally {
++          release();
++        }
++      } else {
++        await page.getByRole('link', { name: 'New chat', exact: true }).click();
++        await row(page, id).click();
++        await expect(output(page)).toContainText('chunk-100', { timeout: 30_000 });
++        await expect.poll(() => gap(page)).toBeGreaterThan(200);
++      }
++      await page.getByRole('button', { name: 'Stop generating', exact: true }).click();
++      await expect(page.getByRole('button', { name: 'Stop generating', exact: true })).toBeHidden();
++      if (otherId) {
++        await row(page, otherId).click();
++        await page.getByRole('button', { name: 'Stop generating', exact: true }).click();
++        await expect(
++          page.getByRole('button', { name: 'Stop generating', exact: true }),
++        ).toBeHidden();
++      }
++    });
++  }
++});

@@ -1,0 +1,37 @@
+{
+  "checks": [
+    {
+      "name": "Existing image workflow static contract",
+      "tier": "focused",
+      "cwd": ".",
+      "requires": [
+        ".github/workflows/rickyhao-dev-image.yml",
+        "package.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "-e",
+        "const fs=require('node:fs'),a=require('node:assert/strict'),y=require('js-yaml');const w=y.load(fs.readFileSync('.github/workflows/rickyhao-dev-image.yml','utf8'));a.deepEqual(w.on.push.branches,['rickyhao/dev']);a.ok(Object.hasOwn(w.on,'workflow_dispatch'));a.equal(w.jobs.publish.if,\"github.repository == 'Ricky-Hao/LibreChat' && github.ref == 'refs/heads/rickyhao/dev'\");const steps=w.jobs.publish.steps;const checkout=steps.find(s=>s.uses?.startsWith('actions/checkout@'));a.equal(checkout.with.ref,'${{ github.sha }}');a.equal(checkout.with['persist-credentials'],false);const build=steps.find(s=>s.uses?.startsWith('docker/build-push-action@'));a.equal(build.with.platforms,'linux/amd64');a.equal(build.with.push,true);a.ok(build.with.tags.includes(':sha-${{ github.sha }}'));a.ok(build.with.tags.includes(':rickyhao-dev'));a.ok(build.with.labels.includes('org.opencontainers.image.revision=${{ github.sha }}'));console.log('Workflow static contract checked; image publication NOT RUN');"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    }
+  ]
+}

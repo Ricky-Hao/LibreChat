@@ -1,0 +1,46 @@
+{
+  "checks": [
+    {
+      "name": "test-adaptations browser contract",
+      "tier": "browser",
+      "cwd": ".",
+      "runner": "playwright",
+      "files": [
+        "e2e/specs/mock/activity-fold.spec.ts",
+        "e2e/specs/mock/content-filters.persisted.spec.ts",
+        "e2e/specs/mock/scenarios/pinned-drag-rules.spec.ts",
+        "e2e/specs/mock/scenarios/sidebar-single-scroll.spec.ts",
+        "e2e/specs/mock/scenarios/unseen-replies.spec.ts",
+        "e2e/specs/mock/streaming.spec.ts"
+      ],
+      "config": "e2e/playwright.config.mock.ts",
+      "requires": [
+        "e2e/playwright.config.mock.ts",
+        "e2e/specs/mock/activity-fold.spec.ts",
+        "e2e/specs/mock/content-filters.persisted.spec.ts",
+        "e2e/specs/mock/scenarios/pinned-drag-rules.spec.ts",
+        "e2e/specs/mock/scenarios/sidebar-single-scroll.spec.ts",
+        "e2e/specs/mock/scenarios/unseen-replies.spec.ts",
+        "e2e/specs/mock/streaming.spec.ts"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    }
+  ]
+}

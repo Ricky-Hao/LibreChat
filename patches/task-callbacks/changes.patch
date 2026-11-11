@@ -1,0 +1,3411 @@
+diff --git a/README.md b/README.md
+index 67dd3b4393b6c3017924d50e4b09edcdabd19654..41fd1cbc353e0552f8bbc62de0212827d07a8495 100644
+--- a/README.md
++++ b/README.md
+@@ -85,6 +85,7 @@ Read the [full v0.8.8 changelog](https://www.librechat.ai/changelog/v0.8.8).
+   - Open-Source & Self-Hostable: powered by [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter)
+ 
+ - 🔦 **Agents & Tools Integration**:  
++  - [External task callbacks](docs/task-callbacks.md): optionally resume an Agent conversation when an external executor delivers its terminal result.
+   - **[LibreChat Agents](https://www.librechat.ai/docs/features/agents)**:
+     - No-Code Custom Assistants: Build specialized, AI-driven helpers
+     - Agent Marketplace: Discover and deploy community-built agents
+diff --git a/api/app/clients/tools/manifest.json b/api/app/clients/tools/manifest.json
+index c6ffa08c1c35a260ed1a5d7a407841727b338d3c..79e53e67bbfe9634bf66f884abd1c7f8e9b3bcbf 100644
+--- a/api/app/clients/tools/manifest.json
++++ b/api/app/clients/tools/manifest.json
+@@ -91,6 +91,13 @@
+     "agentsOnly": true,
+     "authConfig": []
+   },
++  {
++    "name": "External Task Callback",
++    "pluginKey": "create_task_callback",
++    "description": "Resume this conversation automatically when an external task finishes.",
++    "agentsOnly": true,
++    "authConfig": []
++  },
+   {
+     "name": "Stable Diffusion",
+     "pluginKey": "stable-diffusion",
+diff --git a/api/app/clients/tools/util/handleTools.js b/api/app/clients/tools/util/handleTools.js
+index 27af41b89cfb83a9b1818c9462c7c22552d0b170..135b7df02d407aa8ff9b1da791d6fcd17043869f 100644
+--- a/api/app/clients/tools/util/handleTools.js
++++ b/api/app/clients/tools/util/handleTools.js
+@@ -23,8 +23,10 @@ const {
+   SET_MEMORY_TOOL_NAME,
+   buildWebSearchContext,
+   DELETE_MEMORY_TOOL_NAME,
+-  createAskUserQuestionTool,
+-  ASK_USER_QUESTION_TOOL_NAME,
++  createNativeAgentTool,
++  nativeAgentToolCapability,
++  encryptV2,
++  decryptV2,
+   resolveWebSearchSSRFAgents,
+   buildWebSearchDynamicContext,
+   codeExecutionAuthHeaders,
+@@ -425,8 +427,15 @@ const loadTools = async ({
+         });
+       };
+       continue;
+-    } else if (tool === ASK_USER_QUESTION_TOOL_NAME) {
+-      requestedTools[tool] = async () => createAskUserQuestionTool();
++    } else if (nativeAgentToolCapability(tool)) {
++      requestedTools[tool] = async () =>
++        createNativeAgentTool(tool, {
++          req: options.req,
++          agentId: agent?.id,
++          methods: require('~/models'),
++          encrypt: encryptV2,
++          decrypt: decryptV2,
++        });
+       continue;
+     } else if (tool === SET_MEMORY_TOOL_NAME || tool === DELETE_MEMORY_TOOL_NAME) {
+       requestedTools[tool] = () =>
+diff --git a/api/server/routes/agents/index.js b/api/server/routes/agents/index.js
+index e1ea153581d24b515ea2568874d2b0666653c8dd..41ae51cf9f78f3704410ce425cb0ee23602b4dda 100644
+--- a/api/server/routes/agents/index.js
++++ b/api/server/routes/agents/index.js
+@@ -153,6 +153,10 @@ router.use('/v1/skills', skills);
+  */
+ router.use('/v1', openai);
+ 
++router.post('/task-callbacks', (req, res, next) =>
++  require('~/server/services/Agents/triggers').taskCallbackHandler(req, res, next),
++);
++
+ router.use(requireJwtAuth);
+ // Capture the short-lived trigger identity immediately after authentication. Downstream
+ // middleware reads this stable decision instead of re-verifying an expired token.
+@@ -785,7 +789,8 @@ router.post('/chat/abort', chatConfigMiddleware, async (req, res, next) => {
+          * reconciliation frame instead of an unsafe normal FINAL. */
+         beforePublish: async (pendingAbortResult) => {
+           const persistenceErrors = [];
+-          const { jobData, text, content } = pendingAbortResult;
++          const { jobData, text, content, userSubmittedPaths, userSubmittedMessageFieldPaths } =
++            pendingAbortResult;
+           /** `abortJob` treats a delivered `created` event as a real turn even
+            * when every streamed part is filtered out (for example, an
+            * interrupt before the model's first non-whitespace token). Its
+@@ -843,14 +848,8 @@ router.post('/chat/abort', chatConfigMiddleware, async (req, res, next) => {
+               unfinished: abortPersistencePlan.responseUnfinished,
+               error: false,
+               isCreatedByUser: false,
+-              ...(Array.isArray(jobData.userSubmittedPaths) &&
+-                jobData.userSubmittedPaths.length > 0 && {
+-                  userSubmittedPaths: jobData.userSubmittedPaths,
+-                }),
+-              ...(Array.isArray(jobData.userSubmittedMessageFieldPaths) &&
+-                jobData.userSubmittedMessageFieldPaths.length > 0 && {
+-                  userSubmittedMessageFieldPaths: jobData.userSubmittedMessageFieldPaths,
+-                }),
++              userSubmittedPaths,
++              userSubmittedMessageFieldPaths,
+               /** The run published its compact context meta onto the job ahead
+                * of each model call; the stopped response must carry it so the
+                * next turn seeds the same tiers. A job with none unsets what an
+diff --git a/api/server/services/Agents/triggers.js b/api/server/services/Agents/triggers.js
+index 3bbf64be6ec38db68bf247d10644bd7acb233f02..04a14afaa014cbdb396e20b33db778ece50392db 100644
+--- a/api/server/services/Agents/triggers.js
++++ b/api/server/services/Agents/triggers.js
+@@ -11,8 +11,11 @@ const {
+   createAgentQueuedTurnLifecycle,
+   AGENT_QUEUED_TURN_SOURCE,
+   GenerationJobManager,
++  createTaskCallbackLifecycle,
++  TASK_CALLBACK_SOURCE,
+ } = require('@librechat/api');
+ const methods = require('~/models');
++const { getAppConfig } = require('~/server/services/Config/app');
+ 
+ const getGenerationAdmissionEvidence = (userId, clientRequestId, streamId, conversationId) =>
+   GenerationJobManager.getGenerationAdmissionEvidence(
+@@ -56,6 +59,12 @@ const eventActorAdapter = createAgentEventContinueResolver({
+   getGenerationJob: (conversationId) => GenerationJobManager.getJob(conversationId),
+ });
+ let service;
++const taskCallbacks = createTaskCallbackLifecycle({
++  methods,
++  getConfig: getAppConfig,
++  getGenerationJob: (conversationId) => GenerationJobManager.getJob(conversationId),
++  enqueue: (...args) => service.enqueue(...args),
++});
+ const queuedTurnLifecycle = createAgentQueuedTurnLifecycle({
+   methods,
+   getGenerationJob: (conversationId) => GenerationJobManager.getJob(conversationId),
+@@ -80,18 +89,21 @@ service = createAgentTriggerService({
+       [SUBAGENT_COMPLETION_SOURCE, subagentCompletionAdapter],
+       [BACKGROUND_TOOL_COMPLETION_SOURCE, backgroundToolCompletionAdapter],
+       [AGENT_QUEUED_TURN_SOURCE, queuedTurnLifecycle.prepareContinue],
++      [TASK_CALLBACK_SOURCE, taskCallbacks.prepareContinue],
+     ]),
+   }),
+ });
+ 
+ const initializeAgentTriggerService = async (options) => {
+   await service.initialize(options);
++  await taskCallbacks.initialize();
+   await queuedTurnLifecycle.initialize({
+     maxIdleIntervalMs: options?.idlePolling?.queuedTurnMaxIntervalMs,
+   });
+ };
+ 
+ const stopAgentTriggerService = async () => {
++  await taskCallbacks.stop();
+   await queuedTurnLifecycle.stop();
+   await service.stop();
+ };
+@@ -101,6 +113,7 @@ const purgeAgentTriggerDeliveriesForUser = async (userId) => {
+ };
+ 
+ module.exports = {
++  taskCallbackHandler: taskCallbacks.handler,
+   initializeAgentTriggerService,
+   stopAgentTriggerService,
+   dispatchAgentTrigger: service.dispatch,
+diff --git a/api/server/services/Agents/triggers.spec.js b/api/server/services/Agents/triggers.spec.js
+index ed99ccab28542d5a70e0f6dd18956ab3801d1d41..335c9abdc856d51a676582986325104cb3643498 100644
+--- a/api/server/services/Agents/triggers.spec.js
++++ b/api/server/services/Agents/triggers.spec.js
+@@ -16,6 +16,12 @@ const mockQueuedTurnLifecycle = {
+   schedule: jest.fn(),
+   cancel: jest.fn(),
+ };
++const mockTaskCallbacks = {
++  prepareContinue: jest.fn(),
++  handler: jest.fn(),
++  initialize: jest.fn(),
++  stop: jest.fn(),
++};
+ 
+ jest.mock('@librechat/api', () => ({
+   createCheckpointDeletionReclaimer: jest.fn((getJobs) => () => getJobs('owner', 'tenant')),
+@@ -27,6 +33,8 @@ jest.mock('@librechat/api', () => ({
+     mockCreateBackgroundToolCompletionWakeupResolver(...args),
+   createSubagentCompletionWakeupResolver: jest.fn(() => jest.fn()),
+   createAgentQueuedTurnLifecycle: jest.fn(() => mockQueuedTurnLifecycle),
++  createTaskCallbackLifecycle: jest.fn(() => mockTaskCallbacks),
++  TASK_CALLBACK_SOURCE: 'external-task-callback',
+   BACKGROUND_TOOL_COMPLETION_SOURCE: 'background-tool-completion',
+   SUBAGENT_COMPLETION_SOURCE: 'subagent-completion',
+   AGENT_QUEUED_TURN_SOURCE: 'agent-queued-turn',
+@@ -36,6 +44,7 @@ jest.mock('@librechat/api', () => ({
+ jest.mock('~/models', () => ({
+   isAgentTriggerPrincipalActive: jest.fn(),
+ }));
++jest.mock('~/server/services/Config/app', () => ({ getAppConfig: jest.fn() }));
+ 
+ describe('agent trigger service composition', () => {
+   beforeEach(() => {
+@@ -96,6 +105,7 @@ describe('agent trigger service composition', () => {
+       options,
+     );
+     expect(mockQueuedTurnLifecycle.initialize).toHaveBeenCalledWith({ maxIdleIntervalMs: 60_000 });
++    expect(mockTaskCallbacks.initialize).toHaveBeenCalledTimes(1);
+   });
+ 
+   it('injects the configured background completion batch size', async () => {
+diff --git a/api/server/services/ToolService.js b/api/server/services/ToolService.js
+index 16bdb21fec548ef7f766d680129ba0eea397a03b..022da82069fbd880e37aa4d14b14c8f5333e1044 100644
+--- a/api/server/services/ToolService.js
++++ b/api/server/services/ToolService.js
+@@ -44,7 +44,7 @@ const {
+   isContentFilterError,
+   isFileAuthoringToolDefinition,
+   normalizeActionToolName,
+-  ASK_USER_QUESTION_TOOL_NAME,
++  nativeAgentToolCapability,
+   splitMCPToolKey,
+   buildServerNameAliases,
+   findShadowedServerNames,
+@@ -928,8 +928,8 @@ async function loadToolDefinitionsWrapper({
+     if (tool === Tools.memory) {
+       return checkCapability(AgentCapabilities.memory);
+     }
+-    if (tool === ASK_USER_QUESTION_TOOL_NAME) {
+-      return checkCapability(AgentCapabilities.ask_user_question);
++    if (nativeAgentToolCapability(tool)) {
++      return checkCapability(nativeAgentToolCapability(tool));
+     }
+     if (isActionTool(tool)) {
+       return actionsEnabled;
+@@ -1775,8 +1775,8 @@ async function loadAgentTools({
+       return includesWebSearch;
+     } else if (tool === Tools.memory) {
+       return checkCapability(AgentCapabilities.memory);
+-    } else if (tool === ASK_USER_QUESTION_TOOL_NAME) {
+-      return checkCapability(AgentCapabilities.ask_user_question);
++    } else if (nativeAgentToolCapability(tool)) {
++      return checkCapability(nativeAgentToolCapability(tool));
+     } else if (isActionTool(tool)) {
+       return actionsEnabled;
+     } else if (tool?.includes(Constants.mcp_delimiter)) {
+diff --git a/api/server/services/__tests__/ToolService.spec.js b/api/server/services/__tests__/ToolService.spec.js
+index 0872784d0644760a77e0b1e0afdbb8984e08f6ee..c7cebb3adf843b51068d38d00803edb069f6ace7 100644
+--- a/api/server/services/__tests__/ToolService.spec.js
++++ b/api/server/services/__tests__/ToolService.spec.js
+@@ -3918,6 +3918,74 @@ describe('ToolService - Action Capability Gating', () => {
+       expect([...result.configurable.ptcToolMap.keys()]).toEqual(['programmatic_tool']);
+     });
+ 
++    it.each([
++      { label: 'explicit bound opt-in', allowed: true },
++      { label: 'default direct', direct: true },
++      { label: 'missing binding', unbound: true },
++      { label: 'callback capability disabled', noCallback: true },
++      { label: 'programmatic capability disabled', noProgrammatic: true },
++      { label: 'code capability disabled', noCode: true },
++      { label: 'code role denied', denied: true },
++      { label: 'caller projection excludes callback', excluded: true },
++    ])('keeps native callback gates in the real PTC tool map: $label', async (options) => {
++      const realApi = jest.requireActual('@librechat/api');
++      const callbackName = 'create_task_callback';
++      const capabilities = [
++        AgentCapabilities.tools,
++        ...(!options.noProgrammatic ? [AgentCapabilities.programmatic_tools] : []),
++        ...(!options.noCode ? [AgentCapabilities.execute_code] : []),
++        ...(!options.noCallback ? [AgentCapabilities.task_callbacks] : []),
++      ];
++      const req = createMockReq(capabilities);
++      req.body = { conversationId: 'conversation', messageId: 'assistant-anchor' };
++      const agent = {
++        id: 'agent_ptc',
++        tools: [Tools.execute_code, ...(!options.unbound ? [callbackName] : [])],
++        tool_options: {
++          [callbackName]: { allowed_callers: options.direct ? ['direct'] : ['code_execution'] },
++        },
++      };
++      mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(capabilities));
++      if (options.denied) {
++        mockGetRoleByName.mockResolvedValue(
++          buildRole({ [PermissionTypes.RUN_CODE]: { [Permissions.USE]: false } }),
++        );
++      }
++      mockLoadToolDefinitions.mockImplementationOnce(realApi.loadToolDefinitions);
++      const definitions = await loadAgentTools({ req, res: {}, agent, definitionsOnly: true });
++      const nativeTool = realApi.createTaskCallbackTool();
++      mockLoadToolsUtil.mockResolvedValue({ loadedTools: [nativeTool], toolContextMap: {} });
++      const result = await loadToolsForExecution({
++        req,
++        res: {},
++        agent,
++        toolNames: [Constants.BASH_PROGRAMMATIC_TOOL_CALLING],
++        toolRegistry: definitions.toolRegistry,
++        actionsEnabled: false,
++        ...(options.excluded
++          ? {
++              callerCapabilityProjection: {
++                version: 1,
++                directToolNames: [callbackName],
++                codeExecutionToolNames: [],
++                directOnlyToolNames: [callbackName],
++                codeExecutionOnlyToolNames: [],
++              },
++            }
++          : {}),
++      });
++      expect(result.configurable.ptcToolMap?.has(callbackName) === true).toBe(
++        options.allowed === true,
++      );
++      if (options.allowed) {
++        expect(result.configurable.ptcToolMap.get(callbackName)).toBe(nativeTool);
++        expect(definitions.toolRegistry.get(callbackName).allowed_callers).toEqual([
++          'direct',
++          'code_execution',
++        ]);
++      }
++    });
++
+     it('intersects PTC loading with the SDK live caller projection', async () => {
+       const capabilities = [
+         AgentCapabilities.tools,
+diff --git a/api/server/services/start/tools.js b/api/server/services/start/tools.js
+index eff91036734c9ef4637565f9b4ffc26f9dcfbb4c..fdfe5d6dc433c8431fb98df325324cb3e9e86c76 100644
+--- a/api/server/services/start/tools.js
++++ b/api/server/services/start/tools.js
+@@ -11,6 +11,7 @@ const {
+   oaiToolkit,
+   geminiToolkit,
+   createAskUserQuestionTool,
++  createTaskCallbackTool,
+   toToolParameters,
+ } = require('@librechat/api');
+ const { toolkits } = require('~/app/clients/tools/manifest');
+@@ -90,6 +91,7 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
+   const basicToolInstances = [
+     new Calculator(),
+     createAskUserQuestionTool(),
++    createTaskCallbackTool(),
+     ...Object.values(oaiToolkit),
+     ...Object.values(geminiToolkit),
+   ];
+diff --git a/client/src/components/Chat/Messages/Content/Markdown.tsx b/client/src/components/Chat/Messages/Content/Markdown.tsx
+index 521549ab1e13c8033faf5150af58fa1f648f7e86..fead6aa213f7c9a5dc411a2536e6e2d795ee5a7b 100644
+--- a/client/src/components/Chat/Messages/Content/Markdown.tsx
++++ b/client/src/components/Chat/Messages/Content/Markdown.tsx
+@@ -1,4 +1,5 @@
+ import React, { memo, useRef, useEffect } from 'react';
++import { redactTaskCallbackIds } from 'librechat-data-provider';
+ import { getRemarkPlugins, getRehypePlugins, getMarkdownComponents } from './markdownConfig';
+ import { useMessagePartsHost } from '~/Providers/MessagePartsHostContext';
+ import useSmoothStreaming from '~/hooks/Messages/useSmoothStreaming';
+@@ -11,7 +12,11 @@ type TContentProps = {
+   isLatestMessage: boolean;
+ };
+ 
+-const Markdown = memo(function Markdown({ content = '', isLatestMessage }: TContentProps) {
++const Markdown = memo(function Markdown({
++  content: rawContent = '',
++  isLatestMessage,
++}: TContentProps) {
++  const content = redactTaskCallbackIds(rawContent);
+   const { useMessage, useLaTeXParsing } = useMessagePartsHost();
+   const { isSubmitting = false } = useMessage();
+   const smoothStreaming = useSmoothStreaming();
+diff --git a/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts b/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts
+index a131a5224159afbceb422dc741596c2917ec2377..8f2ee784d6a0d4071d9545eba19986ea243d1759 100644
+--- a/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts
++++ b/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts
+@@ -72,6 +72,25 @@ describe('buildCatalog', () => {
+     expect(systemDefined?.kind === 'builtin' && systemDefined.userProvidedAuth).toBe(false);
+   });
+ 
++  test('surfaces task callbacks as a capability-gated built-in', () => {
++    const plugin = makePlugin({
++      pluginKey: 'create_task_callback',
++      name: 'External Task Callback',
++    });
++    const inputs = {
++      ...askInputs,
++      regularTools: [plugin],
++      agentsConfig: { capabilities: [AgentCapabilities.task_callbacks] },
++    };
++    const items = buildCatalog(inputs);
++    expect(items.find((item) => item.id === 'create_task_callback')?.kind).toBe('builtin');
++    expect(
++      buildCatalog({ ...inputs, agentsConfig: { capabilities: [AgentCapabilities.tools] } }).some(
++        (item) => item.id === 'create_task_callback',
++      ),
++    ).toBe(false);
++  });
++
+   test('surfaces ask_user_question as a BUILTIN (not a plugin) when the server lists it', () => {
+     const askPlugin = makePlugin({ pluginKey: 'ask_user_question', name: 'Ask User' });
+     const items = buildCatalog({ ...askInputs, regularTools: [askPlugin] });
+diff --git a/client/src/components/SidePanel/Agents/Tools/items/catalog.ts b/client/src/components/SidePanel/Agents/Tools/items/catalog.ts
+index 0b2b62e5936d4dd830877d01d4103848d348910b..6d2a85678831b11fdc8bd5ef902fa0d0e960327c 100644
+--- a/client/src/components/SidePanel/Agents/Tools/items/catalog.ts
++++ b/client/src/components/SidePanel/Agents/Tools/items/catalog.ts
+@@ -180,6 +180,19 @@ export function buildCatalog(inputs: BuildCatalogInputs): AgentItem[] {
+     });
+   }
+ 
++  if (
++    enabled.has(AgentCapabilities.task_callbacks) &&
++    inputs.regularTools.some((plugin) => plugin.pluginKey === 'create_task_callback')
++  ) {
++    items.push({
++      kind: 'builtin',
++      id: 'create_task_callback',
++      iconKey: 'create_task_callback',
++      name: 'com_ui_task_callback',
++      description: 'com_agents_task_callback_info',
++    });
++  }
++
+   if (inputs.showMemory) {
+     items.push({
+       kind: 'builtin',
+@@ -212,7 +225,7 @@ export function buildCatalog(inputs: BuildCatalogInputs): AgentItem[] {
+ 
+   if (enabled.has(AgentCapabilities.tools)) {
+     for (const plugin of inputs.regularTools) {
+-      if (plugin.pluginKey === 'ask_user_question') {
++      if (plugin.pluginKey === 'ask_user_question' || plugin.pluginKey === 'create_task_callback') {
+         continue; // surfaced as a builtin above — don't double-list as a plugin
+       }
+       items.push({
+diff --git a/client/src/components/SidePanel/Agents/Tools/items/icons.ts b/client/src/components/SidePanel/Agents/Tools/items/icons.ts
+index 3ddd5461c54eeaac8cb4ec01fd443bcc434ee57e..96f7d1f7afcc1287fa022a721bd02dbc536ef96b 100644
+--- a/client/src/components/SidePanel/Agents/Tools/items/icons.ts
++++ b/client/src/components/SidePanel/Agents/Tools/items/icons.ts
+@@ -60,6 +60,7 @@ const BUILTIN_ICONS: Record<string, ItemIcon> = {
+     Icon: MessageCircleQuestion,
+     colorClass: 'bg-series-3/15 text-series-3',
+   },
++  create_task_callback: { Icon: Layers, colorClass: 'bg-series-7/15 text-series-7' },
+ };
+ 
+ const KIND_FALLBACK_ICONS: Record<AgentItem['kind'], ItemIcon> = {
+diff --git a/client/src/components/SidePanel/Agents/Tools/items/mutations.ts b/client/src/components/SidePanel/Agents/Tools/items/mutations.ts
+index f7debe7dc4dc98aa0c24923c5230d7d47a020b0b..ae8386bc9a953032fb0f32d341a585f2868c8641 100644
+--- a/client/src/components/SidePanel/Agents/Tools/items/mutations.ts
++++ b/client/src/components/SidePanel/Agents/Tools/items/mutations.ts
+@@ -22,7 +22,7 @@ function builtinTogglePatch(id: string, selected: boolean): TogglePatch {
+   if (id === 'handoffs') {
+     return selected ? { type: 'handoffs-remove' } : { type: 'configure' };
+   }
+-  if (id === 'ask_user_question') {
++  if (id === 'ask_user_question' || id === 'create_task_callback') {
+     // Native tool presented as a builtin — it has no capability field; the
+     // toggle edits agent.tools exactly like a plugin.
+     return selected ? { type: 'tool-remove', id } : { type: 'tool-add', id };
+diff --git a/client/src/components/SidePanel/Agents/Tools/items/selectors.ts b/client/src/components/SidePanel/Agents/Tools/items/selectors.ts
+index 2735f490c96e4d6c4d33d63253a0529bab1ef1b3..d8cfc152f6971229ee52eb789d31db9da05885e1 100644
+--- a/client/src/components/SidePanel/Agents/Tools/items/selectors.ts
++++ b/client/src/components/SidePanel/Agents/Tools/items/selectors.ts
+@@ -60,6 +60,8 @@ function isBuiltinSelected(item: AgentItem, form: FormSelection): boolean {
+     case 'ask_user_question':
+       // Native tool presented as a builtin — selection lives in agent.tools.
+       return form.tools.includes('ask_user_question');
++    case 'create_task_callback':
++      return form.tools.includes('create_task_callback');
+     default:
+       return false;
+   }
+diff --git a/client/src/components/SidePanel/Agents/Tools/items/types.ts b/client/src/components/SidePanel/Agents/Tools/items/types.ts
+index 43e0f1872cd3cf4dc5c3e70727c9e78d7ea3915b..42b40bf7ad5c700e64a3ade13753606b398c7f86 100644
+--- a/client/src/components/SidePanel/Agents/Tools/items/types.ts
++++ b/client/src/components/SidePanel/Agents/Tools/items/types.ts
+@@ -22,6 +22,7 @@ export type BuiltinId =
+    * in `selectors.ts` / `mutations.ts`.
+    */
+   | 'ask_user_question'
++  | 'create_task_callback'
+   | `${AgentCapabilities.subagents}`
+   | 'handoffs';
+ 
+diff --git a/client/src/hooks/Messages/useCopyToClipboard.ts b/client/src/hooks/Messages/useCopyToClipboard.ts
+index 4353d4048caed7f426fc1235cefb0c0068c7493f..a6c0dec45ad9e60fbb972cfe8bd8b5cd6e7ba703 100644
+--- a/client/src/hooks/Messages/useCopyToClipboard.ts
++++ b/client/src/hooks/Messages/useCopyToClipboard.ts
+@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
+ import copy from 'copy-to-clipboard';
+ import { useRecoilValue } from 'recoil';
+ import { parseWakeupMessage } from '@librechat/chat';
+-import { ContentTypes, SearchResultData } from 'librechat-data-provider';
++import { ContentTypes, SearchResultData, redactTaskCallbackIds } from 'librechat-data-provider';
+ import type { TMessage, TMessageContentParts } from 'librechat-data-provider';
+ import type { MarkdownVariant, RichTextMode } from '~/utils/richtext';
+ import {
+@@ -54,13 +54,13 @@ function getPartText(part: TMessageContentParts): string {
+ 
+ function getMessageParts({ text, content }: Partial<Pick<TMessage, 'text' | 'content'>>): string[] {
+   if (!Array.isArray(content) || content.length === 0) {
+-    const messageText = text ?? '';
++    const messageText = redactTaskCallbackIds(text ?? '');
+     return messageText.length > 0 ? [messageText] : [];
+   }
+ 
+   const parts: string[] = [];
+   for (const part of content) {
+-    const partText = getPartText(part);
++    const partText = redactTaskCallbackIds(getPartText(part));
+     if (partText.length > 0) {
+       parts.push(partText);
+     }
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 587b1f3f310e060d6289f38c8aecbac71bf27fea..0a0714d143930539c8922683e1affa066c89a71c 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -1,4 +1,6 @@
+ {
++  "com_ui_task_callback": "External Task Callback",
++  "com_agents_task_callback_info": "Resume this conversation automatically when an external executor delivers its task result.",
+   "com_ui_pr_account_checking": "Checking connection",
+   "com_ui_pr_account_connect": "Connect",
+   "com_ui_pr_account_connect_aria": "Connect {{0}}",
+diff --git a/docs/task-callbacks.md b/docs/task-callbacks.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..2083adbccf278873a4a37d7c59e8bd27e8e7d519
+--- /dev/null
++++ b/docs/task-callbacks.md
+@@ -0,0 +1,270 @@
++# External task callbacks
++
++## Current maintenance status (2026-11-11)
++
++**Keep while the feature is enabled.** Upstream's trigger queue is shared
++infrastructure, not a replacement for external terminal registration and
++original-conversation continuation. Keep direct registration, authorization,
++idempotency, child-context rejection, expiry and cleanup together. PTC access also
++requires SDK invocation identity, explicit tool opt-in, trusted host context and
++tracing redaction; an SDK marker alone grants no authority. The shared index retry
++helper is already upstream and needs no duplicate implementation; retain necessary
++callback call sites. See the [patch status record](https://github.com/Ricky-Hao/LibreChat/blob/patches/docs/status.md)
++for the reviewed bases and next-sync decisions. This status update is source review,
++not new callback, publication or deployment verification.
++
++## Tool contract
++
++`create_task_callback` is a built-in Agent tool for an executor that works outside
++LibreChat. It registers one terminal result in the current ordinary Agent
++conversation. It does not spawn a child Agent, accept routing arguments, or stop
++the current generation.
++
++Enable `task_callbacks` in `endpoints.agents.capabilities`, configure the feature,
++and attach **External Task Callback** from the Agent builder's built-in tools.
++The tool remains an `agent.tools` entry named `create_task_callback`. It is
++Agents-only and requires no Workspace/Remote Agents API key. Existing child
++bindings, fire/steer events, and ordinary background tools keep their contracts.
++
++```yaml
++endpoints:
++  agents:
++    # Preserve the other capabilities your deployment needs.
++    capabilities: [tools, task_callbacks]
++    taskCallbacks:
++      enabled: true
++      publicUrl: https://chat.example/api/agents/task-callbacks
++```
++
++The feature defaults **off**, and its capability is not added to the default
++capability list. `publicUrl` must be the exact webhook endpoint, use HTTPS
++(loopback HTTP is accepted for fixtures), and contain no credentials, query, or
++fragment. It is an administrator-owned setting, never a model argument.
++
++The empty-input tool captures the authenticated owner/tenant, resolved Agent,
++runtime conversation, assistant message anchor, and tool-call identity. It returns
++`callback_id`, `callback_url`, `expires_at`, `max_output_bytes`, and guidance:
++submit the task, confirm acceptance, then give a brief final response if no
++independent work remains. Do not poll. Registration alone does not end the turn;
++a terminal callback starts a later generation in the original conversation.
++
++### Programmatic tool calling
++
++已有 `agent.tools` 绑定的 `create_task_callback` 可以通过现有 Agent
++`tool_options` 明确启用 PTC。默认仍为 direct；其他 native 工具不因此开放。
++例如 Agent 配置中的字段为：
++
++```json
++{
++  "tools": ["execute_code", "create_task_callback"],
++  "tool_options": {
++    "create_task_callback": { "allowed_callers": ["direct", "code_execution"] }
++  }
++}
++```
++
++保留 Agent 其他 tools/options。部署还必须允许 `programmatic_tools`、
++`execute_code` 和 `task_callbacks`，并启用 `taskCallbacks.enabled`。
++现有代码执行权限、实际工具绑定、工具可用名单及运行时 caller projection
++仍适用。仅设置 `tool_options` 不会创建工具绑定，也不会开放 PTC。
++callback 即使只配置 `code_execution`，仍保留 direct 调用。
++
++host 在外层 PTC 开始时复制当前 turn 的 conversation/assistant anchor；
++owner、tenant 和 Agent 仍来自原请求及实际加载的工具。SDK 用不可序列化的
++`PROGRAMMATIC_TOOL_CALL_ID` 传递 bridge 内层调用身份。注册身份同时包含外层
++tool call 和内层 call ID；同一内层调用重放或同一外层调用重试会复用注册。
++不同内层调用、外层调用、turn、会话、Agent 或 owner/tenant 互相隔离。
++代码参数不能提供或覆盖这些锚点；缺少可信身份时返回 `CALLBACK_UNAVAILABLE`。
++子执行仍返回 `CALLBACK_UNSUPPORTED_CONTEXT`，不继承父会话锚点。
++
++PTC 的完整 registration 只作为内部工具结果传回执行器内存。不要打印它。
++在同一次调用中，将整个 registration 序列化为 JSON，以 UTF-8 编码，再进行
++一次 Base64 编码，然后交给已授权、已绑定的专用私密文件工具。不要只编码
++`callback_id`，也不要二次编码。执行源码只能引用返回值变量，不能内嵌 bearer；
++不要把结果写入普通执行文件、prompt、日志或用户消息。Base64 不是加密。
++
++callback 可用的 PTC 调用会关闭所有内层参数和错误预览，以及内层 LangChain
++工具 observations；后续工具也可能收到原始或编码后的 registration。
++普通进度 trace 仍可显示工具名称、状态和耗时。该路径的抛出错误统一返回
++`PTC_TOOL_FAILED`，不携带原始错误或秘密。注册不会证明外部任务已接受、启动或结束；
++应在专用文件交接和任务提交成功后确认 executor 接受。
++
++### 子 Agent 上下文限制
++
++此工具只支持普通 Agent 会话。SDK 子执行会继承父执行的 `requestBody`；
++其中的 conversation 和 assistant anchor 不是子线程的续聊地址。
++注册边界检查 SDK 或 host 执行边界写入的 `metadata.executionContext`，
++并复用请求已解析的 `resolvedConversation.subagentThread`。不新增数据库读取。
++
++子执行或持久子线程调用工具时，工具返回 `CALLBACK_UNSUPPORTED_CONTEXT`
++和固定的限制说明。它不返回 `callback_id`，也不写注册记录。
++这同样适用于同 Agent 自派生、独立 Agent、前台或后台子执行及子 Agent 团队。
++子 Agent 应向父 Agent 报告限制；此错误不会把任务改绑到父会话。
++普通 callback 不能替代子线程的执行租约或 Event Actor binding 授权。
++现有父 Agent 发起的子线程 continuation 契约不变。
++
++The model intentionally receives the random 256-bit `tcb_…` bearer and forwards
++it to the executor through Coder as private callback input. Do not place it in
++the executor's OpenCode prompt, argv, environment, URLs, status, logs, or normal
++user prose. This is not an opaque secret-injection service. The module adapter
++accepts the registration JSON on stdin or from a private file. Deliberate tool
++traffic and the model's retained tool context necessarily carry the registration;
++treat conversation and checkpoint access as sensitive. Application logs redact
++the bearer prefix, callback tool output is excluded from Langfuse observations,
++and Markdown/message copying masks callback IDs, including partial streamed IDs.
++Never use a resolved tool-traffic dump as a diagnostic credential check.
++
++## Terminal protocol
++
++`POST /api/agents/task-callbacks`, `Content-Type: application/json`:
++
++```json
++{
++  "version": 1,
++  "callback_id": "<private callback_id from the tool>",
++  "status": "success",
++  "output": "Bounded final assistant output"
++}
++```
++
++`status` is exactly `success`, `error`, or `cancelled`. All other properties are
++rejected, including `input`, `prompt`, `target`, `mode`, and metadata. There is no
++Authorization header, callback status URL, producer heartbeat, or task dashboard.
++The bearer is accepted only in the JSON body. Output is bounded by UTF-8 bytes,
++not just JavaScript character count. Callback IDs echoed into result data are
++masked before persistence; the retry digest still covers the original submission.
++
++The first terminal result atomically seals its digest, result, acceptance time,
++stable receipt ID, and pending publication flag. Only then does the route return
++`202` with `{version:1,receipt_id,accepted_at}`. The pending flag is the durable,
++recoverable queue handoff. A lost reply can be retried: identical submissions
++return the same receipt; a different status or output returns `409`. A first
++submission after expiry returns `410`, unknown/deleted callbacks return `404`,
++invalid bodies return `400`, rate limiting returns `429`, and storage outages
++return safe `503` with `Retry-After`. Sealed retries remain replayable during
++receipt retention, even after registration expiry. `202` acknowledges storage
++and recoverable delivery, not completed model inference.
++
++## Storage, recovery, and continuation
++
++[callbacks.ts](../packages/api/src/agents/callbacks.ts) owns the tool, ingress,
++outbox publisher, and continuation resolver.
++[callbackDefinition.ts](../packages/api/src/agents/callbackDefinition.ts) supplies
++the dependency-free built-in catalog schema and delivery guidance.
++[taskCallback.ts](../packages/data-schemas/src/methods/taskCallback.ts) owns the
++Mongo model and database operations. The callback collection stores a SHA-256
++bearer hash and encrypted registration replay value, with unique registration
++and receipt indexes. Replaying the same trusted tool-call identity returns the
++same bearer; it does not mint another task. Encryption uses the deployment's
++existing credentials encryption adapter/key. Do not rotate it without the usual
++retained-data key plan.
++
++启用 callback 后，索引初始化通过
++[`createIndexesWithRetry`](../packages/data-schemas/src/utils/retry.ts)
++等待 Mongoose 自动构建结束，再显式创建 schema 声明的全部索引。
++该 helper 会等待 DocumentDB 同集合的并发索引构建，并对暂时性错误退避重试，
++避免副本并发初始化使唯一性或 TTL 索引缺失。
++非暂时性错误或重试耗尽仍向调用方抛出，不将索引缺失当作初始化成功。
++
++Every replica periodically scans pending publications, and local acceptance wakes
++the scanner. Publication uses a stable delivery identity and the existing Mongo
++trigger queue. A crash before publication or after publication but before saving
++its receipt is repaired by replaying that identity. Envelopes contain only an
++opaque receipt ID, owner/tenant and original target; they contain no bearer or
++terminal output. `task_callback_v1` capability fencing prevents an older worker
++from interpreting this source. No external producer lease is required.
++
++Before dispatch, the resolver reads the durable result and validates expiry,
++owner-scoped conversation, exact tenant/Agent, retention, and original assistant
++anchor. Running, approval-paused, or terminal-persistence-pending generations
++defer without consuming attempts. This also handles a callback arriving before
++the parent conversation/message is saved. Once settled, only a single complete
++path below the original anchor may advance the branch. Forks, cycles, missing
++rows, expired rows, a dangling user turn, and a history scan exceeding its bound
++fail closed. An unrelated globally newest message is never selected.
++
++The selected parent is durably frozen before transport. Lost admission replies
++retry that parent and the queue's stable client request ID. Each retry still
++validates anchor lineage and retention. The existing host's `settleOnAdmission`
++hook saves a durable source admission marker before the delivery queue completes;
++recovery of a lost queue finalization then settles without another generation.
++The ordinary authenticated Agent chat
++admission path revalidates the live user, tenant, role and Agent ACL and prevents
++replacement of a busy parent. Its existing durable generation claim deduplicates
++ambiguous retries. No public child binding or fire route is involved.
++As with other internal continuations, recovery of an in-flight generation's lost
++transport reply depends on the configured generation store; use Redis for
++restart/replica recovery. Mongo independently retains terminal callbacks, source
++admission markers, and queue state. These receipts do not establish exactly-once
++model execution after loss of a volatile generation store.
++
++Conversation deletion and committed account deletion purge private callback
++records through the existing deletion hooks. A deleted record settles its queued
++wakeup without generating. If the conversation disappears between checks, the
++ordinary chat admission guard still rejects the missing parent. Dead deliveries
++remain available to the existing trusted trigger maintenance API; there is no
++new public requeue surface.
++
++## Configuration and limits
++
++All fields are under `endpoints.agents.taskCallbacks` in
++[taskCallbacks.ts](../packages/data-provider/src/taskCallbacks.ts).
++
++| Field                | Default   | Bounds / meaning                                        |
++| -------------------- | --------- | ------------------------------------------------------- |
++| `enabled`            | `false`   | Ingress and continuation feature gate                   |
++| `publicUrl`          | Unset     | Exact public callback endpoint                          |
++| `ttlMs`              | 86400000  | 60000–604800000; result must be delivered before expiry |
++| `receiptRetentionMs` | 604800000 | 86400000–7776000000 after registration expiry           |
++| `maxOutputBytes`     | 32768     | 1–32768 UTF-8 bytes; returned to the adapter            |
++| `requestsPerMinute`  | 60        | 1–10000 per source IP per replica                       |
++| `recoveryIntervalMs` | 30000     | 1000–300000; durable outbox scan cadence                |
++| `recoveryBatchSize`  | 25        | 1–1000 per scan                                         |
++| `branchMessageLimit` | 2000      | 10–10000; larger histories fail closed                  |
++
++The ingress rate limiter uses the app's proxy/IP trust configuration and an
++in-process store. Replicas each enforce the configured budget; an ingress gateway
++may additionally enforce a fleet-wide limit. Mongo TTL is cleanup, not admission
++authorization: explicit time checks apply even before the TTL monitor deletes a row.
++
++## Verification and rollout
++
++Run the owning fixtures without paid model calls:
++
++```sh
++# From packages/api; no companion checkout or paid model calls are needed.
++npx jest src/agents/callbacks.integration.spec.ts --runInBand
++# Real pinned SDK PTC bridge, synthetic registration DB, local Code API/file fixtures.
++npx jest src/agents/callbacks.ptc.spec.ts src/agents/ptc.spec.ts src/tools/definitions.spec.ts --runInBand
++# From packages/data-provider
++npx jest src/taskCallbacks.spec.ts --runInBand
++# From packages/data-schemas; index-build compatibility and retry behavior.
++npx jest src/methods/documentdb.spec.ts src/utils/retry.spec.ts --runInBand
++```
++
++The integration fixture exercises the actual tool, HTTP handler, Mongo callback
++and trigger records, continuation resolver and host admission transport. It
++covers concurrent duplicates/conflict, lost receipts, fast/busy/approval parents,
++branch isolation, deletion/retention/expiry, bounded bodies and crash recovery.
++它还使用真实 SDK 的 `SubagentExecutor`、`ToolNode` 和本地模型 fixture，
++验证前台、后台及 event-driven 子执行在注册前被拒绝；
++后台用例通过真实 `SubagentThreadTaskStore` 保存子线程并结算任务。
++相同 tool-call ID 在普通会话的不同 turn、分支及 Agent 之间保持隔离。
++PTC fixture 使用实际 vendored SDK 和 host 工厂；仅 Code API HTTP 对端与专用
++文件工具为本地 fixture。它验证完整 registration 的内存交接、一次编码、
++重放与隔离、锚点伪造拒绝、子上下文拒绝，以及错误和普通 trace 的秘密保护。
++它不执行部署端 sandbox，不注册生产 callback，也不发送真实终态回调。
++
++Set `CODER_MODULES_CHECKOUT` only for the optional cross-repository fixture.
++The companion module's actual `TaskRunner` then posts into that handler. Its model and
++the host's inference response are local fixtures; a mocked `403` verifies the
++queue's ACL-denial handling, while existing chat admission suites cover the live
++authorization middleware. This is source/local validation, not deployment evidence.
++
++Deploy reviewed matching server/client packages and the module bundle, ensure
++Mongo indexes and existing credentials encryption are healthy, configure the
++public HTTPS endpoint and capability, use Redis generation storage for in-flight
++restart/replica recovery, then attach the built-in to the intended
++Agent. Use a callback-capable fleet before enabling producers; do not downgrade
++while its pending callback deliveries remain. Live Agent/Skill configuration,
++publication, deployments and production webhooks are separate operator actions.
+diff --git a/librechat.example.yaml b/librechat.example.yaml
+index 832dedec57ff781dd4a21ffbb22d0b6c300ce5db..e325df6adc0c44a0b2ba080d02de318cd8112e9a 100644
+--- a/librechat.example.yaml
++++ b/librechat.example.yaml
+@@ -1015,6 +1015,19 @@ endpoints:
+   #   # uses its own bound listener; override only for an internal TLS/front-door route.
+   #   eventDriven:
+   #     # selfUrl: 'https://librechat.internal'
++  #   # External executor results can resume the original Agent conversation.
++  #   # Also opt in to "task_callbacks" in capabilities and attach create_task_callback.
++  #   # See docs/task-callbacks.md. The callback ID goes only in the POST body.
++  #   taskCallbacks:
++  #     enabled: false
++  #     publicUrl: 'https://chat.example/api/agents/task-callbacks'
++  #     ttlMs: 86400000
++  #     receiptRetentionMs: 604800000
++  #     maxOutputBytes: 32768
++  #     requestsPerMinute: 60
++  #     recoveryIntervalMs: 30000
++  #     recoveryBatchSize: 25
++  #     branchMessageLimit: 2000
+   #   # (optional) Automatic conversational delivery for supported completed background tasks.
+   #   # Enabled by default; set false to keep background tools and subagents poll-only.
+   #   backgroundTasks:
+diff --git a/packages/api/src/agents/callbackDefinition.ts b/packages/api/src/agents/callbackDefinition.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c711a0481738748f4ad25f94667d39655121a838
+--- /dev/null
++++ b/packages/api/src/agents/callbackDefinition.ts
+@@ -0,0 +1,18 @@
++export const TASK_CALLBACK_SOURCE = 'external-task-callback';
++export const TASK_CALLBACK_TOOL = 'create_task_callback';
++export const TASK_CALLBACK_UNSUPPORTED_CONTEXT: string = JSON.stringify({
++  error: 'CALLBACK_UNSUPPORTED_CONTEXT',
++  guidance:
++    'External task callbacks cannot resume child Agent executions. No callback was registered. Report this limitation to the parent Agent.',
++});
++export const TASK_CALLBACK_GUIDANCE =
++  'Submit the external task with this callback, confirm the executor accepted it, then if no independent work remains output a brief final response. Registration alone does not end generation. Do not poll. A terminal callback automatically starts a subsequent generation in this conversation. Keep the callback_id out of normal user prose, logs, URLs, and prompts to the executor; forward it only as private callback input.';
++export const TaskCallbackToolDefinition: {
++  name: string;
++  description: string;
++  schema: { type: 'object'; properties: Record<string, never>; additionalProperties: false };
++} = {
++  name: TASK_CALLBACK_TOOL,
++  description: `Register one terminal external-task callback bound to this ordinary conversation and Agent. Not supported in child Agent executions or subagent threads. ${TASK_CALLBACK_GUIDANCE}`,
++  schema: { type: 'object', properties: {}, additionalProperties: false },
++};
+diff --git a/packages/api/src/agents/callbacks.integration.spec.ts b/packages/api/src/agents/callbacks.integration.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fc18eef17d443e4cacab0ec6fdd83ba16445f3fb
+--- /dev/null
++++ b/packages/api/src/agents/callbacks.integration.spec.ts
+@@ -0,0 +1,782 @@
++import express from 'express';
++import request from 'supertest';
++import mongoose from 'mongoose';
++import { existsSync } from 'node:fs';
++import { spawn } from 'node:child_process';
++import { MongoMemoryServer } from 'mongodb-memory-server';
++import { AgentCapabilities } from 'librechat-data-provider';
++import { AIMessage } from '@librechat/agents/langchain/messages';
++import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
++import { createModels, createMethods, runAsSystem } from '@librechat/data-schemas';
++import {
++  FakeChatModel,
++  GraphEvents,
++  HandlerRegistry,
++  Providers,
++  StandardGraph,
++  SubagentExecutor,
++  ToolNode,
++} from '@librechat/agents';
++import type { TaskCallbackRecord } from '@librechat/data-schemas';
++import type { Server } from 'node:http';
++import type { AgentTriggerService, AgentTriggerDeliveryPersistence } from './triggers/service';
++import type { TaskCallbackLifecycle } from './callbacks';
++import type { ServerRequest } from '~/types';
++import {
++  createTaskCallbackTool,
++  createTaskCallbackLifecycle,
++  TASK_CALLBACK_SOURCE,
++  TASK_CALLBACK_TOOL,
++} from './callbacks';
++import { buildSubagentThreadTaskConfig, createSubagentThreadTaskStore } from './subagentThreads';
++import { createAgentContinuationResolver } from './triggers/continuation';
++import { createAgentTriggerExecutionHost } from './triggers/host';
++import { createAgentTriggerService } from './triggers/service';
++import { __resetShutdownStateForTests } from '../app/shutdown';
++import { createToolExecuteHandler } from './handlers';
++
++let mongo: MongoMemoryServer;
++let service: AgentTriggerService;
++let callbacks: TaskCallbackLifecycle;
++let methods: ReturnType<typeof createMethods>;
++let server: Server | undefined;
++const user = new mongoose.Types.ObjectId().toString();
++const settings = { enabled: true, publicUrl: 'http://127.0.0.1:3080/api/agents/task-callbacks' };
++let fetcher: jest.Mock;
++let job: { status: string; metadata?: { idempotencyClientRequestId?: string } } | null;
++const fixtureKey = randomBytes(32);
++async function encrypt(value: string): Promise<string> {
++  const iv = randomBytes(12);
++  const cipher = createCipheriv('aes-256-gcm', fixtureKey, iv);
++  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
++  return [iv, cipher.getAuthTag(), encrypted].map((v) => v.toString('hex')).join(':');
++}
++async function decrypt(value: string): Promise<string> {
++  const [iv, tag, encrypted] = value.split(':').map((v) => Buffer.from(v, 'hex'));
++  const decipher = createDecipheriv('aes-256-gcm', fixtureKey, iv);
++  decipher.setAuthTag(tag);
++  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
++}
++
++beforeAll(async () => {
++  mongo = await MongoMemoryServer.create();
++  await mongoose.connect(mongo.getUri(), { autoIndex: false });
++  createModels(mongoose);
++}, 60000);
++
++beforeEach(async () => {
++  methods = createMethods(mongoose);
++  job = null;
++  fetcher = jest.fn(async (_url, init) => {
++    const body = JSON.parse(init.body);
++    return new Response(
++      JSON.stringify({
++        status: 'started',
++        streamId: body.conversationId,
++        conversationId: body.conversationId,
++        generationCreatedAt: 25,
++      }),
++      { status: 200 },
++    );
++  });
++  callbacks = createTaskCallbackLifecycle({
++    methods,
++    getConfig: async () => ({ endpoints: { agents: { taskCallbacks: settings } } }),
++    getGenerationJob: async () => job,
++    enqueue: (...args) => service.enqueue(...args),
++  });
++  service = createAgentTriggerService({
++    methods: methods as typeof methods & AgentTriggerDeliveryPersistence,
++    fetch: fetcher,
++    mintToken: () => 'fixture-internal-trigger-token',
++    isPrincipalActive: async () => true,
++    prepareContinue: createAgentContinuationResolver({
++      eventActor: async () => undefined,
++      internalSources: new Map([[TASK_CALLBACK_SOURCE, callbacks.prepareContinue]]),
++    }),
++    deliveryOptions: { concurrency: 2, tickMs: 5, retryBaseMs: 5 },
++  });
++  await service.initialize({ address: { address: '127.0.0.1', family: 'IPv4', port: 3080 } });
++  await callbacks.initialize();
++  await mongoose.models.Conversation.create({
++    user,
++    conversationId: 'original',
++    agent_id: 'agent-1',
++    endpoint: 'agents',
++  });
++  await message('anchor', 'user-turn');
++});
++
++afterEach(async () => {
++  await callbacks.stop();
++  await service.stop();
++  await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
++  server = undefined;
++  __resetShutdownStateForTests();
++  await Promise.all(
++    [
++      'TaskCallback',
++      'Conversation',
++      'Message',
++      'AgentTriggerDelivery',
++      'AgentTriggerLaneSequence',
++      'AgentTriggerUserPurge',
++    ].map((name) => mongoose.models[name].deleteMany({})),
++  );
++});
++
++afterAll(async () => {
++  await mongoose.disconnect();
++  await mongo.stop();
++}, 60000);
++
++async function message(id: string, parent: string, extra = {}) {
++  await mongoose.models.Message.create({
++    user,
++    conversationId: 'original',
++    messageId: id,
++    parentMessageId: parent,
++    isCreatedByUser: false,
++    text: '',
++    ...extra,
++  });
++}
++function callbackTool(
++  agentId = 'agent-1',
++  resolvedConversation?: ServerRequest['resolvedConversation'],
++) {
++  return createTaskCallbackTool({
++    agentId,
++    methods,
++    encrypt,
++    decrypt,
++    req: {
++      user: { id: user },
++      resolvedConversation,
++      config: {
++        endpoints: {
++          agents: { taskCallbacks: settings, capabilities: [AgentCapabilities.task_callbacks] },
++        },
++      },
++    } as Pick<ServerRequest, 'user' | 'config' | 'resolvedConversation'>,
++  });
++}
++async function registration({
++  agentId = 'agent-1',
++  conversationId = 'original',
++  messageId = 'anchor',
++} = {}) {
++  const tool = callbackTool(agentId);
++  const result = await tool.invoke(
++    { type: 'tool_call', name: 'create_task_callback', id: 'call-1', args: {} },
++    { configurable: { requestBody: { messageId, conversationId } } },
++  );
++  const value = JSON.parse(typeof result === 'string' ? result : (result.content as string));
++  expect(value.callback_id).toMatch(/^tcb_[A-Za-z0-9_-]{43}$/);
++  return { tool, value };
++}
++
++async function childRegistration(
++  agentId: string,
++  { eventDriven = false, background = false } = {},
++) {
++  const tool = callbackTool(agentId);
++  const invoke = jest.spyOn(tool, 'invoke');
++  const registry = new HandlerRegistry();
++  registry.register(
++    GraphEvents.ON_TOOL_EXECUTE,
++    createToolExecuteHandler({ loadTools: async () => ({ loadedTools: [tool] }) }),
++  );
++  const store = background ? createSubagentThreadTaskStore(methods) : undefined;
++  const taskConfig = store
++    ? buildSubagentThreadTaskConfig(store, { userId: user, parentConversationId: 'original' })
++    : undefined;
++  const executor = new SubagentExecutor({
++    parentRunId: 'anchor',
++    parentAgentId: 'agent-1',
++    parentHandlerRegistry: registry,
++    taskConfig,
++    configs: new Map([
++      [
++        agentId,
++        {
++          type: agentId,
++          name: 'Callback fixture child',
++          description: 'Register a callback from an isolated child execution.',
++          maxTurns: 2,
++          agentInputs: {
++            agentId,
++            provider: Providers.OPENAI,
++            clientOptions: {
++              model: 'gpt-4o-mini',
++              apiKey: 'fixture-key',
++              streaming: true,
++              streamUsage: false,
++            },
++            tools: eventDriven ? [] : [tool],
++            ...(eventDriven
++              ? {
++                  toolDefinitions: [
++                    { name: TASK_CALLBACK_TOOL, parameters: { type: 'object', properties: {} } },
++                  ],
++                }
++              : {}),
++          },
++        },
++      ],
++    ]),
++    tokenCounter: (text) => String(text ?? '').length,
++    createChildGraph: (input) => {
++      const graph = new StandardGraph(input);
++      graph.overrideModel = new FakeChatModel({
++        responses: ['Callback fixture.'],
++        toolCalls: [{ name: TASK_CALLBACK_TOOL, args: {}, id: 'call-1', type: 'tool_call' }],
++      });
++      return graph;
++    },
++  });
++  const params = {
++    description: 'Register an external task callback.',
++    subagentType: agentId,
++    parentToolCallId: 'spawn-call',
++    threadId: 'original',
++    parentConfigurable: {
++      thread_id: 'original',
++      user_id: user,
++      requestBody: { messageId: 'anchor', conversationId: 'original' },
++    },
++  };
++  try {
++    if (store && taskConfig) {
++      const handle: { background_task_id: string; subagent_thread_id: string } = JSON.parse(
++        executor.executeInBackground(params),
++      );
++      await eventually(
++        async () =>
++          store.get(taskConfig.scopeId, handle.background_task_id)?.status === 'completed',
++      );
++      const conversation = await methods.getConvo(user, handle.subagent_thread_id);
++      expect(conversation?.subagentThread?.parentConversationId).toBe('original');
++      expect(conversation?.agent_id).toBe(agentId);
++    } else {
++      const result = await executor.execute(params);
++      expect(result.error).toBeUndefined();
++    }
++    expect(invoke).toHaveBeenCalledTimes(1);
++    const result: Awaited<ReturnType<typeof tool.invoke>> = await invoke.mock.results[0].value;
++    const output = typeof result === 'string' ? result : result.content;
++    if (typeof output !== 'string') throw new Error('Missing callback fixture tool output');
++    return { value: JSON.parse(output), config: invoke.mock.calls[0][1] };
++  } finally {
++    await store?.destroyTaskControlTransport();
++    store?.destroyActivityStream();
++  }
++}
++function app() {
++  const api = express();
++  api.use(express.json({ limit: '256kb' }));
++  api.post('/api/agents/task-callbacks', callbacks.handler);
++  return api;
++}
++async function eventually(predicate: () => Promise<boolean>) {
++  const deadline = Date.now() + 6000;
++  while (!(await predicate())) {
++    if (Date.now() > deadline) throw new Error('Callback fixture timed out');
++    await new Promise((resolve) => setTimeout(resolve, 10));
++  }
++}
++const body = (id: string) => ({
++  version: 1,
++  callback_id: id,
++  status: 'success',
++  output: 'External result',
++});
++
++it('real tool has no routing inputs, encrypts replay, and binds trusted Agent/turn context', async () => {
++  const { tool, value } = await registration();
++  const { value: replay } = await registration();
++  expect(replay).toEqual(value);
++  expect(value.guidance).toContain('Registration alone does not end generation');
++  const stored = await mongoose.models.TaskCallback.findOne()
++    .select('+encryptedId')
++    .lean<TaskCallbackRecord>();
++  expect(stored?.user).toBe(user);
++  expect(stored?.messageId).toBe('anchor');
++  expect(JSON.stringify(stored)).not.toContain(value.callback_id);
++  await expect(tool.invoke({ target: 'other' })).rejects.toThrow();
++});
++
++it.each([
++  { agentId: 'agent-1', eventDriven: false, background: false },
++  { agentId: 'agent-2', eventDriven: false, background: false },
++  { agentId: 'agent-1', eventDriven: true, background: false },
++  { agentId: 'agent-2', eventDriven: true, background: false },
++  { agentId: 'agent-1', eventDriven: false, background: true },
++  { agentId: 'agent-2', eventDriven: true, background: true },
++])(
++  'rejects SDK child $agentId (event-driven: $eventDriven, detached: $background)',
++  async ({ agentId, eventDriven, background }) => {
++    const register = jest.spyOn(methods, 'registerTaskCallback');
++    const { value, config } = await childRegistration(agentId, { eventDriven, background });
++    expect(config?.metadata?.executionContext).toMatchObject({ depth: 1 });
++    expect(config?.configurable?.requestBody).toMatchObject({
++      conversationId: 'original',
++      messageId: 'anchor',
++    });
++    expect(value.error).toBe('CALLBACK_UNSUPPORTED_CONTEXT');
++    expect(value.callback_id).toBeUndefined();
++    expect(value.guidance).toContain('cannot resume child Agent executions');
++    expect(register).not.toHaveBeenCalled();
++    expect(await mongoose.models.TaskCallback.countDocuments()).toBe(0);
++    await callbacks.recover();
++    expect(fetcher).not.toHaveBeenCalled();
++  },
++);
++
++it('registers an ordinary SDK tool execution after SDK clears inherited child metadata', async () => {
++  const tool = callbackTool();
++  const node = new ToolNode({ tools: [tool], executingAgentId: 'agent-1' });
++  await node.invoke(
++    {
++      messages: [
++        new AIMessage({
++          content: '',
++          tool_calls: [{ id: 'call-1', name: TASK_CALLBACK_TOOL, args: {} }],
++        }),
++      ],
++    },
++    {
++      configurable: {
++        requestBody: { conversationId: 'original', messageId: 'anchor' },
++        executionContext: { depth: 1 },
++      },
++      metadata: { executionContext: { depth: 1 } },
++    },
++  );
++  expect(await mongoose.models.TaskCallback.countDocuments()).toBe(1);
++  const stored = await mongoose.models.TaskCallback.findOne().lean<TaskCallbackRecord>();
++  expect(stored).toMatchObject({
++    user,
++    agentId: 'agent-1',
++    conversationId: 'original',
++    messageId: 'anchor',
++  });
++});
++
++it.each(['original', 'child'])(
++  'rejects a resolved persistent child even when runtime conversation is %s',
++  async (conversationId) => {
++    await mongoose.models.Conversation.create({
++      user,
++      conversationId: 'child',
++      agent_id: 'agent-1',
++      endpoint: 'agents',
++      subagentThread: {
++        rootConversationId: 'original',
++        parentConversationId: 'original',
++        parentMessageId: 'anchor',
++        parentToolCallId: 'spawn-call',
++        parentAgentId: 'agent-1',
++        subagentType: 'agent-1',
++        subagentKind: 'agent',
++        depth: 1,
++      },
++    });
++    const tool = callbackTool('agent-1', await methods.getConvo(user, 'child'));
++    const result = await tool.invoke(
++      { type: 'tool_call', name: TASK_CALLBACK_TOOL, id: 'call-1', args: {} },
++      { configurable: { requestBody: { conversationId, messageId: 'anchor' } } },
++    );
++    const output = typeof result === 'string' ? result : result.content;
++    if (typeof output !== 'string') throw new Error('Missing callback fixture tool output');
++    expect(JSON.parse(output).error).toBe('CALLBACK_UNSUPPORTED_CONTEXT');
++    expect(await mongoose.models.TaskCallback.countDocuments()).toBe(0);
++    await callbacks.recover();
++    expect(fetcher).not.toHaveBeenCalled();
++  },
++);
++
++it('keeps reused tool-call IDs isolated across ordinary turns, branches, and Agents', async () => {
++  await message('alternate-anchor', 'alternate-user');
++  await mongoose.models.Conversation.create({
++    user,
++    conversationId: 'other',
++    agent_id: 'agent-2',
++    endpoint: 'agents',
++  });
++  await message('other-anchor', 'other-user', { conversationId: 'other' });
++  const contexts = [
++    { agentId: 'agent-1', conversationId: 'original', messageId: 'anchor' },
++    { agentId: 'agent-1', conversationId: 'original', messageId: 'alternate-anchor' },
++    { agentId: 'agent-2', conversationId: 'other', messageId: 'other-anchor' },
++  ];
++  const registrations = await Promise.all(contexts.map((context) => registration(context)));
++  expect(new Set(registrations.map(({ value }) => value.callback_id)).size).toBe(3);
++  const replays = await Promise.all(contexts.map((context) => registration(context)));
++  expect(replays.map(({ value }) => value.callback_id)).toEqual(
++    registrations.map(({ value }) => value.callback_id),
++  );
++  expect(await mongoose.models.TaskCallback.countDocuments()).toBe(3);
++  const responses = await Promise.all(
++    registrations.map(({ value }) =>
++      request(app()).post('/api/agents/task-callbacks').send(body(value.callback_id)),
++    ),
++  );
++  expect(responses.map((response) => response.status)).toEqual([202, 202, 202]);
++  await callbacks.recover();
++  await eventually(async () => fetcher.mock.calls.length === 3);
++  const targets = fetcher.mock.calls.map((call) => {
++    const sent = JSON.parse(call[1].body);
++    return {
++      agentId: sent.agent_id,
++      conversationId: sent.conversationId,
++      messageId: sent.parentMessageId,
++    };
++  });
++  expect(targets).toEqual(expect.arrayContaining(contexts));
++});
++
++it('concurrent duplicates and lost receipt return one durable 202; conflict cannot replace result', async () => {
++  const { value } = await registration();
++  const api = app();
++  const responses = await Promise.all(
++    Array.from({ length: 8 }, () =>
++      request(api).post('/api/agents/task-callbacks').send(body(value.callback_id)),
++    ),
++  );
++  expect(responses.map((r) => r.status)).toEqual(Array(8).fill(202));
++  expect(new Set(responses.map((r) => JSON.stringify(r.body))).size).toBe(1);
++  const replay = await request(api)
++    .post('/api/agents/task-callbacks')
++    .send(body(value.callback_id));
++  expect(replay.body).toEqual(responses[0].body);
++  expect(
++    (
++      await request(api)
++        .post('/api/agents/task-callbacks')
++        .send({ ...body(value.callback_id), output: 'changed' })
++    ).status,
++  ).toBe(409);
++  await eventually(async () => fetcher.mock.calls.length === 1);
++  const deliveries = await mongoose.models.AgentTriggerDelivery.find().lean();
++  expect(deliveries).toHaveLength(1);
++  expect(deliveries[0].requiredWorkerCapability).toBe('task_callback_v1');
++  expect(JSON.stringify(deliveries)).not.toContain(value.callback_id);
++  const sent = JSON.parse(fetcher.mock.calls[0][1].body);
++  expect(sent).toMatchObject({
++    conversationId: 'original',
++    parentMessageId: 'anchor',
++    agent_id: 'agent-1',
++  });
++  expect(sent.text).toContain('External result');
++});
++
++it.each(['running', 'requires_action'])(
++  'fast callback defers a %s parent before anchor persistence',
++  async (status) => {
++    const { value } = await registration();
++    await mongoose.models.Message.deleteMany({});
++    await mongoose.models.Conversation.deleteMany({});
++    job = { status };
++    const response = await request(app())
++      .post('/api/agents/task-callbacks')
++      .send(body(value.callback_id));
++    expect(response.status).toBe(202);
++    await callbacks.recover();
++    await eventually(
++      async () => (await mongoose.models.AgentTriggerDelivery.countDocuments()) === 1,
++    );
++    await new Promise((resolve) => setTimeout(resolve, 40));
++    expect(fetcher).not.toHaveBeenCalled();
++    const delivery = await mongoose.models.AgentTriggerDelivery.findOne().lean<{
++      attempts: number;
++    }>();
++    expect(delivery?.attempts).toBe(0);
++    await mongoose.models.Conversation.create({
++      user,
++      conversationId: 'original',
++      agent_id: 'agent-1',
++      endpoint: 'agents',
++    });
++    await message('anchor', 'user-turn');
++    job = null;
++    service.expediteCompletionWakeups({ user, conversationId: 'original' });
++    await mongoose.models.AgentTriggerDelivery.updateMany(
++      {},
++      { $set: { claimAvailableAt: new Date(), availableAt: new Date() } },
++    );
++    await eventually(async () => fetcher.mock.calls.length === 1);
++  },
++);
++
++it('follows only an unambiguous descendant and ignores an unrelated newer global leaf', async () => {
++  const { value } = await registration();
++  await message('follow-user', 'anchor', { isCreatedByUser: true });
++  await message('follow-assistant', 'follow-user');
++  await message('unrelated-newest', 'unrelated-user');
++  await request(app()).post('/api/agents/task-callbacks').send(body(value.callback_id));
++  await callbacks.recover();
++  await eventually(async () => fetcher.mock.calls.length === 1);
++  expect(JSON.parse(fetcher.mock.calls[0][1].body).parentMessageId).toBe('follow-assistant');
++});
++
++it.each(['fork', 'deleted', 'retention', 'wrong-owner', 'tenant'])(
++  'refuses generation for %s target',
++  async (kind) => {
++    const { value } = await registration();
++    if (kind === 'fork') {
++      await message('fork-a', 'anchor');
++      await message('fork-b', 'anchor');
++    }
++    if (kind === 'deleted') await mongoose.models.Conversation.deleteMany({});
++    if (kind === 'retention')
++      await mongoose.models.Conversation.updateMany({}, { expiredAt: new Date(0) });
++    if (kind === 'wrong-owner')
++      await mongoose.models.Conversation.updateMany({}, { user: 'some-other-owner' });
++    if (kind === 'tenant')
++      await runAsSystem(async () =>
++        mongoose.models.Conversation.updateMany({}, { tenantId: 'other-tenant' }),
++      );
++    await request(app()).post('/api/agents/task-callbacks').send(body(value.callback_id));
++    await callbacks.recover();
++    await eventually(async () => (await service.getDeadLetters()).length === 1);
++    expect(fetcher).not.toHaveBeenCalled();
++  },
++);
++
++it('expiry, bounded output, forbidden inputs, and safe database failure responses', async () => {
++  const { value } = await registration();
++  const api = app();
++  for (const patch of [
++    { output: '✓'.repeat(12000) },
++    { input: 'arbitrary prompt' },
++    { target: 'other' },
++    { mode: 'fire' },
++    { metadata: {} },
++  ]) {
++    expect(
++      (
++        await request(api)
++          .post('/api/agents/task-callbacks')
++          .send({ ...body(value.callback_id), ...patch })
++      ).status,
++    ).toBe(400);
++  }
++  await mongoose.models.TaskCallback.updateMany({}, { callbackExpiresAt: new Date(0) });
++  expect(
++    (await request(api).post('/api/agents/task-callbacks').send(body(value.callback_id))).status,
++  ).toBe(410);
++  const broken = jest
++    .spyOn(methods, 'sealTaskCallback')
++    .mockRejectedValueOnce(new Error(value.callback_id));
++  const failed = await request(api)
++    .post('/api/agents/task-callbacks')
++    .send(body(value.callback_id));
++  expect(failed.status).toBe(503);
++  expect(JSON.stringify(failed.body)).not.toContain(value.callback_id);
++  broken.mockRestore();
++});
++
++it('recovers a sealed result after crash before queue publication and after lost queue receipt', async () => {
++  const { value } = await registration();
++  await callbacks.stop();
++  const result = await request(app())
++    .post('/api/agents/task-callbacks')
++    .send(body(value.callback_id));
++  expect(result.status).toBe(202);
++  expect(await methods.listPendingTaskCallbacks(5)).toHaveLength(1);
++  const lost = jest
++    .spyOn(methods, 'markTaskCallbackQueued')
++    .mockRejectedValueOnce(new Error('injected lost queue receipt'));
++  await callbacks.recover();
++  expect(await methods.listPendingTaskCallbacks(5)).toHaveLength(1);
++  await callbacks.recover();
++  await eventually(async () => fetcher.mock.calls.length === 1);
++  expect(await methods.listPendingTaskCallbacks(5)).toHaveLength(0);
++  expect(await mongoose.models.AgentTriggerDelivery.countDocuments()).toBe(1);
++  lost.mockRestore();
++});
++
++it('ACL denial at ordinary continuation admission dead-letters instead of starting a generation', async () => {
++  const { value } = await registration();
++  fetcher.mockImplementation(
++    async () => new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 }),
++  );
++  await request(app()).post('/api/agents/task-callbacks').send(body(value.callback_id));
++  await callbacks.recover();
++  await eventually(async () => (await service.getDeadLetters()).length === 1);
++  expect(fetcher).toHaveBeenCalledTimes(1);
++});
++
++const modulePath = process.env.CODER_MODULES_CHECKOUT;
++it('enforces configurable ingress rate limits with safe responses', async () => {
++  const { value } = await registration();
++  await callbacks.stop();
++  callbacks = createTaskCallbackLifecycle({
++    methods,
++    getConfig: async () => ({
++      endpoints: { agents: { taskCallbacks: { ...settings, requestsPerMinute: 1 } } },
++    }),
++    getGenerationJob: async () => job,
++    enqueue: (...args) => service.enqueue(...args),
++  });
++  await callbacks.initialize();
++  const api = app();
++  expect(
++    (await request(api).post('/api/agents/task-callbacks').send(body(value.callback_id))).status,
++  ).toBe(202);
++  const limited = await request(api)
++    .post('/api/agents/task-callbacks')
++    .send(body(value.callback_id));
++  expect(limited.status).toBe(429);
++  expect(JSON.stringify(limited.body)).not.toContain(value.callback_id);
++});
++
++it.each(['error', 'cancelled'])(
++  'accepts terminal %s data on the same strict protocol',
++  async (status) => {
++    const { value } = await registration();
++    const response = await request(app())
++      .post('/api/agents/task-callbacks')
++      .send({ ...body(value.callback_id), status });
++    expect(response.status).toBe(202);
++    await callbacks.recover();
++    await eventually(async () => fetcher.mock.calls.length === 1);
++    expect(JSON.parse(fetcher.mock.calls[0][1].body).text).toContain(`"status":"${status}"`);
++  },
++);
++
++it('lost generation admission reply retries the frozen parent and identical client request', async () => {
++  const { value } = await registration();
++  const respond = fetcher.getMockImplementation()!;
++  fetcher
++    .mockImplementationOnce(async () => {
++      await message('admitted-user', 'anchor', { isCreatedByUser: true });
++      await message('admitted-answer', 'admitted-user');
++      throw new Error('injected response loss after admission');
++    })
++    .mockImplementation(respond);
++  await request(app()).post('/api/agents/task-callbacks').send(body(value.callback_id));
++  await callbacks.recover();
++  await eventually(async () => fetcher.mock.calls.length === 2);
++  const submissions = fetcher.mock.calls.map((call) => JSON.parse(call[1].body));
++  expect(submissions.map((v) => v.parentMessageId)).toEqual(['anchor', 'anchor']);
++  expect(new Set(submissions.map((v) => v.clientRequestId)).size).toBe(1);
++});
++
++it('conversation deletion purges private result and bearer lookup before generation', async () => {
++  const { value } = await registration();
++  await callbacks.stop();
++  await request(app()).post('/api/agents/task-callbacks').send(body(value.callback_id));
++  await methods.deleteConvos(user, { conversationId: 'original' });
++  expect(await mongoose.models.TaskCallback.countDocuments()).toBe(0);
++  expect(
++    (await request(app()).post('/api/agents/task-callbacks').send(body(value.callback_id))).status,
++  ).toBe(404);
++  await callbacks.recover();
++  expect(fetcher).not.toHaveBeenCalled();
++});
++
++it('a durable admission marker settles recovery after a lost queue finalization', async () => {
++  const { value } = await registration();
++  const blocked = jest
++    .spyOn(methods, 'completeAgentTriggerDelivery')
++    .mockRejectedValue(new Error('injected queue finalization outage'));
++  await request(app()).post('/api/agents/task-callbacks').send(body(value.callback_id));
++  await callbacks.recover();
++  await eventually(
++    async () =>
++      (await mongoose.models.TaskCallback.countDocuments({ admittedAt: { $exists: true } })) === 1,
++  );
++  const delivery = await mongoose.models.AgentTriggerDelivery.findOne().lean<{
++    envelope: unknown;
++  }>();
++  await service.stop();
++  const restarted = createTaskCallbackLifecycle({
++    methods,
++    getConfig: async () => ({ endpoints: { agents: { taskCallbacks: settings } } }),
++    enqueue: (...args) => service.enqueue(...args),
++    getGenerationJob: async () => null,
++  });
++  await restarted.initialize();
++  try {
++    const host = createAgentTriggerExecutionHost({
++      getBaseUrl: () => 'http://127.0.0.1:3080',
++      mintToken: () => 'fixture-token',
++      prepareContinue: restarted.prepareContinue,
++      fetch: fetcher,
++    });
++    expect(await host.dispatch(delivery?.envelope)).toMatchObject({
++      mode: 'continue',
++      status: 'settled',
++    });
++    expect(fetcher).toHaveBeenCalledTimes(1);
++  } finally {
++    await restarted.stop();
++    blocked.mockRestore();
++  }
++});
++
++it('accepted result still expires before a deferred generation and replays its original receipt', async () => {
++  const { value } = await registration();
++  await callbacks.stop();
++  const accepted = await request(app())
++    .post('/api/agents/task-callbacks')
++    .send(body(value.callback_id));
++  await mongoose.models.TaskCallback.updateMany({}, { callbackExpiresAt: new Date(0) });
++  const replay = await request(app())
++    .post('/api/agents/task-callbacks')
++    .send(body(value.callback_id));
++  expect(replay.status).toBe(202);
++  expect(replay.body).toEqual(accepted.body);
++  await callbacks.recover();
++  await eventually(async () => (await service.getDeadLetters()).length === 1);
++  expect(fetcher).not.toHaveBeenCalled();
++  await mongoose.models.TaskCallback.updateMany({}, { expiresAt: new Date(0) });
++  const expiredReceipt = await request(app())
++    .post('/api/agents/task-callbacks')
++    .send(body(value.callback_id));
++  expect(expiredReceipt.status).toBe(410);
++});
++
++(modulePath && existsSync(`${modulePath}/opencode/tests/callback-fixture.mjs`)
++  ? describe
++  : describe.skip)('companion module protocol', () => {
++  it('cross-repo: actual module TaskRunner POST is accepted and continues the original conversation', async () => {
++    const { value } = await registration();
++    server = app().listen(0, '127.0.0.1');
++    await new Promise<void>((resolve) => server!.once('listening', resolve));
++    const port = (server.address() as { port: number }).port;
++    const result = await new Promise<string>((resolve, reject) => {
++      const child = spawn(process.execPath, [`${modulePath}/opencode/tests/callback-fixture.mjs`], {
++        env: { PATH: '/usr/bin:/bin' },
++        stdio: ['pipe', 'pipe', 'pipe'],
++      });
++      let output = '';
++      child.stdout.on('data', (chunk) => {
++        output += chunk;
++      });
++      child.once('error', reject);
++      child.once('exit', (code) =>
++        code === 0 ? resolve(output) : reject(new Error('Module fixture failed')),
++      );
++      child.stdin.end(
++        JSON.stringify({
++          ...value,
++          callback_url: `http://127.0.0.1:${port}/api/agents/task-callbacks`,
++        }),
++      );
++    });
++    expect(JSON.parse(result)).toMatchObject({
++      state: 'delivered',
++      executions: 1,
++      result_status: 'success',
++    });
++    expect(result).not.toContain(value.callback_id);
++    await callbacks.recover();
++    await eventually(async () => fetcher.mock.calls.length === 1);
++    expect(JSON.parse(fetcher.mock.calls[0][1].body).text).toContain(
++      'Module result accepted across repositories.',
++    );
++  }, 15000);
++});
+diff --git a/packages/api/src/agents/callbacks.ptc.spec.ts b/packages/api/src/agents/callbacks.ptc.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3853168660da9d2d19561970e5cb3ecf519cfdf2
+--- /dev/null
++++ b/packages/api/src/agents/callbacks.ptc.spec.ts
+@@ -0,0 +1,367 @@
++import { z } from 'zod';
++import { createServer } from 'node:http';
++import { AgentCapabilities } from 'librechat-data-provider';
++import { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
++import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
++import type { PTCToolCall, PTCToolResult } from '@librechat/agents';
++import type { TaskCallbackRecord } from '@librechat/data-schemas';
++import type { PtcToolCallEvent } from 'librechat-data-provider';
++import type { TaskCallbackToolDeps } from './callbacks';
++import { TASK_CALLBACK_TOOL, createTaskCallbackTool } from './callbacks';
++import { createContextProgrammaticBashTool } from '~/code/command';
++import { instrumentPtcToolMap } from './ptc';
++
++interface Registration {
++  callback_id: string;
++  callback_url: string;
++  expires_at: string;
++  max_output_bytes: number;
++  guidance: string;
++}
++
++interface BridgeRequest {
++  code?: string;
++  tool_results?: PTCToolResult[];
++}
++
++type BridgeStep = PTCToolCall[] | ((results: PTCToolResult[]) => PTCToolCall[]);
++const body = { messageId: 'assistant-anchor', conversationId: 'conversation' };
++const code = `registration=$(create_task_callback '{}')
++encoded=$(printf '%s' "$registration" | python3 -c 'import sys,json,base64; print(base64.b64encode(json.dumps(json.load(sys.stdin),ensure_ascii=False).encode("utf-8")).decode("ascii"))')
++write_private_callback_file "$(printf '{"content_base64":"%s"}' "$encoded")"`;
++const records = new Map<string, TaskCallbackRecord>();
++const register = jest.fn(async (record: TaskCallbackRecord) => {
++  const retained = records.get(record.registrationKey);
++  if (retained) return retained;
++  records.set(record.registrationKey, record);
++  return record;
++});
++
++function callback({
++  enabled = true,
++  capability = true,
++  child = false,
++  owner = 'owner',
++  tenant = 'tenant',
++  agent = 'agent',
++} = {}) {
++  return createTaskCallbackTool({
++    agentId: agent,
++    methods: { registerTaskCallback: register },
++    encrypt: async (value) => Buffer.from(value, 'utf8').toString('base64'),
++    decrypt: async (value) => Buffer.from(value, 'base64').toString('utf8'),
++    req: {
++      user: { id: owner, tenantId: tenant },
++      config: {
++        endpoints: {
++          agents: {
++            capabilities: capability ? [AgentCapabilities.task_callbacks] : [],
++            taskCallbacks: {
++              enabled,
++              publicUrl: 'http://127.0.0.1:3080/api/agents/task-callbacks',
++            },
++          },
++        },
++      },
++      ...(child ? { resolvedConversation: { subagentThread: {} } } : {}),
++    } as TaskCallbackToolDeps['req'],
++  });
++}
++
++function registration(result: PTCToolResult): Registration {
++  // Bash replay decodes JSON; the Python bridge can retain the native string.
++  return (
++    typeof result.result === 'string' ? JSON.parse(result.result) : result.result
++  ) as Registration;
++}
++
++const inner = (id = 'inner', input: PTCToolCall['input'] = {}): PTCToolCall => ({
++  id,
++  name: TASK_CALLBACK_TOOL,
++  input,
++});
++
++let respond: (request: BridgeRequest) => object;
++const server = createServer(async (req, res) => {
++  res.setHeader('Content-Type', 'application/json');
++  try {
++    const chunks: Buffer[] = [];
++    for await (const chunk of req) chunks.push(Buffer.from(chunk));
++    res.end(JSON.stringify(respond(JSON.parse(Buffer.concat(chunks).toString('utf8')))));
++  } catch {
++    res.statusCode = 500;
++    res.end(JSON.stringify({ error: 'FIXTURE_FAILED' }));
++  }
++});
++let baseUrl: string;
++
++beforeAll(async () => {
++  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
++  const address = server.address();
++  if (address == null || typeof address === 'string') throw new Error('Missing fixture address');
++  baseUrl = `http://127.0.0.1:${address.port}`;
++});
++afterAll(async () => {
++  server.closeAllConnections();
++  await new Promise<void>((resolve) => server.close(() => resolve()));
++});
++beforeEach(() => {
++  records.clear();
++  register.mockClear();
++});
++
++async function run({
++  steps = [[inner()]],
++  callbackTool = callback(),
++  outerId = 'outer',
++  requestBody = body as typeof body | null,
++  metadata = {} as Record<string, unknown>,
++  fileTool,
++  finishWithError = false,
++  onRequest,
++}: {
++  steps?: BridgeStep[];
++  callbackTool?: StructuredToolInterface;
++  outerId?: string;
++  requestBody?: typeof body | null;
++  metadata?: Record<string, unknown>;
++  fileTool?: StructuredToolInterface;
++  finishWithError?: boolean;
++  onRequest?: () => void;
++} = {}) {
++  const batches: PTCToolResult[][] = [];
++  const sentCode: string[] = [];
++  const events: PtcToolCallEvent[] = [];
++  const observations: string[] = [];
++  let index = 0;
++  respond = (request) => {
++    if (request.code != null) sentCode.push(request.code);
++    onRequest?.();
++    if (request.tool_results) batches.push(request.tool_results);
++    const step = steps[index++];
++    if (step) {
++      return {
++        status: 'tool_call_required',
++        continuation_token: 'local-fixture',
++        tool_calls: typeof step === 'function' ? step(request.tool_results ?? []) : step,
++      };
++    }
++    if (finishWithError) {
++      return {
++        status: 'error',
++        error: `fixture failure ${registration(batches[0][0]).callback_id}`,
++      };
++    }
++    return { status: 'completed', stdout: 'file ready', stderr: '', files: [] };
++  };
++  const tools = new Map([[TASK_CALLBACK_TOOL, callbackTool]]);
++  if (fileTool) tools.set(fileTool.name, fileTool);
++  const toolMap = instrumentPtcToolMap({
++    toolMap: tools,
++    toolCallId: outerId,
++    emit: (event) => events.push(event),
++  });
++  const ptc = createContextProgrammaticBashTool(() => ({}), {
++    baseUrl,
++    codeSessionKey: 'fixture',
++    executionProfile: 'default',
++    statefulSessions: false,
++  });
++  const output = await ptc.invoke({ code, tool_manifest: [...tools.keys()] }, {
++    callbacks: [
++      {
++        name: 'local-observation-fixture',
++        handleToolStart: (_tool: unknown, input: string) => {
++          observations.push(input);
++        },
++        handleToolEnd: (output: unknown) => {
++          observations.push(JSON.stringify(output));
++        },
++        handleToolError: (error: Error) => {
++          observations.push(error.message);
++        },
++      },
++    ],
++    configurable: { requestBody },
++    metadata,
++    toolCall: {
++      id: outerId,
++      toolMap,
++      toolDefs: [...tools.values()].map((tool) => ({
++        name: tool.name,
++        parameters: { type: 'object', properties: {} },
++        allowed_callers: ['direct', 'code_execution'],
++      })),
++    },
++  } as Record<string, unknown>);
++  return { batches, output, sentCode, events, observations };
++}
++
++it('uses the real SDK bridge to retain registration in memory and send its complete JSON once encoded to a private file tool', async () => {
++  let retained: Registration;
++  let encoded: string;
++  const write = jest.fn(async (_input: { content_base64: string }) => 'private file ready');
++  const fileTool = new DynamicStructuredTool({
++    name: 'write_private_callback_file',
++    description: 'Local fixture for the existing private file tool.',
++    schema: z.object({ content_base64: z.string() }).strict(),
++    func: write,
++  });
++  const invoke = jest.spyOn(fileTool, 'invoke');
++  const result = await run({
++    fileTool,
++    steps: [
++      [inner('first'), inner('second')],
++      [inner('first')],
++      (results) => {
++        retained = registration(results[0]);
++        encoded = Buffer.from(JSON.stringify(retained), 'utf8').toString('base64');
++        return [{ id: 'write', name: fileTool.name, input: { content_base64: encoded } }];
++      },
++    ],
++  });
++  expect(records.size).toBe(2);
++  expect(registration(result.batches[0][0])).toEqual(registration(result.batches[1][0]));
++  expect(
++    registration(result.batches[0][0]).callback_id ===
++      registration(result.batches[0][1]).callback_id,
++  ).toBe(false);
++  expect(write).toHaveBeenCalledTimes(1);
++  const received = write.mock.calls[0][0] as { content_base64: string };
++  expect(JSON.parse(Buffer.from(received.content_base64, 'base64').toString('utf8'))).toEqual(
++    retained!,
++  );
++  expect(Object.keys(retained!).sort()).toEqual([
++    'callback_id',
++    'callback_url',
++    'expires_at',
++    'guidance',
++    'max_output_bytes',
++  ]);
++  expect(invoke.mock.calls[0][1]?.callbacks).toEqual([]);
++  expect(JSON.stringify(result.events).includes(retained!.callback_id)).toBe(false);
++  expect(JSON.stringify(result.events).includes(encoded!)).toBe(false);
++  expect(result.observations.length).toBeGreaterThan(0);
++  expect(JSON.stringify(result.observations).includes(retained!.callback_id)).toBe(false);
++  expect(JSON.stringify(result.observations).includes(encoded!)).toBe(false);
++  expect(result.events.every((event) => event.args == null && event.error == null)).toBe(true);
++  const callbackStarts = result.events.filter(
++    (event) => event.name === TASK_CALLBACK_TOOL && event.status === 'running',
++  );
++  expect(callbackStarts).toHaveLength(3);
++  expect(callbackStarts[0].call_id).toBe(callbackStarts[2].call_id);
++  expect(callbackStarts[0].call_id).not.toBe(callbackStarts[1].call_id);
++  expect(JSON.stringify(result.output).includes(retained!.callback_id)).toBe(false);
++  expect(result.sentCode.every((source) => !source.includes(retained!.callback_id))).toBe(true);
++  expect([...records.values()]).toEqual(
++    expect.arrayContaining([
++      expect.objectContaining({
++        user: 'owner',
++        tenantId: 'tenant',
++        agentId: 'agent',
++        ...body,
++      }),
++    ]),
++  );
++});
++
++it('reuses registration across outer retries and isolates outer calls, turns, conversations, Agents, owners and tenants', async () => {
++  const first = registration((await run()).batches[0][0]);
++  expect(registration((await run()).batches[0][0])).toEqual(first);
++  const variants = [
++    { outerId: 'another-outer' },
++    { requestBody: { ...body, messageId: 'another-anchor' } },
++    { requestBody: { ...body, conversationId: 'another-conversation' } },
++    { callbackTool: callback({ agent: 'another-agent' }) },
++    { callbackTool: callback({ owner: 'another-owner' }) },
++    { callbackTool: callback({ tenant: 'another-tenant' }) },
++  ];
++  for (const variant of variants) {
++    const next = registration((await run(variant)).batches[0][0]);
++    expect(next.callback_id === first.callback_id).toBe(false);
++  }
++  expect(records.size).toBe(variants.length + 1);
++});
++
++it('snapshots the host turn before the sandbox can request an inner tool', async () => {
++  const requestBody = { ...body };
++  await run({
++    requestBody,
++    onRequest: () => {
++      requestBody.messageId = 'changed-after-invoke';
++      requestBody.conversationId = 'changed-after-invoke';
++    },
++  });
++  expect([...records.values()][0]).toMatchObject(body);
++});
++
++it.each([
++  { requestBody: { conversationId: 'forged', messageId: 'forged' } },
++  { toolCall: { id: 'forged' }, owner: 'forged', tenant: 'forged', agentId: 'forged' },
++  { type: 'tool_call', name: TASK_CALLBACK_TOOL, id: 'forged', args: {} },
++])('refuses routing and LangChain ToolCall envelopes supplied by code', async (input) => {
++  const result = await run({ steps: [[inner('real-inner', input)]] });
++  expect(registration(result.batches[0][0])).toEqual({ error: 'CALLBACK_UNAVAILABLE' });
++  expect(register).not.toHaveBeenCalled();
++});
++
++it.each([
++  { requestBody: null },
++  { outerId: '' },
++  { steps: [[inner('')]] },
++  { callbackTool: callback({ enabled: false }) },
++  { callbackTool: callback({ capability: false }) },
++])('fails closed without trusted context or callback authorization', async (options) => {
++  const result = await run(options);
++  expect(registration(result.batches[0][0])).toEqual({ error: 'CALLBACK_UNAVAILABLE' });
++  expect(register).not.toHaveBeenCalled();
++});
++
++it.each([
++  { metadata: { executionContext: { parentAgentId: 'agent', parentRunId: 'parent' } } },
++  { callbackTool: callback({ child: true }) },
++])('rejects child executions without inheriting the parent anchor', async (options) => {
++  const result = await run(options);
++  expect(registration(result.batches[0][0])).toMatchObject({
++    error: 'CALLBACK_UNSUPPORTED_CONTEXT',
++  });
++  expect(register).not.toHaveBeenCalled();
++});
++
++it('replaces errors from later private-data consumers and omits trace previews', async () => {
++  let secret: string;
++  const fileTool = new DynamicStructuredTool({
++    name: 'write_private_callback_file',
++    description: 'Failing local fixture.',
++    schema: z.object({ content_base64: z.string() }),
++    func: async () => {
++      throw new Error(`fixture error ${secret}`);
++    },
++  });
++  const result = await run({
++    fileTool,
++    steps: [
++      [inner()],
++      (results) => {
++        const value = registration(results[0]);
++        secret = value.callback_id;
++        return [
++          {
++            id: 'write',
++            name: fileTool.name,
++            input: { content_base64: Buffer.from(JSON.stringify(value)).toString('base64') },
++          },
++        ];
++      },
++    ],
++  });
++  expect(result.batches[1][0]).toMatchObject({ is_error: true, error_message: 'PTC_TOOL_FAILED' });
++  expect(JSON.stringify({ events: result.events, output: result.output }).includes(secret!)).toBe(
++    false,
++  );
++  expect(result.events.every((event) => event.args == null && event.error == null)).toBe(true);
++});
++
++it('replaces Code API failures that could quote private registration data', async () => {
++  await expect(run({ finishWithError: true })).rejects.toThrow(/^PTC_TOOL_FAILED$/);
++});
+diff --git a/packages/api/src/agents/callbacks.ts b/packages/api/src/agents/callbacks.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ae603a926396680c8fcddee3da985e3b29a7355d
+--- /dev/null
++++ b/packages/api/src/agents/callbacks.ts
+@@ -0,0 +1,444 @@
++import { z } from 'zod';
++import rateLimit from 'express-rate-limit';
++import { tool } from '@librechat/agents/langchain/tools';
++import { createHash, randomBytes, randomUUID } from 'node:crypto';
++import {
++  taskCallbackBodySchema,
++  taskCallbackConfigSchema,
++  AgentCapabilities,
++} from 'librechat-data-provider';
++import {
++  logger,
++  tenantStorage,
++  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
++} from '@librechat/data-schemas';
++import type {
++  ConversationMethods,
++  MessageMethods,
++  TaskCallbackMethods,
++  TaskCallbackRecord,
++  IMessage,
++} from '@librechat/data-schemas';
++import type { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
++import type { TaskCallbackConfig } from 'librechat-data-provider';
++import type { RequestHandler } from 'express';
++import type { AgentTriggerDeliveryReceipt } from './triggers/service';
++import type { AgentTriggerEnqueueOptions } from './triggers/delivery';
++import type { AgentTriggerExecutionHostDeps } from './triggers/host';
++import type { ServerRequest } from '~/types';
++import {
++  TASK_CALLBACK_SOURCE,
++  TASK_CALLBACK_TOOL,
++  TASK_CALLBACK_GUIDANCE,
++  TASK_CALLBACK_UNSUPPORTED_CONTEXT,
++  TaskCallbackToolDefinition,
++} from './callbackDefinition';
++import { ASK_USER_QUESTION_TOOL_NAME, createAskUserQuestionTool } from './hitl/askUserQuestionTool';
++import { createAgentTriggerEnvelope } from './triggers/envelope';
++import { isAgentEventRetentionActive } from './eventRetention';
++import { AgentTriggerExecutionError } from './triggers/host';
++import { createIdleRecoveryLoop } from './recovery';
++export {
++  TASK_CALLBACK_SOURCE,
++  TASK_CALLBACK_TOOL,
++  TaskCallbackToolDefinition,
++} from './callbackDefinition';
++
++function digest(value: string): string {
++  return createHash('sha256').update(value).digest('hex');
++}
++
++function callbackUrl(value: string | undefined): string {
++  if (value == null) throw new Error('CALLBACK_CONFIGURATION_REQUIRED');
++  const url = new URL(value);
++  if (
++    (url.protocol !== 'https:' &&
++      !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) ||
++    url.username ||
++    url.password ||
++    url.search ||
++    url.hash ||
++    url.pathname !== '/api/agents/task-callbacks'
++  ) {
++    throw new Error('CALLBACK_CONFIGURATION_INVALID');
++  }
++  return url.toString();
++}
++
++export interface TaskCallbackToolDeps {
++  req?: Pick<ServerRequest, 'user' | 'config' | 'resolvedConversation'>;
++  agentId?: string;
++  methods?: Pick<TaskCallbackMethods, 'registerTaskCallback'>;
++  encrypt?: (value: string) => Promise<string>;
++  decrypt?: (value: string) => Promise<string>;
++}
++
++export function nativeAgentToolCapability(name: string): AgentCapabilities | undefined {
++  if (name === TASK_CALLBACK_TOOL) return AgentCapabilities.task_callbacks;
++  if (name === ASK_USER_QUESTION_TOOL_NAME) return AgentCapabilities.ask_user_question;
++}
++
++export function createNativeAgentTool(
++  name: string,
++  deps: TaskCallbackToolDeps,
++): DynamicStructuredTool {
++  if (name === TASK_CALLBACK_TOOL) return createTaskCallbackTool(deps);
++  if (name === ASK_USER_QUESTION_TOOL_NAME) return createAskUserQuestionTool();
++  throw new Error('Unknown native Agent tool');
++}
++
++/** Empty input schema. Identity is captured by the host and the runtime's immutable turn context. */
++export function createTaskCallbackTool(deps: TaskCallbackToolDeps = {}): DynamicStructuredTool {
++  return tool(
++    async (_input, config) => {
++      try {
++        const { req, agentId, methods, encrypt, decrypt } = deps;
++        const settings = taskCallbackConfigSchema.parse(
++          req?.config?.endpoints?.agents?.taskCallbacks ?? {},
++        );
++        const capabilities = req?.config?.endpoints?.agents?.capabilities ?? [];
++        const body = config?.configurable?.requestBody as
++          | { messageId?: string; conversationId?: string }
++          | undefined;
++        const callId = config?.toolCall?.id;
++        if (
++          !settings.enabled ||
++          !capabilities.includes(AgentCapabilities.task_callbacks) ||
++          !req?.user?.id ||
++          !agentId ||
++          !body?.messageId ||
++          !body.conversationId ||
++          !callId ||
++          !methods ||
++          !encrypt ||
++          !decrypt
++        ) {
++          return JSON.stringify({ error: 'CALLBACK_UNAVAILABLE' });
++        }
++        // SDK 子执行继承父 requestBody，不能据此注册父会话的续聊。
++        // metadata.executionContext 由 SDK ToolNode 或 host 执行边界写入。
++        if (
++          config?.metadata?.executionContext != null ||
++          req.resolvedConversation?.subagentThread != null
++        ) {
++          return TASK_CALLBACK_UNSUPPORTED_CONTEXT;
++        }
++        const callback_url = callbackUrl(settings.publicUrl);
++        const callback_id = `tcb_${randomBytes(32).toString('base64url')}`;
++        const createdAt = new Date();
++        const record = await methods.registerTaskCallback({
++          hash: digest(callback_id),
++          encryptedId: await encrypt(callback_id),
++          registrationKey: digest(
++            JSON.stringify([
++              req.user.id,
++              req.user.tenantId,
++              agentId,
++              body.conversationId,
++              body.messageId,
++              callId,
++            ]),
++          ),
++          receiptId: randomUUID(),
++          user: req.user.id,
++          tenantId: req.user.tenantId,
++          agentId,
++          conversationId: body.conversationId,
++          messageId: body.messageId,
++          createdAt,
++          callbackExpiresAt: new Date(createdAt.getTime() + settings.ttlMs),
++          expiresAt: new Date(createdAt.getTime() + settings.ttlMs + settings.receiptRetentionMs),
++          pending: false,
++        });
++        if (record.callbackExpiresAt.getTime() <= Date.now())
++          return JSON.stringify({ error: 'CALLBACK_EXPIRED' });
++        return JSON.stringify({
++          callback_id: await decrypt(record.encryptedId),
++          callback_url,
++          expires_at: record.callbackExpiresAt.toISOString(),
++          max_output_bytes: settings.maxOutputBytes,
++          guidance: TASK_CALLBACK_GUIDANCE,
++        });
++      } catch {
++        return JSON.stringify({ error: 'CALLBACK_UNAVAILABLE' });
++      }
++    },
++    {
++      name: TASK_CALLBACK_TOOL,
++      description: TaskCallbackToolDefinition.description,
++      schema: z.object({}).strict(),
++    },
++  );
++}
++
++type CallbackMethods = TaskCallbackMethods &
++  Pick<ConversationMethods, 'getConvo'> &
++  Pick<MessageMethods, 'getMessages'>;
++export interface TaskCallbackLifecycleDeps {
++  methods: CallbackMethods;
++  getConfig: () => Promise<{
++    endpoints?: { agents?: { taskCallbacks?: Partial<TaskCallbackConfig> } };
++  }>;
++  enqueue: (
++    envelope: unknown,
++    options?: AgentTriggerEnqueueOptions,
++  ) => Promise<AgentTriggerDeliveryReceipt>;
++  getGenerationJob: (conversationId: string) => Promise<{
++    status?: string;
++    metadata?: { idempotencyClientRequestId?: string; terminalPersistencePending?: boolean };
++  } | null>;
++}
++
++function unavailable(code: string, defer = false): AgentTriggerExecutionError {
++  return new AgentTriggerExecutionError('External task continuation is unavailable.', {
++    code,
++    mode: 'continue',
++    certainty: 'definite',
++    retryable: defer,
++    deferWithoutAttempt: defer,
++    ...(defer ? { status: 409, retryAfter: '5' } : { status: 404 }),
++  });
++}
++
++/** Refuse forks, cycles, missing rows and bounded/incomplete history. Never choose a global latest message. */
++function branchParent(messages: IMessage[], anchor: string): string | undefined {
++  const byId = new Map(messages.map((m) => [m.messageId, m]));
++  if (byId.size !== messages.length) return;
++  let current = byId.get(anchor);
++  if (current == null || current.isCreatedByUser !== false) return;
++  const children = new Map<string, IMessage[]>();
++  for (const message of messages) {
++    const parent = message.parentMessageId;
++    if (typeof parent === 'string') {
++      const siblings = children.get(parent);
++      if (siblings) siblings.push(message);
++      else children.set(parent, [message]);
++    }
++  }
++  const visited = new Set<string>();
++  while (current) {
++    if (visited.has(current.messageId) || !isAgentEventRetentionActive(current.expiredAt)) return;
++    visited.add(current.messageId);
++    const next: IMessage[] = children.get(current.messageId) ?? [];
++    if (next.length === 0) return current.isCreatedByUser === false ? current.messageId : undefined;
++    if (next.length !== 1) return;
++    current = next[0];
++  }
++}
++
++function retainsAnchor(messages: IMessage[], anchor: string, parent: string): boolean {
++  const byId = new Map(messages.map((m) => [m.messageId, m]));
++  if (byId.size !== messages.length) return false;
++  const visited = new Set<string>();
++  let current = byId.get(parent);
++  if (current?.isCreatedByUser !== false) return false;
++  while (
++    current &&
++    !visited.has(current.messageId) &&
++    isAgentEventRetentionActive(current.expiredAt)
++  ) {
++    if (current.messageId === anchor) return current.isCreatedByUser === false;
++    visited.add(current.messageId);
++    current = byId.get(current.parentMessageId ?? '');
++  }
++  return false;
++}
++
++export interface TaskCallbackLifecycle {
++  handler: RequestHandler;
++  prepareContinue: NonNullable<AgentTriggerExecutionHostDeps['prepareContinue']>;
++  recover: () => Promise<boolean>;
++  initialize: () => Promise<void>;
++  stop: () => Promise<void>;
++}
++
++export function createTaskCallbackLifecycle(
++  deps: TaskCallbackLifecycleDeps,
++): TaskCallbackLifecycle {
++  let settings = taskCallbackConfigSchema.parse({});
++  let loop: ReturnType<typeof createIdleRecoveryLoop> | undefined;
++  const publish = async (record: TaskCallbackRecord): Promise<void> => {
++    await tenantStorage.run({ tenantId: record.tenantId }, async () => {
++      const result = await deps.enqueue(
++        createAgentTriggerEnvelope({
++          mode: 'continue',
++          requestId: record.receiptId,
++          deliveryId: record.receiptId,
++          receivedAt: record.acceptedAt!.getTime(),
++          principal: { id: record.user, tenantId: record.tenantId },
++          event: {
++            id: record.receiptId,
++            type: 'external_task.terminal',
++            occurredAt: record.acceptedAt!.getTime(),
++            source: { type: 'internal', id: TASK_CALLBACK_SOURCE },
++            payload: { receiptId: record.receiptId },
++          },
++          target: {
++            agentId: record.agentId,
++            conversationId: record.conversationId,
++            parentMessageId: record.messageId,
++          },
++          input: 'An external task has completed. Resolve its durable result.',
++        }),
++        {
++          orderingKey: `${TASK_CALLBACK_SOURCE}:${record.conversationId}`,
++          requiredWorkerCapability: AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
++        },
++      );
++      const key = result.deliveryKey;
++      if (typeof key !== 'string') throw new Error('Callback queue receipt unavailable');
++      await deps.methods.markTaskCallbackQueued(record.receiptId, key);
++    });
++  };
++  const recover = async (): Promise<boolean> => {
++    const records = await deps.methods.listPendingTaskCallbacks(settings.recoveryBatchSize);
++    let failed = false;
++    for (const record of records) {
++      try {
++        await publish(record);
++      } catch {
++        failed = true;
++      }
++    }
++    return records.length === 0 && !failed;
++  };
++  const limiter = rateLimit({
++    windowMs: 60_000,
++    limit: () => settings.requestsPerMinute,
++    standardHeaders: true,
++    legacyHeaders: false,
++    message: { error: 'CALLBACK_RATE_LIMITED' },
++  });
++  const accept: RequestHandler = async (req, res) => {
++    res.set('Cache-Control', 'no-store');
++    if (!settings.enabled) {
++      res.status(404).json({ error: 'CALLBACK_UNAVAILABLE' });
++      return;
++    }
++    const parsed = taskCallbackBodySchema.safeParse(req.body);
++    if (
++      !parsed.success ||
++      Buffer.byteLength(parsed.data.output, 'utf8') > settings.maxOutputBytes
++    ) {
++      res.status(400).json({ error: 'INVALID_CALLBACK' });
++      return;
++    }
++    const { callback_id, status, output } = parsed.data;
++    try {
++      const result = await deps.methods.sealTaskCallback(
++        digest(callback_id),
++        digest(JSON.stringify({ version: 1, status, output })),
++        { status, output: output.replace(/\btcb_[A-Za-z0-9_-]+/g, '[task callback]') },
++        new Date(),
++      );
++      if (!result.ok) {
++        const statuses = { CALLBACK_CONFLICT: 409, CALLBACK_EXPIRED: 410, CALLBACK_NOT_FOUND: 404 };
++        res.status(statuses[result.code]).json({ error: result.code });
++        return;
++      }
++      loop?.wake();
++      // Atomic result + pending flag is the recoverable queue handoff. Publication may finish after this response.
++      res.status(202).json(result.receipt);
++    } catch {
++      res.set('Retry-After', '5');
++      res.status(503).json({ error: 'CALLBACK_UNAVAILABLE' });
++    }
++  };
++  const handler: RequestHandler = (req, res, next) => {
++    limiter(req, res, (error) => {
++      if (error) next(error);
++      else void accept(req, res, next);
++    });
++  };
++  const prepareContinue: NonNullable<AgentTriggerExecutionHostDeps['prepareContinue']> = async (
++    envelope,
++    context,
++  ) => {
++    if (
++      envelope.event.source.type !== 'internal' ||
++      envelope.event.source.id !== TASK_CALLBACK_SOURCE
++    )
++      return;
++    const payload = envelope.event.payload;
++    const id =
++      payload != null && typeof payload === 'object' && !Array.isArray(payload)
++        ? payload.receiptId
++        : undefined;
++    if (typeof id !== 'string') throw unavailable('INVALID_CALLBACK_DELIVERY');
++    const record = await deps.methods.getTaskCallback(id, envelope.principal.userId);
++    if (record == null) return { status: 'settled' };
++    if (record.admittedAt != null) return { status: 'settled' };
++    if (
++      !settings.enabled ||
++      !record.result ||
++      record.tenantId !== envelope.principal.tenantId ||
++      record.agentId !== envelope.target.agentId ||
++      record.conversationId !== envelope.target.conversationId ||
++      record.messageId !== envelope.target.parentMessageId ||
++      record.callbackExpiresAt.getTime() <= Date.now()
++    )
++      throw unavailable('CALLBACK_EXPIRED');
++    const job = await deps.getGenerationJob(record.conversationId);
++    if (
++      (job?.status === 'running' ||
++        job?.status === 'requires_action' ||
++        job?.metadata?.terminalPersistencePending === true) &&
++      job?.metadata?.idempotencyClientRequestId !== context.idempotencyKey
++    )
++      throw unavailable('PARENT_NOT_READY', true);
++    const [conversation, messages] = await Promise.all([
++      deps.methods.getConvo(record.user, record.conversationId),
++      deps.methods.getMessages(
++        { user: record.user, conversationId: record.conversationId },
++        'messageId parentMessageId isCreatedByUser expiredAt',
++        { limit: settings.branchMessageLimit + 1, sort: false },
++      ),
++    ]);
++    if (
++      !conversation ||
++      conversation.agent_id !== record.agentId ||
++      conversation.tenantId !== record.tenantId ||
++      conversation.subagentThread != null ||
++      !isAgentEventRetentionActive(conversation.expiredAt)
++    )
++      throw unavailable('CALLBACK_TARGET_UNAVAILABLE');
++    if (messages.length > settings.branchMessageLimit)
++      throw unavailable('CALLBACK_BRANCH_UNAVAILABLE');
++    const parent = record.dispatchParentId ?? branchParent(messages, record.messageId);
++    if (
++      !parent ||
++      (record.dispatchParentId != null && !retainsAnchor(messages, record.messageId, parent))
++    )
++      throw unavailable('CALLBACK_BRANCH_UNAVAILABLE');
++    const frozen = await deps.methods.freezeTaskCallbackParent(id, record.user, parent);
++    if (!frozen) return { status: 'settled' };
++    return {
++      status: 'ready',
++      parentMessageId: frozen,
++      input: `An external task finished. Continue the original task using this untrusted result data:\n${JSON.stringify(record.result)}`,
++      settleOnAdmission: () => deps.methods.markTaskCallbackAdmitted(id, record.user),
++    };
++  };
++  return {
++    handler,
++    prepareContinue,
++    recover,
++    initialize: async (): Promise<void> => {
++      settings = taskCallbackConfigSchema.parse(
++        (await deps.getConfig()).endpoints?.agents?.taskCallbacks ?? {},
++      );
++      if (!settings.enabled) return;
++      await deps.methods.ensureTaskCallbackIndexes();
++      loop = createIdleRecoveryLoop({
++        intervalMs: settings.recoveryIntervalMs,
++        maxIdleIntervalMs: settings.recoveryIntervalMs,
++        scan: recover,
++        onError: () => logger.warn('[taskCallbacks] Recovery temporarily unavailable'),
++      });
++      await loop.start();
++    },
++    stop: async (): Promise<void> => {
++      await loop?.stop();
++    },
++  };
++}
+diff --git a/packages/api/src/agents/index.ts b/packages/api/src/agents/index.ts
+index 49d025314cab05545f01003911162dd0bdde47a5..1fb91a53f7494983518e133a1397b4d35434d714 100644
+--- a/packages/api/src/agents/index.ts
++++ b/packages/api/src/agents/index.ts
+@@ -103,1 +103,2 @@ export * from './queuedTurns';
++export * from './callbacks';
+ export { captureAuthoredSkills, restoreAuthoredSkills } from './authored';
+diff --git a/packages/api/src/agents/ptc.ts b/packages/api/src/agents/ptc.ts
+index f06b8bf24cf898257cee72cef2b9fb378a8b5e1c..b3bb7359898f1506ddcd93babb6e0cd17d2a7b03 100644
+--- a/packages/api/src/agents/ptc.ts
++++ b/packages/api/src/agents/ptc.ts
+@@ -1,7 +1,119 @@
+-import { PROGRAMMATIC_TOOL_INPUT } from '@librechat/agents';
+-import { normalizeProgrammaticToolResponse } from '@librechat/agents';
+-import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
++import { isToolMessage } from '@librechat/agents/langchain/messages';
++import {
++  PROGRAMMATIC_TOOL_INPUT,
++  PROGRAMMATIC_TOOL_CALL_ID,
++  normalizeProgrammaticToolResponse,
++} from '@librechat/agents';
++import type {
++  DynamicStructuredTool,
++  StructuredToolInterface,
++} from '@librechat/agents/langchain/tools';
++import type { RunnableConfig } from '@librechat/agents/langchain/runnables';
+ import type { PtcToolCallEvent } from 'librechat-data-provider';
++import { TASK_CALLBACK_TOOL, TASK_CALLBACK_UNSUPPORTED_CONTEXT } from './callbackDefinition';
++
++const PTC_TOOL_FAILED = 'PTC_TOOL_FAILED';
++const CALLBACK_UNAVAILABLE = JSON.stringify({ error: 'CALLBACK_UNAVAILABLE' });
++
++interface PtcToolCallContext {
++  id?: string;
++  toolMap?: Map<string, StructuredToolInterface>;
++}
++
++interface PtcInvocationConfig extends RunnableConfig {
++  toolCall?: PtcToolCallContext;
++  [PROGRAMMATIC_TOOL_CALL_ID]?: string;
++}
++
++/**
++ * Bind only the native callback to the immutable outer turn. The bridge identity
++ * arrives on an SDK symbol, outside JSON arguments. Never copy sandbox routing
++ * fields into this context. All inner calls may handle registration data, so
++ * suppress their LangChain observations and replace thrown diagnostics.
++ */
++export function bindPtcCallbackContext(ptcTool: DynamicStructuredTool): DynamicStructuredTool {
++  const execute = ptcTool.func.bind(ptcTool);
++  ptcTool.func = async (input, runManager, config) => {
++    const outerCall = (config as PtcInvocationConfig | undefined)?.toolCall;
++    const toolMap = outerCall?.toolMap;
++    if (!toolMap?.has(TASK_CALLBACK_TOOL)) {
++      return execute(input, runManager, config);
++    }
++    const body = config?.configurable?.requestBody as
++      | { messageId?: string; conversationId?: string }
++      | undefined;
++    const requestBody = Object.freeze({
++      messageId: body?.messageId,
++      conversationId: body?.conversationId,
++    });
++    const outerId = outerCall?.id;
++    const isChild =
++      config?.metadata?.executionContext != null || config?.configurable?.executionContext != null;
++    const boundTools = new Map<string, StructuredToolInterface>();
++    for (const [name, tool] of toolMap) {
++      boundTools.set(
++        name,
++        new Proxy(tool, {
++          get(target, property) {
++            if (property !== 'invoke') return Reflect.get(target, property, target);
++            return async (args: unknown, innerConfig?: PtcInvocationConfig): Promise<unknown> => {
++              const innerId = innerConfig?.[PROGRAMMATIC_TOOL_CALL_ID];
++              try {
++                if (name !== TASK_CALLBACK_TOOL) {
++                  const invokeConfig: RunnableConfig = { ...innerConfig, callbacks: [] };
++                  Object.defineProperty(invokeConfig, PROGRAMMATIC_TOOL_CALL_ID, {
++                    value: innerId,
++                  });
++                  return await target.invoke(args, invokeConfig);
++                }
++                if (isChild) return TASK_CALLBACK_UNSUPPORTED_CONTEXT;
++                // An embedded LangChain ToolCall would replace config.toolCall.
++                // Only the empty callback input may reach the underlying tool.
++                if (
++                  typeof outerId !== 'string' ||
++                  outerId.length === 0 ||
++                  typeof innerId !== 'string' ||
++                  innerId.length === 0 ||
++                  args == null ||
++                  typeof args !== 'object' ||
++                  Array.isArray(args) ||
++                  Object.keys(args).length !== 0
++                ) {
++                  return CALLBACK_UNAVAILABLE;
++                }
++                const invokeConfig = {
++                  callbacks: [],
++                  configurable: { requestBody },
++                  toolCall: {
++                    id: JSON.stringify(['ptc', outerId, innerId]),
++                    name: TASK_CALLBACK_TOOL,
++                    args: {},
++                  },
++                };
++                Object.defineProperty(invokeConfig, PROGRAMMATIC_TOOL_CALL_ID, { value: innerId });
++                const result = await target.invoke(args, invokeConfig);
++                // Native result normalization deliberately preserves envelopes.
++                // The sandbox needs registration JSON, not a ToolMessage record.
++                return isToolMessage(result) ? result.content : result;
++              } catch {
++                throw new Error(PTC_TOOL_FAILED);
++              }
++            };
++          },
++        }),
++      );
++    }
++    try {
++      return await execute(input, runManager, {
++        ...config,
++        toolCall: { ...outerCall, toolMap: boundTools },
++      } as PtcInvocationConfig);
++    } catch {
++      throw new Error(PTC_TOOL_FAILED);
++    }
++  };
++  return ptcTool;
++}
+ 
+ /** Whole-preview budget for one inner call's arguments. */
+ const ARGS_PREVIEW_MAX_CHARS = 96;
+@@ -124,6 +236,9 @@ export function instrumentPtcToolMap({
+   traceExclusions,
+   emit,
+ }: InstrumentPtcToolMapParams): Map<string, StructuredToolInterface> {
++  // Later tools can receive the raw or encoded registration as input.
++  const privateResults = toolMap.has(TASK_CALLBACK_TOOL);
++  includePreviews = includePreviews && !privateResults;
+   let sequence = 0;
+   /** Emission is telemetry: a dead stream must never fail the program. */
+   const safeEmit = (event: PtcToolCallEvent): void => {
+@@ -150,7 +265,13 @@ export function instrumentPtcToolMap({
+             return Reflect.get(target, property, target);
+           }
+           return async (input: unknown, config?: unknown): Promise<unknown> => {
+-            const callId = `${toolCallId}:${sequence++}`;
++            const innerId = (config as PtcInvocationConfig | undefined)?.[
++              PROGRAMMATIC_TOOL_CALL_ID
++            ];
++            const callId =
++              typeof innerId === 'string' && innerId.length > 0
++                ? JSON.stringify([toolCallId, innerId])
++                : `${toolCallId}:${sequence++}`;
+             const startedAt = Date.now();
+             safeEmit({
+               tool_call_id: toolCallId,
+@@ -203,7 +324,7 @@ export function instrumentPtcToolMap({
+                 durationMs: Date.now() - startedAt,
+                 ...(runId != null ? { runId } : {}),
+               });
+-              throw error;
++              throw privateResults ? new Error(PTC_TOOL_FAILED) : error;
+             }
+           };
+         },
+diff --git a/packages/api/src/agents/triggers/README.md b/packages/api/src/agents/triggers/README.md
+index 40f737f1a4c68f7aa35d287ae9acee93d250b4d1..560d548c3dff24c3e376472ab6604164eea838ea 100644
+--- a/packages/api/src/agents/triggers/README.md
++++ b/packages/api/src/agents/triggers/README.md
+@@ -116,6 +116,14 @@ migration is needed; optional activity reporting preserves the existing numeric/
+ 
+ ## Remote event ingress
+ 
++Generic external executors use the separately gated
++[external task callback tool and webhook](../../../../../docs/task-callbacks.md).
++That adapter seals a bounded terminal result and recoverable outbox handoff before
++202, then publishes a `task_callback_v1` capability-fenced internal continuation.
++It revalidates the original conversation branch at dispatch and needs no producer
++heartbeat. The bearer is neither a Remote Agents key nor a public child binding;
++the existing event-driven child actor semantics below are unchanged.
++
+ Authenticated controllers and source adapters can enqueue the same durable envelope through
+ `POST /api/agents/v1/events`. The endpoint uses Remote Agents API-key authentication, the remote
+ agents feature permission, and the target agent's existing remote-view ACL. Send exactly one
+diff --git a/packages/api/src/agents/triggers/service.delivery.spec.ts b/packages/api/src/agents/triggers/service.delivery.spec.ts
+index 287340c1dd6ef67ed7a34c63c53e4661a76e6b0f..2d94ab1aab9a2d42898a673860255746efa1ae66 100644
+--- a/packages/api/src/agents/triggers/service.delivery.spec.ts
++++ b/packages/api/src/agents/triggers/service.delivery.spec.ts
+@@ -5,6 +5,7 @@ import {
+   AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
++  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
+   getTenantId,
+   SYSTEM_TENANT_ID,
+ } from '@librechat/data-schemas';
+@@ -190,6 +191,7 @@ describe('durable agent trigger service', () => {
+           AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_V1,
+           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
+           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
++          AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
+           AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
+         ],
+       }),
+@@ -426,6 +428,7 @@ describe('durable agent trigger service', () => {
+           AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_V1,
+           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
+           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
++          AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
+         ],
+       }),
+     );
+diff --git a/packages/api/src/agents/triggers/service.ts b/packages/api/src/agents/triggers/service.ts
+index 5993d8819cac93873255d1dfe8f6bf67afd58f93..fb6515b8be112a78ef2b1795d770d6b04a2fab63 100644
+--- a/packages/api/src/agents/triggers/service.ts
++++ b/packages/api/src/agents/triggers/service.ts
+@@ -6,6 +6,7 @@ import {
+   AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
++  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
+   logger,
+   runAsSystem,
+ } from '@librechat/data-schemas';
+@@ -280,6 +281,7 @@ function createDeliveryStore(
+           AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_V1,
+           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
+           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
++          AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
+           ...(supportsDetachedActionCompletion()
+             ? [AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1]
+             : []),
+diff --git a/packages/api/src/code/command.ts b/packages/api/src/code/command.ts
+index 81e5750af312a1b0b4fc42aaa8826403537875c8..ed5ac470c12da56f5ec9b37066ae98d72e013ebf 100644
+--- a/packages/api/src/code/command.ts
++++ b/packages/api/src/code/command.ts
+@@ -29,6 +29,7 @@ import {
+   WORKSPACE_QUEUE_MAX_WAIT_MS,
+ } from './workspace';
+ import { BACKGROUND_TOOL_INVOCATION_CONFIG_KEY } from '~/agents/invocation';
++import { bindPtcCallbackContext } from '~/agents/ptc';
+ 
+ const DEFAULT_OUTPUT_BYTES = 256 * 1024;
+ 
+@@ -393,7 +394,7 @@ export function createContextProgrammaticBashTool(
+   const configuredDefault = attached
+     ? context.codeEnvironmentConfigSchema?.limits?.defaultCommandTimeoutMs
+     : undefined;
+-  if (configuredDefault == null) return bashTool;
++  if (configuredDefault == null) return bindPtcCallbackContext(bashTool);
+ 
+   const maxTimeoutMs = options.runTimeoutMs ?? WORKSPACE_COMMAND_DEFAULT_TIMEOUT_MS;
+   const schema = structuredClone(bashTool.schema) as ReturnType<
+@@ -417,7 +418,7 @@ export function createContextProgrammaticBashTool(
+     const params = input as { timeout?: number };
+     return execute({ ...params, timeout: params.timeout ?? defaultTimeoutMs }, ...args);
+   };
+-  return bashTool;
++  return bindPtcCallbackContext(bashTool);
+ }
+ 
+ /** Apply authorship before the SDK prepares the script and its replay requests. */
+diff --git a/packages/api/src/langfuse/config.spec.ts b/packages/api/src/langfuse/config.spec.ts
+index 16dda9ec05d4adc493c2769f2142985b1073e235..89f0540f9b18b9dd466030038f4e75af85bcb6a0 100644
+--- a/packages/api/src/langfuse/config.spec.ts
++++ b/packages/api/src/langfuse/config.spec.ts
+@@ -32,6 +32,15 @@ function clearEnv() {
+ }
+ 
+ describe('buildLangfuseConfig', () => {
++  it('redacts callback registration tool output when external callbacks are enabled', async () => {
++    const { buildLangfuseConfig } = await import('./config');
++    const config = buildLangfuseConfig({
++      appConfig: {
++        endpoints: { agents: { taskCallbacks: { enabled: true } } },
++      } as unknown as AppConfig,
++    });
++    expect(config.toolOutputTracing?.redactedToolNames).toContain('create_task_callback');
++  });
+   beforeEach(() => {
+     clearEnv();
+     process.env.TENANT_ISOLATION_STRICT = 'true';
+diff --git a/packages/api/src/langfuse/config.ts b/packages/api/src/langfuse/config.ts
+index 10e626ed79ac96b155331f5d756ebf6c97064262..0121bf70e7dbafd18ad4d5d80b233e463386ef4b 100644
+--- a/packages/api/src/langfuse/config.ts
++++ b/packages/api/src/langfuse/config.ts
+@@ -276,6 +276,9 @@ export function buildLangfuseConfig({
+ 
+   const langfuse: LangfuseRunConfigWithTraceAttributes = {
+     deterministicTraceId: true,
++    ...(appConfig?.endpoints?.agents?.taskCallbacks?.enabled === true && {
++      toolOutputTracing: { redactedToolNames: ['create_task_callback'] },
++    }),
+   };
+   const traceUserId = resolveLangfuseTraceUserId(config?.trace, user);
+   if (traceUserId != null) {
+diff --git a/packages/api/src/tools/classification.ts b/packages/api/src/tools/classification.ts
+index 6f9439a35cd9b15a8132a231283eb8fdf8d5349d..62159549a5a3b9500c11cbb3e4841c9ececadaae 100644
+--- a/packages/api/src/tools/classification.ts
++++ b/packages/api/src/tools/classification.ts
+@@ -36,6 +36,7 @@ import { supportsProgrammaticCodeExecution } from '~/code/capabilities';
+ import { createContextProgrammaticBashTool } from '~/code/command';
+ import { sanitizeGeminiSchema } from '~/mcp/zod';
+ import { capturePersistedToolOptions } from '~/agents/options';
++import { TASK_CALLBACK_TOOL, TaskCallbackToolDefinition } from '~/agents/callbackDefinition';
+ 
+ export type { LCTool, LCToolRegistry, AllowedCaller, JsonSchemaType };
+ 
+@@ -414,7 +415,8 @@ export async function buildToolClassification(
+   const additionalTools: GenericTool[] = [];
+ 
+   const mcpTools = loadedTools.filter(isMCPTool);
+-  if (mcpTools.length === 0) {
++  const hasTaskCallback = loadedTools.some((tool) => tool.name === TASK_CALLBACK_TOOL);
++  if (mcpTools.length === 0 && !hasTaskCallback) {
+     return {
+       additionalTools,
+       toolDefinitions: [],
+@@ -428,6 +430,18 @@ export async function buildToolClassification(
+   const mcpToolAliases = collectMCPToolAliases(mcpToolDefs);
+   aliasMCPToolOptions(mcpToolAliases, agentToolOptions);
+   const toolRegistry: LCToolRegistry = buildToolRegistry(mcpToolDefs, agentToolOptions);
++  if (hasTaskCallback) {
++    toolRegistry.set(TASK_CALLBACK_TOOL, {
++      name: TASK_CALLBACK_TOOL,
++      description: TaskCallbackToolDefinition.description,
++      parameters: TaskCallbackToolDefinition.schema,
++      allowed_callers: agentToolOptions?.[TASK_CALLBACK_TOOL]?.allowed_callers?.includes(
++        'code_execution',
++      )
++        ? ['direct', 'code_execution']
++        : ['direct'],
++    });
++  }
+ 
+   /** Clean up temporary mcpJsonSchema property from tools now that registry is populated */
+   cleanupMCPToolSchemas(mcpTools);
+diff --git a/packages/api/src/tools/definitions.spec.ts b/packages/api/src/tools/definitions.spec.ts
+index fa87c3c6e2544f193055e9e9f93edfc92d0961dc..a0949d3f5c1bba22875536debee723c27577a65b 100644
+--- a/packages/api/src/tools/definitions.spec.ts
++++ b/packages/api/src/tools/definitions.spec.ts
+@@ -1,10 +1,16 @@
+-import { Providers, WebSearchToolDefinition, GitHubCompareToolDefinition } from '@librechat/agents';
++import {
++  Constants,
++  Providers,
++  WebSearchToolDefinition,
++  GitHubCompareToolDefinition,
++} from '@librechat/agents';
+ import type {
+   LoadToolDefinitionsParams,
+   LoadToolDefinitionsDeps,
+   ActionToolDefinition,
+ } from './definitions';
+ import { toolkitExpansion, toolkitParent } from './toolkits/mapping';
++import { TASK_CALLBACK_TOOL } from '~/agents/callbackDefinition';
+ import { getToolDefinition } from './registry/definitions';
+ import { getToolApprovalIdentity } from './approval';
+ import { loadToolDefinitions } from './definitions';
+@@ -34,6 +40,56 @@ describe('definitions.ts', () => {
+   });
+ 
+   describe('loadToolDefinitions', () => {
++    it.each<{ callers?: Array<'direct' | 'code_execution'> }>([
++      {},
++      { callers: [] },
++      { callers: ['direct'] },
++      { callers: ['code_execution'] },
++      { callers: ['direct', 'code_execution'] },
++    ])('opts only an explicitly bound callback into PTC (%p)', async ({ callers }) => {
++      const result = await loadToolDefinitions(
++        {
++          userId: 'user',
++          agentId: 'agent',
++          tools: [TASK_CALLBACK_TOOL, 'calculator', 'ask_user_question'],
++          toolOptions: {
++            [TASK_CALLBACK_TOOL]: { allowed_callers: callers ? [...callers] : undefined },
++            calculator: { allowed_callers: ['code_execution'] },
++            ask_user_question: { allowed_callers: ['code_execution'] },
++          },
++          programmaticToolsEnabled: true,
++          codeExecutionEnabled: true,
++        },
++        { getOrFetchMCPServerTools: mockGetOrFetchMCPServerTools, isBuiltInTool: () => true },
++      );
++      const enabled = callers?.includes('code_execution') === true;
++      expect(result.toolRegistry.get(TASK_CALLBACK_TOOL)?.allowed_callers).toEqual(
++        enabled ? ['direct', 'code_execution'] : ['direct'],
++      );
++      expect(result.toolRegistry.get('calculator')?.allowed_callers).toEqual(['direct']);
++      expect(result.toolRegistry.get('ask_user_question')?.allowed_callers).toEqual(['direct']);
++      expect(
++        result.toolDefinitions.some(
++          (tool) => tool.name === Constants.BASH_PROGRAMMATIC_TOOL_CALLING,
++        ),
++      ).toBe(enabled);
++    });
++
++    it('does not create an unbound native callback from tool_options', async () => {
++      const result = await loadToolDefinitions(
++        {
++          userId: 'user',
++          agentId: 'agent',
++          tools: ['calculator'],
++          toolOptions: { [TASK_CALLBACK_TOOL]: { allowed_callers: ['code_execution'] } },
++          programmaticToolsEnabled: true,
++          codeExecutionEnabled: true,
++        },
++        { getOrFetchMCPServerTools: mockGetOrFetchMCPServerTools, isBuiltInTool: () => true },
++      );
++      expect(result.toolRegistry.has(TASK_CALLBACK_TOOL)).toBe(false);
++    });
++
+     it.each([undefined, false, true])(
+       'gates selected comparison definitions on explicit opt-in (%p)',
+       async (githubCompareEnabled) => {
+diff --git a/packages/api/src/tools/definitions.ts b/packages/api/src/tools/definitions.ts
+index ebbcfa3b0f73addf11d8bd6f85a8773ff053c002..f38e918f9f098fe4c51674c22b3cd3b9ee681d8e 100644
+--- a/packages/api/src/tools/definitions.ts
++++ b/packages/api/src/tools/definitions.ts
+@@ -25,6 +25,7 @@ import { buildToolClassification } from './classification';
+ import { getToolDefinition } from './registry/definitions';
+ import { toolkitExpansion } from './toolkits/mapping';
+ import { isMCPAllPlaceholder } from '~/mcp/utils';
++import { TASK_CALLBACK_TOOL } from '~/agents/callbackDefinition';
+ 
+ export interface MCPServerTool {
+   function?: {
+@@ -405,6 +406,10 @@ export async function loadToolDefinitions(
+       getToolApprovalIdentity(def),
+     ),
+   ) as unknown as GenericTool[];
++  // Classification must see this binding before deciding whether to add the PTC runner.
++  if (builtInToolDefs.some((definition) => definition.name === TASK_CALLBACK_TOOL)) {
++    loadedTools.push({ name: TASK_CALLBACK_TOOL } as GenericTool);
++  }
+ 
+   const classificationResult = await buildToolClassification({
+     userId,
+diff --git a/packages/api/src/tools/registry/definitions.ts b/packages/api/src/tools/registry/definitions.ts
+index 846a4268816986fe32e66ef09bf2e99cc3f5e3a8..8d5979005951e6cc71d95d746ff3b03da5650ab7 100644
+--- a/packages/api/src/tools/registry/definitions.ts
++++ b/packages/api/src/tools/registry/definitions.ts
+@@ -5,6 +5,7 @@ import {
+ } from '@librechat/agents';
+ import type { ExtendedJsonSchema } from './schema';
+ import { AskUserQuestionToolDefinition } from '~/agents/hitl/askUserQuestionTool';
++import { TaskCallbackToolDefinition } from '~/agents/callbackDefinition';
+ import { geminiToolkit } from '~/tools/toolkits/gemini';
+ import { oaiToolkit } from '~/tools/toolkits/oai';
+ 
+@@ -427,6 +428,12 @@ const agentToolDefinitions: Record<string, ToolRegistryDefinition> = {
+     schema: AskUserQuestionToolDefinition.schema as ExtendedJsonSchema,
+     toolType: 'builtin',
+   },
++  [TaskCallbackToolDefinition.name]: {
++    name: TaskCallbackToolDefinition.name,
++    description: TaskCallbackToolDefinition.description,
++    schema: TaskCallbackToolDefinition.schema as ExtendedJsonSchema,
++    toolType: 'builtin',
++  },
+ };
+ 
+ export function getToolDefinition(toolName: string): ToolRegistryDefinition | undefined {
+diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
+index df875c20fc67e76a7cabedce0d133a97cce9b4fe..54c0550ae71a00ad4f813a8eaebf6c6fedfbb9d0 100644
+--- a/packages/data-provider/src/config.ts
++++ b/packages/data-provider/src/config.ts
+@@ -39,6 +39,7 @@ import {
+   scheduledMCPResourceBindingSchema,
+   scheduledMCPReadOnlyPolicySchema,
+ } from './types/scheduleConsent';
++import { taskCallbackConfigSchema } from './taskCallbacks';
+ import { partialWithoutDefaults } from './zod';
+ 
+ export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_DEFAULT = 24 * 1024;
+@@ -861,6 +862,7 @@ export enum AgentCapabilities {
+   skills = 'skills',
+   memory = 'memory',
+   ask_user_question = 'ask_user_question',
++  task_callbacks = 'task_callbacks',
+   tools = 'tools',
+   /** @deprecated Retained for legacy configuration. Chain authoring is retired. */
+   chain = 'chain',
+@@ -2171,6 +2173,7 @@ export const agentsEndpointSchema = baseEndpointSchema
+           sharedCacheSlots: z.number().int().min(64).max(1_000_000).optional().default(65_536),
+         })
+         .optional(),
++      taskCallbacks: taskCallbackConfigSchema.optional(),
+       /** Conversational background-task delivery policy. Automatic completion wakeups are
+        * enabled unless an administrator explicitly restores poll-only behavior. */
+       backgroundTasks: z
+diff --git a/packages/data-provider/src/index.ts b/packages/data-provider/src/index.ts
+index 001156490d4bc3ac9a035b42b1f9d4e5937d8aed..3d2bc94e09da55140b50306311ea1ebf46b3d451 100644
+--- a/packages/data-provider/src/index.ts
++++ b/packages/data-provider/src/index.ts
+@@ -111,5 +111,6 @@ export * from './code/workspace';
+ export * from './types/scheduleConsent';
+ 
+ export * from './approval';
++export * from './taskCallbacks';
+ 
+ export * from './codeSetup';
+diff --git a/packages/data-provider/src/taskCallbacks.spec.ts b/packages/data-provider/src/taskCallbacks.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..175eb08776048eb34a6b06458e86026377b59291
+--- /dev/null
++++ b/packages/data-provider/src/taskCallbacks.spec.ts
+@@ -0,0 +1,48 @@
++import {
++  taskCallbackBodySchema,
++  taskCallbackConfigSchema,
++  redactTaskCallbackIds,
++} from './taskCallbacks';
++import { configSchema } from './config';
++
++describe('external task callback contract', () => {
++  it('defaults off and admits explicit deployment configuration', () => {
++    expect(taskCallbackConfigSchema.parse({})).toMatchObject({
++      enabled: false,
++      ttlMs: 86400000,
++      maxOutputBytes: 32768,
++    });
++    const config = configSchema.parse({
++      version: '1.3.8',
++      endpoints: {
++        agents: {
++          taskCallbacks: {
++            enabled: true,
++            publicUrl: 'https://chat.example/api/agents/task-callbacks',
++            ttlMs: 60000,
++          },
++        },
++      },
++    });
++    expect(config.endpoints?.agents?.taskCallbacks?.ttlMs).toBe(60000);
++    expect(taskCallbackConfigSchema.safeParse({ ttlMs: 0 }).success).toBe(false);
++    expect(taskCallbackConfigSchema.safeParse({ maxOutputBytes: 32769 }).success).toBe(false);
++  });
++  it('only admits the shared terminal protocol; display projection masks streamed prefixes', () => {
++    const body = {
++      version: 1,
++      callback_id: `tcb_${'a'.repeat(43)}`,
++      status: 'success',
++      output: 'done',
++    };
++    expect(taskCallbackBodySchema.parse(body)).toEqual(body);
++    for (const field of ['target', 'input', 'prompt', 'mode', 'metadata']) {
++      expect(taskCallbackBodySchema.safeParse({ ...body, [field]: 'untrusted' }).success).toBe(
++        false,
++      );
++    }
++    expect(redactTaskCallbackIds(`Task ${body.callback_id} finished; tcb_partial`)).toBe(
++      'Task [task callback] finished; [task callback]',
++    );
++  });
++});
+diff --git a/packages/data-provider/src/taskCallbacks.ts b/packages/data-provider/src/taskCallbacks.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e8c7cf527bf6d94c1647a95116e22ff10b566a04
+--- /dev/null
++++ b/packages/data-provider/src/taskCallbacks.ts
+@@ -0,0 +1,43 @@
++import { z } from 'zod';
++
++export const TASK_CALLBACK_OUTPUT_MAX_BYTES = 32_768;
++export const taskCallbackConfigSchema = z.object({
++  enabled: z.boolean().default(false),
++  publicUrl: z.string().url().optional(),
++  ttlMs: z.number().int().min(60_000).max(604_800_000).default(86_400_000),
++  receiptRetentionMs: z.number().int().min(86_400_000).max(7_776_000_000).default(604_800_000),
++  maxOutputBytes: z
++    .number()
++    .int()
++    .min(1)
++    .max(TASK_CALLBACK_OUTPUT_MAX_BYTES)
++    .default(TASK_CALLBACK_OUTPUT_MAX_BYTES),
++  requestsPerMinute: z.number().int().min(1).max(10_000).default(60),
++  recoveryIntervalMs: z.number().int().min(1000).max(300_000).default(30_000),
++  recoveryBatchSize: z.number().int().min(1).max(1000).default(25),
++  branchMessageLimit: z.number().int().min(10).max(10_000).default(2000),
++});
++
++export type TaskCallbackConfig = z.infer<typeof taskCallbackConfigSchema>;
++
++/** No routing, prompt, metadata, or execution controls cross this boundary. */
++export const taskCallbackBodySchema = z
++  .object({
++    version: z.literal(1),
++    callback_id: z.string().regex(/^tcb_[A-Za-z0-9_-]{43}$/),
++    status: z.enum(['success', 'error', 'cancelled']),
++    output: z.string().max(TASK_CALLBACK_OUTPUT_MAX_BYTES),
++  })
++  .strict();
++
++export type TaskCallbackBody = z.infer<typeof taskCallbackBodySchema>;
++export interface TaskCallbackReceipt {
++  version: 1;
++  receipt_id: string;
++  accepted_at: string;
++}
++
++/** Display/diagnostic projection only; model-bound tool traffic retains the bearer. */
++export function redactTaskCallbackIds(text: string): string {
++  return text.replace(/\btcb_[A-Za-z0-9_-]*/g, '[task callback]');
++}
+diff --git a/packages/data-schemas/src/config/parsers.spec.ts b/packages/data-schemas/src/config/parsers.spec.ts
+index a43b0b229b820b937c18d1618f7264816bec563b..27e6bd642466a1b633b44b00a60048da93c7dfd8 100644
+--- a/packages/data-schemas/src/config/parsers.spec.ts
++++ b/packages/data-schemas/src/config/parsers.spec.ts
+@@ -50,6 +50,9 @@ function buildInfo(level: string, meta: Record<string, unknown>): FormatterInfo
+ }
+ 
+ describe('redactMessage', () => {
++  it('redacts external task bearers in incidental messages', () => {
++    expect(redactMessage(`callback tcb_${'x'.repeat(43)}`)).toBe('callback tcb_[REDACTED]');
++  });
+   it('redacts sensitive token patterns anywhere in a message', () => {
+     expect(redactMessage('token: sk-abc123def')).toBe('token: sk-[REDACTED]');
+     expect(redactMessage('auth Bearer secretvalue')).toBe('auth Bearer [REDACTED]');
+diff --git a/packages/data-schemas/src/config/parsers.ts b/packages/data-schemas/src/config/parsers.ts
+index e65ba823857ac50853be88c804964d27b6e6748f..8931fe83f33237b27df0e9352d18cc586f3f12ec 100644
+--- a/packages/data-schemas/src/config/parsers.ts
++++ b/packages/data-schemas/src/config/parsers.ts
+@@ -45,6 +45,7 @@ const MAX_STRIP_DEPTH = 6;
+ const PRESERVED_ERROR_PROPS = ['message', 'stack', 'name', 'code'] as const;
+ 
+ const sensitiveKeys: RegExp[] = [
++  /\b(tcb_)[A-Za-z0-9_-]+/g,
+   /\b(sk-)[a-zA-Z0-9_-]+/g, // OpenAI API key pattern
+   /\b(Bearer )[^\s"']+/g, // Header: Bearer token pattern
+   /\b(api-key:? )[^\s"']+/gi, // Header: API key pattern
+@@ -75,7 +76,7 @@ const REDACTION_WINDOW_SLACK = 1024;
+ const REDACTED_EMAIL_VALUE = '[REDACTED_EMAIL]';
+ 
+ const sensitiveMetadataKey =
+-  /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|appid|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|assertion|client[-_]?assertion|client[-_]?secret|code[-_]?verifier|credential|signature|connection[-_]?string)$/i;
++  /^(callback_id|encryptedId|authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|appid|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|assertion|client[-_]?assertion|client[-_]?secret|code[-_]?verifier|credential|signature|connection[-_]?string)$/i;
+ const errorStringProperties = new Set(['name', 'message', 'stack']);
+ 
+ /**
+diff --git a/packages/data-schemas/src/index.ts b/packages/data-schemas/src/index.ts
+index dbd5b35728f45e3fbaa2ad9de6202a29a69594ce..f9e256fd402492e09612c0c0e3c6e7807472906a 100644
+--- a/packages/data-schemas/src/index.ts
++++ b/packages/data-schemas/src/index.ts
+@@ -83,6 +83,7 @@ export {
+   AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
++  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
+ } from './types/triggerDelivery';
+ export type * from './types';
+ export type * from './methods';
+@@ -120,6 +121,12 @@ export {
+   backfillSearchTokens,
+   warnOnMissingSearchTokens,
+ } from './migrations';
++export { createTaskCallbackMethods } from './methods/taskCallback';
++export type {
++  TaskCallbackMethods,
++  TaskCallbackRecord,
++  SealTaskCallbackResult,
++} from './methods/taskCallback';
+ export type { SearchTokenBackfillResult } from './migrations';
+ 
+ export { createBrowserSetupStore, createBrowserSetupBackend } from './methods/browserSetup';
+diff --git a/packages/data-schemas/src/methods/index.ts b/packages/data-schemas/src/methods/index.ts
+index 65db79867b79c36bb863bfae67abb0e126ba6359..7d1ee4138f4279f024c8d64e5319b9ff0893cad3 100644
+--- a/packages/data-schemas/src/methods/index.ts
++++ b/packages/data-schemas/src/methods/index.ts
+@@ -8,10 +8,12 @@ export type {
+ } from './subagentContent';
+ import type { ToolApprovalGrantStorage } from 'librechat-data-provider';
+ import type { ScheduleMCPConsentStorage } from './scheduleConsent';
++import type { TaskCallbackMethods } from './taskCallback';
+ import type { ClearFileCodeEnvRefsParams } from '~/types/file';
+ import type { FileStorageMethods } from './fileStorage';
+ import { createToolApprovalGrantMethods } from './toolApprovalGrant';
+ import { createScheduleMCPConsentStorage } from './scheduleConsent';
++import { createTaskCallbackMethods } from './taskCallback';
+ export { createScheduleMCPConsentStorage } from './scheduleConsent';
+ export type { ScheduleMCPConsentStorage, ScheduleConsentSnapshot } from './scheduleConsent';
+ import type {
+@@ -320,6 +322,7 @@ export type AllMethods = SubagentContentMethods &
+   SkillLifecycleMethods &
+   AgentTriggerDeliveryMethods &
+   AgentQueuedTurnMethods &
++  TaskCallbackMethods &
+   ScheduleMCPConsentStorage &
+   ScheduleMethods &
+   AgentMethods &
+@@ -380,12 +383,15 @@ export function createMethods(
+   });
+ 
+   const agentQueuedTurnMethods = createAgentQueuedTurnMethods(mongoose);
++  const taskCallbackMethods = createTaskCallbackMethods(mongoose);
+   const agentTriggerDeliveryMethods = createAgentTriggerDeliveryMethods(mongoose, {
+     releaseBatchProjections: messageMethods.releaseBackgroundToolResultClaims,
+-    purgeQueuedTurnsForUser: (user) =>
+-      agentQueuedTurnMethods.deleteAllAgentQueuedTurnsForUser({
++    purgeQueuedTurnsForUser: async (user) => {
++      await taskCallbackMethods.deleteTaskCallbacks(user.toString());
++      await agentQueuedTurnMethods.deleteAllAgentQueuedTurnsForUser({
+         user: typeof user === 'string' ? new mongoose.Types.ObjectId(user) : user,
+-      }),
++      });
++    },
+   });
+ 
+   const conversationMethods = createConversationMethods(mongoose, {
+@@ -397,6 +403,10 @@ export function createMethods(
+     prepareAgentTriggerConversationResultErasure:
+       agentTriggerDeliveryMethods.prepareAgentTriggerConversationResultErasure,
+     deleteAgentQueuedTurns: async (user, conversations) => {
++      await taskCallbackMethods.deleteTaskCallbacks(
++        user,
++        conversations.map((c) => c.conversationId),
++      );
+       /** Queued-turn ownership is ObjectId-backed. Conversation methods also
+        * support synthetic/non-ObjectId owners in embedded integrations and
+        * tests; those owners cannot have queued-turn rows to retire. */
+@@ -570,6 +580,7 @@ export function createMethods(
+     ...createSkillLifecycleMethods(mongoose),
+     ...agentTriggerDeliveryMethods,
+     ...agentQueuedTurnMethods,
++    ...taskCallbackMethods,
+     ...createScheduleMethods(mongoose),
+     ...createScheduleMCPConsentStorage(mongoose),
+     /* Tier 5 */
+diff --git a/packages/data-schemas/src/methods/taskCallback.ts b/packages/data-schemas/src/methods/taskCallback.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..7c3adcc969161a65711d86958a644804997268d2
+--- /dev/null
++++ b/packages/data-schemas/src/methods/taskCallback.ts
+@@ -0,0 +1,169 @@
++import { Schema } from 'mongoose';
++import type { TaskCallbackBody, TaskCallbackReceipt } from 'librechat-data-provider';
++import type { Model } from 'mongoose';
++import { applyTenantIsolation } from '~/models/plugins/tenantIsolation';
++import { createIndexesWithRetry } from '~/utils/retry';
++import { runAsSystem } from '~/config/tenantContext';
++
++export interface TaskCallbackRecord {
++  hash: string;
++  registrationKey: string;
++  encryptedId: string;
++  receiptId: string;
++  user: string;
++  tenantId?: string;
++  agentId: string;
++  conversationId: string;
++  messageId: string;
++  createdAt: Date;
++  callbackExpiresAt: Date;
++  expiresAt: Date;
++  result?: Pick<TaskCallbackBody, 'status' | 'output'>;
++  resultDigest?: string;
++  acceptedAt?: Date;
++  pending: boolean;
++  deliveryKey?: string;
++  /** Freeze the branch before transport; lost admissions replay the same parent. */
++  dispatchParentId?: string;
++  admittedAt?: Date;
++}
++
++const schema = new Schema<TaskCallbackRecord>(
++  {
++    hash: { type: String, required: true, unique: true },
++    registrationKey: { type: String, required: true, unique: true },
++    encryptedId: { type: String, required: true, select: false },
++    receiptId: { type: String, required: true, unique: true },
++    user: { type: String, required: true, index: true },
++    tenantId: String,
++    agentId: { type: String, required: true },
++    conversationId: { type: String, required: true, index: true },
++    messageId: { type: String, required: true },
++    createdAt: { type: Date, required: true },
++    callbackExpiresAt: { type: Date, required: true },
++    expiresAt: { type: Date, required: true, expires: 0 },
++    result: {
++      type: new Schema(
++        {
++          status: { type: String, enum: ['success', 'error', 'cancelled'] },
++          output: { type: String, maxlength: 32768 },
++        },
++        { _id: false },
++      ),
++      select: false,
++    },
++    resultDigest: String,
++    acceptedAt: Date,
++    pending: { type: Boolean, required: true },
++    deliveryKey: String,
++    dispatchParentId: String,
++    admittedAt: Date,
++  },
++  { versionKey: false },
++);
++schema.index({ pending: 1, acceptedAt: 1 });
++
++export function createTaskCallbackModel(
++  mongoose: typeof import('mongoose'),
++): Model<TaskCallbackRecord> {
++  applyTenantIsolation(schema);
++  return mongoose.models.TaskCallback || mongoose.model<TaskCallbackRecord>('TaskCallback', schema);
++}
++
++function receipt(record: TaskCallbackRecord): TaskCallbackReceipt {
++  if (record.acceptedAt == null) throw new Error('Callback receipt is not sealed');
++  return { version: 1, receipt_id: record.receiptId, accepted_at: record.acceptedAt.toISOString() };
++}
++
++export type SealTaskCallbackResult =
++  | { ok: true; receipt: TaskCallbackReceipt; record: TaskCallbackRecord }
++  | { ok: false; code: 'CALLBACK_NOT_FOUND' | 'CALLBACK_CONFLICT' | 'CALLBACK_EXPIRED' };
++
++/** The sole bearer is hashed before this storage boundary. Ingress lookup and
++ * recovery are explicit system operations; all execution reads retain owner scope. */
++export function createTaskCallbackMethods(mongoose: typeof import('mongoose')) {
++  const model = createTaskCallbackModel(mongoose);
++  return {
++    ensureTaskCallbackIndexes: async (): Promise<void> => {
++      await createIndexesWithRetry(model);
++    },
++    registerTaskCallback: async (input: TaskCallbackRecord): Promise<TaskCallbackRecord> => {
++      try {
++        await model.create(input);
++      } catch (error) {
++        if ((error as { code?: number }).code !== 11000) throw error;
++      }
++      const stored = await model
++        .findOne({ registrationKey: input.registrationKey, user: input.user })
++        .select('+encryptedId')
++        .lean();
++      if (stored == null) throw new Error('Callback registration unavailable');
++      return stored;
++    },
++    sealTaskCallback: async (
++      hash: string,
++      digest: string,
++      result: Pick<TaskCallbackBody, 'status' | 'output'>,
++      now: Date,
++    ): Promise<SealTaskCallbackResult> =>
++      runAsSystem(async () => {
++        const record = await model
++          .findOneAndUpdate(
++            {
++              hash,
++              resultDigest: { $exists: false },
++              callbackExpiresAt: { $gt: now },
++              expiresAt: { $gt: now },
++            },
++            { $set: { resultDigest: digest, result, acceptedAt: now, pending: true } },
++            { new: true },
++          )
++          .lean();
++        const current = record ?? (await model.findOne({ hash }).lean());
++        if (current == null) return { ok: false, code: 'CALLBACK_NOT_FOUND' };
++        if (current.expiresAt.getTime() <= now.getTime())
++          return { ok: false, code: 'CALLBACK_EXPIRED' };
++        if (current.resultDigest == null) return { ok: false, code: 'CALLBACK_EXPIRED' };
++        if (current.resultDigest !== digest) return { ok: false, code: 'CALLBACK_CONFLICT' };
++        return { ok: true, receipt: receipt(current), record: current };
++      }),
++    getTaskCallback: async (receiptId: string, user: string): Promise<TaskCallbackRecord | null> =>
++      model.findOne({ receiptId, user }).select('+result').lean(),
++    freezeTaskCallbackParent: async (
++      receiptId: string,
++      user: string,
++      parentId: string,
++    ): Promise<string | undefined> => {
++      await model.updateOne(
++        { receiptId, user, dispatchParentId: { $exists: false } },
++        { $set: { dispatchParentId: parentId } },
++      );
++      return (await model.findOne({ receiptId, user }).lean())?.dispatchParentId;
++    },
++    listPendingTaskCallbacks: async (limit: number): Promise<TaskCallbackRecord[]> =>
++      runAsSystem(async () =>
++        model.find({ pending: true }).sort({ acceptedAt: 1 }).limit(limit).lean(),
++      ),
++    markTaskCallbackQueued: async (receiptId: string, deliveryKey: string): Promise<void> =>
++      runAsSystem(async () => {
++        await model.updateOne(
++          { receiptId, pending: true },
++          { $set: { pending: false, deliveryKey } },
++        );
++      }),
++    markTaskCallbackAdmitted: async (receiptId: string, user: string): Promise<void> => {
++      await model.updateOne(
++        { receiptId, user, admittedAt: { $exists: false } },
++        { $set: { admittedAt: new Date() } },
++      );
++    },
++    deleteTaskCallbacks: async (user: string, conversationIds?: string[]): Promise<void> => {
++      await model.deleteMany({
++        user,
++        ...(conversationIds == null ? {} : { conversationId: { $in: conversationIds } }),
++      });
++    },
++  };
++}
++
++export type TaskCallbackMethods = ReturnType<typeof createTaskCallbackMethods>;
+diff --git a/packages/data-schemas/src/methods/triggerDelivery.ts b/packages/data-schemas/src/methods/triggerDelivery.ts
+index bc54552e507fe5a74e269b007176c1d0b7a534f6..64a9ac114983a7384e944d6db5433f9ce83068ea 100644
+--- a/packages/data-schemas/src/methods/triggerDelivery.ts
++++ b/packages/data-schemas/src/methods/triggerDelivery.ts
+@@ -28,6 +28,7 @@ import {
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+ } from '~/types/triggerDelivery';
++import { AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1 } from '~/types/triggerDelivery';
+ import { createIndexesWithRetry } from '~/utils/retry';
+ import logger from '~/config/winston';
+ 
+@@ -1190,7 +1191,8 @@ export function createAgentTriggerDeliveryMethods(
+         AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_BATCH_V3 &&
+       input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_V1 &&
+       input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1 &&
+-      input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2
++      input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2 &&
++      input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1
+     ) {
+       throw new TypeError('Agent trigger delivery requires an unsupported worker capability');
+     }
+diff --git a/packages/data-schemas/src/models/index.ts b/packages/data-schemas/src/models/index.ts
+index 8081a9310a5b6368530f61ed5e230f7cc4c828d3..506540dadc85fb048a8259d5cd6c70d6dd922216 100644
+--- a/packages/data-schemas/src/models/index.ts
++++ b/packages/data-schemas/src/models/index.ts
+@@ -9,6 +9,7 @@ import { createRefreshTokenBridgeModel } from './refreshTokenBridge';
+ import { createAgentTriggerDeliveryModel } from './triggerDelivery';
+ import { createToolApprovalGrantModel } from './toolApprovalGrant';
+ import { createSkillUploadIntentModel } from './skillUploadIntent';
++import { createTaskCallbackModel } from '../methods/taskCallback';
+ import { createSubagentContentModel } from './subagentContent';
+ import { createSkillSyncStatusModel } from './skillSyncStatus';
+ import { createConversationTagModel } from './conversationTag';
+@@ -158,6 +159,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
+     AgentTriggerLaneSequence: createAgentTriggerLaneSequenceModel(mongoose),
+     AgentTriggerUserPurge: createAgentTriggerUserPurgeModel(mongoose),
+     AgentQueuedTurn: createAgentQueuedTurnModel(mongoose),
++    TaskCallback: createTaskCallbackModel(mongoose),
+     AgentQueuedTurnSequence: createAgentQueuedTurnSequenceModel(mongoose),
+     Schedule: createScheduleModel(mongoose),
+     ScheduleRun: createScheduleRunModel(mongoose),
+diff --git a/packages/data-schemas/src/types/triggerDelivery.ts b/packages/data-schemas/src/types/triggerDelivery.ts
+index 2076cde7c36c11cfa08eaeaeae5154cc8a667010..32d3df2f5a67027b41d2592584041376fd64141b 100644
+--- a/packages/data-schemas/src/types/triggerDelivery.ts
++++ b/packages/data-schemas/src/types/triggerDelivery.ts
+@@ -265,3 +265,4 @@ export interface AgentTriggerOrderingBlock {
+   leaseUntil?: Date;
+   reason?: 'active_handling';
+ }
++export const AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1 = 'task_callback_v1';

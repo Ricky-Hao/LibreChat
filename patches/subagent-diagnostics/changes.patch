@@ -1,0 +1,920 @@
+diff --git a/api/server/services/Endpoints/agents/initialize.js b/api/server/services/Endpoints/agents/initialize.js
+index a76b677ac5a78d6e04e6169c3d4254a407a677d3..6192eaa823049a70528971c61e175a672dc9e8b2 100644
+--- a/api/server/services/Endpoints/agents/initialize.js
++++ b/api/server/services/Endpoints/agents/initialize.js
+@@ -56,6 +56,7 @@ const {
+   getScheduleMCPExecution,
+   getMCPRequestContext,
+   createSubagentCodeRouting,
++  validateSelectedSubagent,
+   hasEntityEmbeddings,
+ } = require('@librechat/api');
+ const {
+@@ -1376,20 +1377,19 @@ const initializeClientWithProvider = async ({
+     viewAccessChecked = false,
+   }) => {
+     throwIfAborted(context.signal);
+-    if (!agent || getLazySubagentConfigId(agent) !== configId) {
+-      throw new Error(`Subagent ${agentId} changed before it could be initialized.`);
+-    }
+-    if (!viewAccessChecked && !(await hasSubagentViewAccess(agent, agentId, context.signal))) {
+-      throw new Error(`You no longer have access to subagent ${agentId}.`);
+-    }
+-    const validation = await waitForAbort(
+-      validateAgentModel({ req, res, agent, modelsConfig, logViolation }),
+-      context.signal,
+-    );
+-    throwIfAborted(context.signal);
+-    if (!validation.isValid) {
+-      throw new Error(validation.error?.message ?? `Subagent ${agentId} failed model validation.`);
+-    }
++    await validateSelectedSubagent({
++      agent,
++      configId,
++      getConfigId: getLazySubagentConfigId,
++      viewAccessChecked,
++      canView: () => hasSubagentViewAccess(agent, agentId, context.signal),
++      validateModel: () =>
++        waitForAbort(
++          validateAgentModel({ req, res, agent, modelsConfig, logViolation }),
++          context.signal,
++        ),
++      signal: context.signal,
++    });
+     const placement = await waitForAbort(
+       subagentCodeRouting.place({
+         agent,
+diff --git a/api/server/services/Endpoints/agents/initialize.spec.js b/api/server/services/Endpoints/agents/initialize.spec.js
+index bd6bba47687d5996179a446997c48d828ba44b48..fc5b4aebf9ec6256178116d2de6d2e517bf5b180 100644
+--- a/api/server/services/Endpoints/agents/initialize.spec.js
++++ b/api/server/services/Endpoints/agents/initialize.spec.js
+@@ -3689,7 +3689,7 @@ describe('initializeClient — subagent loading', () => {
+       agentClientArgs.agent.lazySubagentConfigs[0].resolve({
+         signal: new AbortController().signal,
+       }),
+-    ).rejects.toThrow(`Subagent ${SUBAGENT_ID} changed`);
++    ).rejects.toMatchObject({ code: 'configuration_changed' });
+     expect(mockInitializeAgent).toHaveBeenCalledTimes(1);
+   });
+ 
+@@ -3712,7 +3712,7 @@ describe('initializeClient — subagent loading', () => {
+       agentClientArgs.agent.lazySubagentConfigs[0].resolve({
+         signal: new AbortController().signal,
+       }),
+-    ).rejects.toThrow(`no longer have access to subagent ${SUBAGENT_ID}`);
++    ).rejects.toMatchObject({ code: 'agent_unavailable' });
+     expect(mockInitializeAgent).toHaveBeenCalledTimes(1);
+   });
+ 
+diff --git a/packages/api/src/agents/__tests__/initialize.test.ts b/packages/api/src/agents/__tests__/initialize.test.ts
+index 8cad7a99b1f36f1edaa51e5db98f7ed041baf1b5..b27be69ed7733ecb4471bddd0d6b5a0468fc5fa3 100644
+--- a/packages/api/src/agents/__tests__/initialize.test.ts
++++ b/packages/api/src/agents/__tests__/initialize.test.ts
+@@ -33,6 +33,7 @@ jest.mock('@librechat/agents', () => ({
+ }));
+ 
+ import { Providers } from '@librechat/agents';
++import { Types } from 'mongoose';
+ import { createHash } from 'node:crypto';
+ import { logger } from '@librechat/data-schemas';
+ import { createRepositoryInstructionLoader } from '../../code/instructions';
+@@ -98,6 +99,7 @@ const mockOptionalChainWithEmptyCheck = jest.fn();
+ const mockGetThreadData = jest.fn();
+ 
+ jest.mock('~/utils', () => ({
++  getSafeErrorMetadata: jest.requireActual('~/utils/errors').getSafeErrorMetadata,
+   extractLibreChatParams: (...args: unknown[]) => mockExtractLibreChatParams(...args),
+   getModelMaxTokens: (...args: unknown[]) => mockGetModelMaxTokens(...args),
+   optionalChainWithEmptyCheck: (...args: unknown[]) => mockOptionalChainWithEmptyCheck(...args),
+@@ -141,6 +143,7 @@ jest.mock('../../middleware/modelBoundContent', () => {
+ import { initializeAgent } from '../initialize';
+ import { primeResources } from '../resources';
+ import { isFatalAgentInitializationError } from '../errors';
++import { createSubagentResolutionFailureHandler } from '../initialization';
+ import { canAgentGraphPause } from '../hitl/admission';
+ 
+ const realUtils = jest.requireActual<typeof import('~/utils')>('~/utils');
+@@ -295,6 +298,53 @@ describe('initializeAgent — execution context', () => {
+     jest.clearAllMocks();
+   });
+ 
++  it.each(['provider', 'tools', 'skills'] as const)(
++    'tags actual %s initialization rejection without leaking the exception',
++    async (stage) => {
++      const { agent, req, res, loadTools, db } = createMocks();
++      const error = new Error('private token request query prompt');
++      if (stage === 'provider')
++        mockGetProviderConfig.mockImplementationOnce(() => {
++          throw error;
++        });
++      if (stage === 'tools') loadTools.mockRejectedValue(error);
++      if (stage === 'skills') db.listSkillsByAccess = jest.fn().mockRejectedValue(error);
++      const log = jest.fn();
++      await expect(
++        initializeAgent(
++          {
++            req,
++            res,
++            agent,
++            loadTools,
++            allowedProviders: new Set(),
++            endpointOption: { endpoint: EModelEndpoint.agents },
++            accessibleSkillIds: stage === 'skills' ? [new Types.ObjectId()] : [],
++          },
++          db,
++        ).catch((caught) => {
++          expect(caught).toBe(error);
++          expect(
++            createSubagentResolutionFailureHandler(log)(
++              {
++                phase: 'config',
++                subagentType: 'fixture',
++                aborted: false,
++                type: 'Error',
++                cause: 'unknown',
++                message: 'Subagent error: Unable to initialize the selected subagent.',
++              },
++              caught,
++            ),
++          ).toBe('unknown');
++          throw caught;
++        }),
++      ).rejects.toBe(error);
++      expect(log.mock.calls[0][1]).toMatchObject({ errors: [{ type: 'Error', stage }] });
++      expect(JSON.stringify(log.mock.calls)).not.toContain(error.message);
++    },
++  );
++
+   it.each(['prefer', 'defer', 'off'] as const)(
+     'uses saved repository instruction mode %s in definitions-only initialization',
+     async (mode) => {
+diff --git a/packages/api/src/agents/__tests__/run-codeTools.test.ts b/packages/api/src/agents/__tests__/run-codeTools.test.ts
+index fe2bc395e196b407df9e6ec497a155c6ce4e3105..3b98f25ab16578efc64304f1f73a25baef07c9c5 100644
+--- a/packages/api/src/agents/__tests__/run-codeTools.test.ts
++++ b/packages/api/src/agents/__tests__/run-codeTools.test.ts
+@@ -1,14 +1,16 @@
++import { logger } from '@librechat/data-schemas';
+ import { FileContext } from 'librechat-data-provider';
+ import type { AgentInputs, SubagentTaskConfig, SubagentResolveContext } from '@librechat/agents';
+ import type { FileProvisionCommit } from '@librechat/data-schemas';
+ import type { TFile } from 'librechat-data-provider';
++import type { RunConfig } from '@librechat/agents';
+ import type { ProvisionCallbackDeps, ProvisionToolContext } from '~/files/provision/callback';
+ import type { HostSubagentTaskConfig } from '~/agents/subagentDelivery';
+ import type { ServerRequest } from '~/types';
+-import { reportSubagentResolutionFailure } from '~/agents/failures/subagent';
+ import { createProvisionFilesCallback } from '~/files/provision/callback';
+ import { SUBAGENT_COMPLETION_DELIVERY } from '~/agents/subagentDelivery';
+ import { mergeCodeFilesIntoContext } from '~/agents/codeFilesSession';
++import { SubagentInitializationError } from '~/agents/initialization';
+ import { createFileProvisionRecovery } from '../../files/operations';
+ import { CHECK_BACKGROUND_TASK_NAME } from '~/agents/background';
+ import { createRun } from '~/agents/run';
+@@ -117,6 +119,34 @@ async function captureAgentsRunConfig(
+ describe('createRun code-tool eager/session wiring', () => {
+   beforeEach(() => jest.clearAllMocks());
+ 
++  it('wires correlated safe resolution diagnostics into the SDK run', async () => {
++    await captureRunConfig();
++    const config = (Run.create as jest.Mock).mock.calls[0][0] as RunConfig;
++    const handler = config.onSubagentResolutionFailure;
++    expect(handler).toEqual(expect.any(Function));
++    const cause = handler?.(
++      {
++        phase: 'config',
++        subagentType: 'private child name',
++        aborted: false,
++        type: 'Error',
++        cause: 'unknown',
++        message: 'Subagent error: Unable to initialize the selected subagent.',
++        parentRunId: '11111111-1111-4111-8111-111111111111',
++        childRunId: '22222222-2222-4222-8222-222222222222',
++      },
++      new SubagentInitializationError('model_unavailable'),
++    );
++    expect(cause).toBe('model_unavailable');
++    expect(logger.warn).toHaveBeenCalledWith(
++      '[SubagentExecutor] Subagent initialization failed',
++      expect.objectContaining({ parentRunId: '11111111-1111-4111-8111-111111111111', cause }),
++    );
++    expect(JSON.stringify((logger.warn as jest.Mock).mock.calls)).not.toContain(
++      'private child name',
++    );
++  });
++
+   it('includes queued paths in model instructions and reserves live paths across agents', async () => {
+     const file: TFile = {
+       file_id: 'uploaded',
+@@ -529,9 +559,26 @@ describe('createRun code-tool eager/session wiring', () => {
+     );
+   });
+ 
+-  it('reports why a subagent could not start instead of leaving the SDK to guess', async () => {
++  it('reports why a subagent could not start alongside safe initialization classification', async () => {
+     const runConfig = await captureRunConfig();
+-    expect(runConfig.onSubagentResolutionFailure).toBe(reportSubagentResolutionFailure);
++    const handler = runConfig.onSubagentResolutionFailure as NonNullable<
++      RunConfig['onSubagentResolutionFailure']
++    >;
++    handler(
++      {
++        phase: 'config',
++        subagentType: 'private child name',
++        cause: 'unknown',
++        type: 'Error',
++        aborted: false,
++        message: 'Subagent error: Unable to initialize the selected subagent.',
++      },
++      new Error('provider unavailable'),
++    );
++    expect(logger.warn).toHaveBeenCalledWith(
++      '[subagents] Subagent could not start',
++      expect.objectContaining({ causes: [{ name: 'Error' }] }),
++    );
+   });
+ 
+   it('passes the trusted per-agent code-session partition to the SDK', async () => {
+diff --git a/packages/api/src/agents/index.ts b/packages/api/src/agents/index.ts
+index 834b335059bab330453c35acad8c4e3b0ffdbe14..49d025314cab05545f01003911162dd0bdde47a5 100644
+--- a/packages/api/src/agents/index.ts
++++ b/packages/api/src/agents/index.ts
+@@ -99,4 +99,5 @@ export * from './remote';
+ export * from './queuedTurns';
+ export * from './queuedTurnHttp';
+ export * from './files/index';
++export * from './initialization';
+ export { captureAuthoredSkills, restoreAuthoredSkills } from './authored';
+diff --git a/packages/api/src/agents/initialization.spec.ts b/packages/api/src/agents/initialization.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..88b6e4a4e692733ac380881ed87decab49b5df03
+--- /dev/null
++++ b/packages/api/src/agents/initialization.spec.ts
+@@ -0,0 +1,179 @@
++import { GraphInterrupt } from '@langchain/langgraph';
++import type { SubagentResolutionDiagnostic } from '@librechat/agents';
++import {
++  createSubagentResolutionFailureHandler,
++  SubagentInitializationError,
++  validateSelectedSubagent,
++  withInitializationStage,
++} from './initialization';
++
++const secret = 'Bearer private-token query=request prompt=secret 401';
++const detail: SubagentResolutionDiagnostic = {
++  phase: 'config',
++  subagentType: secret,
++  aborted: false,
++  type: 'Error',
++  cause: 'unknown',
++  message: 'Subagent error: Unable to initialize the selected subagent.',
++  parentRunId: '11111111-1111-4111-8111-111111111111',
++  childRunId: '22222222-2222-4222-8222-222222222222',
++  parentToolCallId: secret,
++};
++
++describe('subagent initialization diagnostics', () => {
++  it.each(['configuration_changed', 'agent_unavailable', 'model_unavailable'] as const)(
++    'classifies %s through a cause chain without disclosing text',
++    (code) => {
++      const log = jest.fn();
++      const handler = createSubagentResolutionFailureHandler(log);
++      const error = new Error(secret, { cause: new SubagentInitializationError(code) });
++      expect(handler(detail, error)).toBe(code);
++      expect(log.mock.calls[0][1]).toMatchObject({
++        cause: code,
++        parentRunId: detail.parentRunId,
++        childRunId: detail.childRunId,
++      });
++      expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
++    },
++  );
++
++  it.each(['provider', 'tools', 'skills'] as const)(
++    'retains %s stage and unknown cause',
++    async (stage) => {
++      const error = Object.assign(new Error(secret), { name: secret, code: secret, status: 401 });
++      await expect(
++        withInitializationStage(stage, () => {
++          throw error;
++        }),
++      ).rejects.toBe(error);
++      const log = jest.fn();
++      expect(createSubagentResolutionFailureHandler(log)(detail, error)).toBe('unknown');
++      expect(log.mock.calls[0][1]).toMatchObject({
++        errors: [{ type: 'Error', stage, status: 401 }],
++      });
++      expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
++    },
++  );
++
++  it('allowlists MCP codes without misclassifying them as agent permission failures', () => {
++    const log = jest.fn();
++    const handler = createSubagentResolutionFailureHandler(log);
++    expect(
++      handler(detail, Object.assign(new Error(secret), { code: 'MCP_AUTHENTICATION_REJECTED' })),
++    ).toBe('unknown');
++    expect(log.mock.calls[0][1]).toMatchObject({
++      errors: [{ code: 'MCP_AUTHENTICATION_REJECTED' }],
++    });
++  });
++
++  it('bounds circular/deep causes and survives hostile getters and prototype traps', () => {
++    const log = jest.fn();
++    const handler = createSubagentResolutionFailureHandler(log);
++    const hostile = new Proxy(
++      {},
++      {
++        get() {
++          throw new Error(secret);
++        },
++        getPrototypeOf() {
++          throw new Error(secret);
++        },
++      },
++    );
++    expect(handler(detail, hostile)).toBe('unknown');
++    const circular = { cause: {} };
++    circular.cause = circular;
++    expect(handler(detail, circular)).toBe('unknown');
++    let deep: Error = new SubagentInitializationError('model_unavailable');
++    for (let i = 0; i < 20; i++) deep = new Error(secret, { cause: deep });
++    expect(handler(detail, deep)).toBe('unknown');
++    expect(log.mock.calls[2][1].errors).toHaveLength(6);
++    expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
++  });
++
++  it('keeps classification when the logger fails', () => {
++    const handler = createSubagentResolutionFailureHandler(() => {
++      throw new Error(secret);
++    });
++    expect(handler(detail, new SubagentInitializationError('configuration_changed'))).toBe(
++      'configuration_changed',
++    );
++  });
++
++  it('retains SDK host-argument refusals and recognizes a stable LangChain code', () => {
++    const log = jest.fn();
++    const handler = createSubagentResolutionFailureHandler(log);
++    expect(handler({ ...detail, cause: 'host_argument_rejected' }, new Error(secret))).toBe(
++      'host_argument_rejected',
++    );
++    expect(handler(detail, { code: secret, lc_error_code: 'MODEL_NOT_FOUND' })).toBe(
++      'model_unavailable',
++    );
++    expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
++  });
++
++  it.each([new GraphInterrupt([]), new DOMException('Aborted', 'AbortError')])(
++    'preserves control-flow error identity',
++    async (error) => {
++      await expect(withInitializationStage('provider', () => Promise.reject(error))).rejects.toBe(
++        error,
++      );
++    },
++  );
++});
++
++describe('selected subagent preflight', () => {
++  function setup() {
++    return {
++      agent: { version: 'current' },
++      configId: 'current',
++      getConfigId: (agent: { version: string }) => agent.version,
++      canView: jest.fn().mockResolvedValue(true),
++      validateModel: jest.fn().mockResolvedValue({ isValid: true }),
++      signal: new AbortController().signal,
++    };
++  }
++
++  it.each(['configuration', 'permission', 'model'] as const)(
++    'rejects %s before child initialization',
++    async (stage) => {
++      const params = setup();
++      if (stage === 'configuration') params.configId = 'old';
++      if (stage === 'permission') params.canView.mockResolvedValue(false);
++      if (stage === 'model')
++        params.validateModel.mockResolvedValue({ isValid: false, error: { message: secret } });
++      const initialize = jest.fn();
++      const log = jest.fn();
++      const codes = {
++        configuration: 'configuration_changed',
++        permission: 'agent_unavailable',
++        model: 'model_unavailable',
++      };
++      await validateSelectedSubagent(params).then(initialize, (error) => {
++        expect(createSubagentResolutionFailureHandler(log)(detail, error)).toBe(codes[stage]);
++      });
++      expect(initialize).not.toHaveBeenCalled();
++      expect(log.mock.calls[0][1]).toMatchObject({ errors: [{ stage, code: codes[stage] }] });
++      expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
++      if (stage !== 'model') expect(params.validateModel).not.toHaveBeenCalled();
++    },
++  );
++
++  it('reuses prior VIEW check and still validates the model', async () => {
++    const params = setup();
++    await validateSelectedSubagent({ ...params, viewAccessChecked: true });
++    expect(params.canView).not.toHaveBeenCalled();
++    expect(params.validateModel).toHaveBeenCalledTimes(1);
++  });
++
++  it('preserves owned cancellation without invoking the model validator', async () => {
++    const params = setup();
++    const controller = new AbortController();
++    const error = new Error(secret);
++    controller.abort(error);
++    await expect(validateSelectedSubagent({ ...params, signal: controller.signal })).rejects.toBe(
++      error,
++    );
++    expect(params.validateModel).not.toHaveBeenCalled();
++  });
++});
+diff --git a/packages/api/src/agents/initialization.ts b/packages/api/src/agents/initialization.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..1a2a85bc3d8a2cc46a3a9aa65b1292f274820a13
+--- /dev/null
++++ b/packages/api/src/agents/initialization.ts
+@@ -0,0 +1,157 @@
++import { createHash } from 'crypto';
++import type { SubagentResolutionCause, SubagentResolutionFailureHandler } from '@librechat/agents';
++import { getSafeErrorMetadata } from '~/utils/errors';
++
++type InitializationStage =
++  | 'configuration'
++  | 'permission'
++  | 'model'
++  | 'provider'
++  | 'tools'
++  | 'skills';
++type SelectionFailure = 'configuration_changed' | 'agent_unavailable' | 'model_unavailable';
++
++/** Stage annotations preserve exception identity, including cancellation and graph interrupts. */
++const stages = new WeakMap<object, InitializationStage>();
++
++export class SubagentInitializationError extends Error {
++  constructor(public readonly code: SelectionFailure) {
++    super('Selected subagent initialization was rejected.');
++    this.name = 'SubagentInitializationError';
++  }
++}
++
++export async function withInitializationStage<T>(
++  stage: InitializationStage,
++  operation: () => T | Promise<T>,
++): Promise<T> {
++  try {
++    return await operation();
++  } catch (error) {
++    if (error != null && typeof error === 'object' && !stages.has(error)) {
++      stages.set(error, stage);
++    }
++    throw error;
++  }
++}
++
++/** Reuses the selected document and request's authorization/model checks without extra reads. */
++export async function validateSelectedSubagent<T>({
++  agent,
++  configId,
++  getConfigId,
++  canView,
++  validateModel,
++  signal,
++  viewAccessChecked = false,
++}: {
++  agent: T | null | undefined;
++  configId: string;
++  getConfigId: (agent: T) => string;
++  canView: () => Promise<boolean>;
++  validateModel: () => Promise<{ isValid: boolean }>;
++  signal: AbortSignal;
++  viewAccessChecked?: boolean;
++}): Promise<void> {
++  signal.throwIfAborted();
++  await withInitializationStage('configuration', () => {
++    if (agent == null || getConfigId(agent) !== configId) {
++      throw new SubagentInitializationError('configuration_changed');
++    }
++  });
++  await withInitializationStage('permission', async () => {
++    if (!viewAccessChecked && !(await canView())) {
++      throw new SubagentInitializationError('agent_unavailable');
++    }
++  });
++  signal.throwIfAborted();
++  await withInitializationStage('model', async () => {
++    const validation = await validateModel();
++    signal.throwIfAborted();
++    if (!validation.isValid) {
++      throw new SubagentInitializationError('model_unavailable');
++    }
++  });
++}
++
++const knownCodes = new Map<string, SubagentResolutionCause>([
++  ['configuration_changed', 'configuration_changed'],
++  ['agent_unavailable', 'agent_unavailable'],
++  ['model_unavailable', 'model_unavailable'],
++  ['AGENT_EXPECTED_MCP_TOOLS_UNAVAILABLE', 'unknown'],
++  ['MCP_AUTHENTICATION_REJECTED', 'unknown'],
++  ['MCP_AUTHENTICATION_REFRESH_FAILED', 'unknown'],
++  ['MCP_DOMAIN_NOT_ALLOWED', 'unknown'],
++  ['MCP_INSPECTION_FAILED', 'unknown'],
++  ['MODEL_NOT_FOUND', 'model_unavailable'],
++]);
++
++function property(value: object, key: string): unknown {
++  try {
++    return (value as Record<string, unknown>)[key];
++  } catch {
++    return undefined;
++  }
++}
++
++/** UUIDs stay searchable; other identifiers are hashed so names or hostile text cannot leak. */
++function correlation(value: string | undefined): string | undefined {
++  if (typeof value !== 'string' || value.length === 0 || value.length > 512) {
++    return undefined;
++  }
++  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
++    ? value
++    : `sha256:${createHash('sha256').update(value).digest('hex')}`;
++}
++
++/** Only bounded, allowlisted metadata reaches the sink; classification never reads error text. */
++export function createSubagentResolutionFailureHandler(
++  log: (message: string, metadata: object) => void,
++): SubagentResolutionFailureHandler {
++  return (detail, error) => {
++    let cause: SubagentResolutionCause =
++      detail.cause === 'host_argument_rejected' ? 'host_argument_rejected' : 'unknown';
++    const chain: Array<
++      ReturnType<typeof getSafeErrorMetadata> & {
++        code?: string;
++        stage?: InitializationStage;
++      }
++    > = [];
++    const seen = new Set<object>();
++    let current = error;
++    for (let depth = 0; depth < 6 && current != null && typeof current === 'object'; depth++) {
++      if (seen.has(current)) break;
++      seen.add(current);
++      const code = [property(current, 'code'), property(current, 'lc_error_code')].find(
++        (value): value is string => typeof value === 'string' && knownCodes.has(value),
++      );
++      const stage = stages.get(current);
++      chain.push({
++        ...getSafeErrorMetadata(current),
++        ...(code && { code }),
++        ...(stage && { stage }),
++      });
++      if (cause === 'unknown' && code != null) cause = knownCodes.get(code) ?? 'unknown';
++      current = property(current, 'cause');
++    }
++    try {
++      log('[SubagentExecutor] Subagent initialization failed', {
++        phase: detail.phase === 'identity' ? 'identity' : 'config',
++        type: chain[0]?.type ?? 'UnknownError',
++        aborted: detail.aborted === true,
++        cause,
++        parentRunId: correlation(detail.parentRunId),
++        parentAgentId: correlation(detail.parentAgentId),
++        parentToolCallId: correlation(detail.parentToolCallId),
++        threadId: correlation(detail.threadId),
++        childRunId: correlation(detail.childRunId),
++        childThreadId: correlation(detail.childThreadId),
++        taskId: correlation(detail.taskId),
++        errors: chain,
++      });
++    } catch {
++      // Diagnostics must not replace the initialization failure or its safe classification.
++    }
++    return cause;
++  };
++}
+diff --git a/packages/api/src/agents/initialize.ts b/packages/api/src/agents/initialize.ts
+index 6934915b8a4e5033b22c203a144766b825f395cf..70ef27b2990bf89a3f6967788353c96ba7be64ca 100644
+--- a/packages/api/src/agents/initialize.ts
++++ b/packages/api/src/agents/initialize.ts
+@@ -141,6 +141,7 @@ import { createRequestAgentExecutionContext } from './runtime';
+ import { resolveTurnDeliveryRouting } from './files/delivery';
+ import { filterFilesByEndpointRuntimeConfig } from '~/files';
+ import { isFatalAgentInitializationError } from './errors';
++import { withInitializationStage } from './initialization';
+ import { assertToolOptionsWithinLimits } from './options';
+ import { hasActiveFilePolicy } from '../protection/files';
+ import { resolveAgentCodeExecution } from '~/code/agent';
+@@ -1431,37 +1432,40 @@ export async function initializeAgent(
+   let perSkillExtras: Map<string, string[]> = new Map();
+   let resolvedSkillCatalog: ResolvedSkillCatalog | undefined;
+   if (hasSkillAccess) {
+-    const [manualPrimesResult, alwaysApplyPrimesResult, catalogResult] = await Promise.all([
+-      params.manualSkills?.length && db.getSkillByName
+-        ? resolveManualSkills({
+-            names: params.manualSkills,
+-            getSkillByName: db.getSkillByName,
+-            accessibleSkillIds: params.accessibleSkillIds!,
+-            userId: user?.id,
+-            skillStates: params.skillStates,
+-            defaultActiveOnShare: params.defaultActiveOnShare,
+-          })
+-        : Promise.resolve<ResolvedManualSkill[] | undefined>(undefined),
+-      db.listAlwaysApplySkills
+-        ? resolveAlwaysApplySkills({
+-            listAlwaysApplySkills: db.listAlwaysApplySkills,
+-            accessibleSkillIds: params.accessibleSkillIds!,
+-            userId: user?.id,
+-            skillStates: params.skillStates,
+-            defaultActiveOnShare: params.defaultActiveOnShare,
+-          })
+-        : Promise.resolve<ResolvedAlwaysApplySkill[] | undefined>(undefined),
+-      hasActivePiiFields(appConfig?.filters?.skills?.pii, ['name', 'description'])
+-        ? resolveSkillCatalog({
+-            accessibleSkillIds: params.accessibleSkillIds!,
+-            listSkillsByAccess: db.listSkillsByAccess,
+-            userId: user?.id,
+-            skillStates: params.skillStates,
+-            defaultActiveOnShare: params.defaultActiveOnShare,
+-            maxCatalogSkills: getMaxCatalogSkills(runtime),
+-          })
+-        : Promise.resolve<ResolvedSkillCatalog | undefined>(undefined),
+-    ]);
++    const [manualPrimesResult, alwaysApplyPrimesResult, catalogResult] =
++      await withInitializationStage('skills', () =>
++        Promise.all([
++          params.manualSkills?.length && db.getSkillByName
++            ? resolveManualSkills({
++                names: params.manualSkills,
++                getSkillByName: db.getSkillByName,
++                accessibleSkillIds: params.accessibleSkillIds!,
++                userId: user?.id,
++                skillStates: params.skillStates,
++                defaultActiveOnShare: params.defaultActiveOnShare,
++              })
++            : Promise.resolve<ResolvedManualSkill[] | undefined>(undefined),
++          db.listAlwaysApplySkills
++            ? resolveAlwaysApplySkills({
++                listAlwaysApplySkills: db.listAlwaysApplySkills,
++                accessibleSkillIds: params.accessibleSkillIds!,
++                userId: user?.id,
++                skillStates: params.skillStates,
++                defaultActiveOnShare: params.defaultActiveOnShare,
++              })
++            : Promise.resolve<ResolvedAlwaysApplySkill[] | undefined>(undefined),
++          hasActivePiiFields(appConfig?.filters?.skills?.pii, ['name', 'description'])
++            ? resolveSkillCatalog({
++                accessibleSkillIds: params.accessibleSkillIds!,
++                listSkillsByAccess: db.listSkillsByAccess,
++                userId: user?.id,
++                skillStates: params.skillStates,
++                defaultActiveOnShare: params.defaultActiveOnShare,
++                maxCatalogSkills: getMaxCatalogSkills(runtime),
++              })
++            : Promise.resolve<ResolvedSkillCatalog | undefined>(undefined),
++        ]),
++      );
+ 
+     manualSkillPrimes = manualPrimesResult;
+     alwaysApplySkillPrimes = alwaysApplyPrimesResult;
+@@ -1555,10 +1559,14 @@ export async function initializeAgent(
+    * policy reads the endpoint's own name, but the route each attachment takes also depends on
+    * the backing client and on the Responses API decision `getOptions` makes, and nothing
+    * between here and tool loading feeds either. */
+-  const { getOptions, overrideProvider, customEndpointConfig } = getProviderConfig({
+-    provider,
+-    appConfig,
+-  });
++  const { getOptions, overrideProvider, customEndpointConfig } = await withInitializationStage(
++    'provider',
++    () =>
++      getProviderConfig({
++        provider,
++        appConfig,
++      }),
++  );
+   if (overrideProvider !== agent.provider) {
+     agent.provider = overrideProvider;
+   }
+@@ -1576,17 +1584,19 @@ export async function initializeAgent(
+   );
+   const finalModelOptions = pinAgentModel(modelOptions, agent.model);
+ 
+-  const options: InitializeResultBase = await getOptions({
+-    runtime: {
+-      appConfig,
+-      user,
+-      requestBody: runtime.requestBody,
+-    },
+-    endpoint: provider,
+-    model_parameters: finalModelOptions,
+-    inferenceParameters: inference.customParameters,
+-    db,
+-  });
++  const options: InitializeResultBase = await withInitializationStage('provider', () =>
++    getOptions({
++      runtime: {
++        appConfig,
++        user,
++        requestBody: runtime.requestBody,
++      },
++      endpoint: provider,
++      model_parameters: finalModelOptions,
++      inferenceParameters: inference.customParameters,
++      db,
++    }),
++  );
+ 
+   const llmConfig = options.llmConfig as Record<string, unknown>;
+   const webSearchDenied =
+@@ -2191,18 +2201,20 @@ export async function initializeAgent(
+    * the empty fallback — the agent's own tools are the problem.
+    */
+   const callLoadTools = async (tools: string[]) =>
+-    loadTools?.({
+-      provider,
+-      agentId: agent.id,
+-      tools,
+-      model: agent.model,
+-      tool_options: agent.tool_options,
+-      tool_resources: runtimeToolResources,
+-      requestBody,
+-      codeExecutionContext,
+-      attachedEnvironmentOptOut,
+-      accessibleMcpServerNames: resolvedAuditNames,
+-    });
++    withInitializationStage('tools', () =>
++      loadTools?.({
++        provider,
++        agentId: agent.id,
++        tools,
++        model: agent.model,
++        tool_options: agent.tool_options,
++        tool_resources: runtimeToolResources,
++        requestBody,
++        codeExecutionContext,
++        attachedEnvironmentOptOut,
++        accessibleMcpServerNames: resolvedAuditNames,
++      }),
++    );
+ 
+   let loadToolsResult;
+   const initialFailedSilently = (result: unknown) =>
+@@ -2221,7 +2233,7 @@ export async function initializeAgent(
+     if (extraAllowedToolNames.length > 0) {
+       logger.warn(
+         `[allowedTools] loadTools threw with ${extraAllowedToolNames.length} skill-added extra(s); retrying without them`,
+-        { errorName: err instanceof Error ? err.name : 'UnknownError' },
++        getSafeErrorMetadata(err),
+       );
+       if (!baseToolNames.includes(Tools.file_search)) {
+         dropFileSearchResources();
+@@ -2658,30 +2670,32 @@ export async function initializeAgent(
+    * invoke what it creates later in the same conversation.
+    */
+   if ((accessibleSkillIds && accessibleSkillIds.length > 0) || skillAuthoringAvailable) {
+-    const skillResult = await injectSkillCatalog({
+-      agent,
+-      toolDefinitions,
+-      toolRegistry,
+-      accessibleSkillIds: accessibleSkillIds ?? [],
+-      skillAuthoringAvailable,
+-      contextWindowTokens: Number(agentMaxContextTokens) || 200_000,
+-      listSkillsByAccess: db?.listSkillsByAccess,
+-      codeEnvAvailable: effectiveCodeEnvAvailable,
+-      statefulSessions: effectiveStatefulSessions,
+-      workspaceTools: attachedWorkspaceTools,
+-      workspaceOperations: attachedWorkspaceOperations,
+-      userId: user?.id,
+-      workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
+-      workspaceCommandTimeoutDefaultMs: attachedWorkspaceCommandTimeoutDefaultMs,
+-      workspaceReadFileDefaultLines: attachedWorkspaceReadFileDefaultLines,
+-      workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
+-      workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
+-      workspaceNativeSandbox: trustedCodeExecutionContext.codeWorkspace?.nativeSandbox,
+-      skillStates: params.skillStates,
+-      defaultActiveOnShare: params.defaultActiveOnShare,
+-      maxCatalogSkills: getMaxCatalogSkills(runtime),
+-      resolvedCatalog: resolvedSkillCatalog,
+-    });
++    const skillResult = await withInitializationStage('skills', () =>
++      injectSkillCatalog({
++        agent,
++        toolDefinitions,
++        toolRegistry,
++        accessibleSkillIds: accessibleSkillIds ?? [],
++        skillAuthoringAvailable,
++        contextWindowTokens: Number(agentMaxContextTokens) || 200_000,
++        listSkillsByAccess: db?.listSkillsByAccess,
++        codeEnvAvailable: effectiveCodeEnvAvailable,
++        statefulSessions: effectiveStatefulSessions,
++        workspaceTools: attachedWorkspaceTools,
++        workspaceOperations: attachedWorkspaceOperations,
++        userId: user?.id,
++        workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
++        workspaceCommandTimeoutDefaultMs: attachedWorkspaceCommandTimeoutDefaultMs,
++        workspaceReadFileDefaultLines: attachedWorkspaceReadFileDefaultLines,
++        workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
++        workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
++        workspaceNativeSandbox: trustedCodeExecutionContext.codeWorkspace?.nativeSandbox,
++        skillStates: params.skillStates,
++        defaultActiveOnShare: params.defaultActiveOnShare,
++        maxCatalogSkills: getMaxCatalogSkills(runtime),
++        resolvedCatalog: resolvedSkillCatalog,
++      }),
++    );
+     toolDefinitions = skillResult.toolDefinitions;
+     skillCount = skillResult.skillCount;
+     executableSkillIds = skillResult.activeSkillIds;
+diff --git a/packages/api/src/agents/run.ts b/packages/api/src/agents/run.ts
+index 7d3d2750841994fc9d91acfc970a2cb471ee42ae..60b627bda4126aa4fa675688b035514a0a168a52 100644
+--- a/packages/api/src/agents/run.ts
++++ b/packages/api/src/agents/run.ts
+@@ -123,6 +123,7 @@ import { reportSubagentResolutionFailure } from '~/agents/failures/subagent';
+ import { createScheduledMCPRunPolicy } from '~/schedules/authorization/run';
+ import { CREATE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME } from '~/agents/tools';
+ import { buildAgentInitialToolSessions } from '~/agents/codeFilesSession';
++import { createSubagentResolutionFailureHandler } from './initialization';
+ import { getDirectDispatcher, getProxyDispatcher } from '~/utils/proxy';
+ import { getAzureCredentials, constructAzureURL } from '~/utils/azure';
+ import { buildEffectiveToolApprovalPolicy } from '~/agents/hitl/allow';
+@@ -3049,6 +3050,9 @@ export async function createRun({
+         }
+       : customHandlers;
+ 
++  const classifySubagentFailure = createSubagentResolutionFailureHandler((message, metadata) =>
++    logger.warn(message, metadata),
++  );
+   const runConfig = {
+     runId: resolvedRunId,
+     graphConfig,
+@@ -3062,7 +3066,24 @@ export async function createRun({
+     subagentUsageSink,
+     subagentTasks: activeSubagentTasks,
+     // Without it a subagent that cannot start logs nothing beyond the SDK's fixed `cause`.
+-    onSubagentResolutionFailure: reportSubagentResolutionFailure,
++    onSubagentResolutionFailure: (
++      detail: Parameters<typeof reportSubagentResolutionFailure>[0],
++      error: unknown,
++    ) => {
++      const cause = classifySubagentFailure(detail, error);
++      // Correlation identifiers are already recorded by the bounded metadata handler above.
++      reportSubagentResolutionFailure(
++        {
++          ...detail,
++          subagentType: 'selected',
++          parentRunId: undefined,
++          childRunId: undefined,
++          taskId: undefined,
++        },
++        error,
++      );
++      return cause;
++    },
+     ...(runFilesActive &&
+       runFiles != null && {
+         subagentContext: { prepare: runFiles.prepare, complete: runFiles.complete },
+diff --git a/packages/api/src/utils/errors.spec.ts b/packages/api/src/utils/errors.spec.ts
+index 960786a16cc191e0d44c5190504f86fe282d1186..1e2d3cc62f2098e01b9e4a6cd184dea3d2489081 100644
+--- a/packages/api/src/utils/errors.spec.ts
++++ b/packages/api/src/utils/errors.spec.ts
+@@ -1,6 +1,20 @@
+ import { getSafeErrorMetadata, getSafeErrorText, isAbortError, isOwnedAbortError } from './errors';
+ 
+ describe('getSafeErrorMetadata', () => {
++  it('survives hostile property and prototype traps', () => {
++    const error = new Proxy(
++      {},
++      {
++        get() {
++          throw new Error('private data');
++        },
++        getPrototypeOf() {
++          throw new Error('private data');
++        },
++      },
++    );
++    expect(getSafeErrorMetadata(error)).toEqual({ type: 'UnknownError' });
++  });
+   it('keeps bounded diagnostic fields without serializing raw provider data', () => {
+     const rawValue = 'PRIVATE-SUBMITTED-CONTENT';
+     const error = Object.assign(new Error(`Provider echoed ${rawValue}`), {
+diff --git a/packages/api/src/utils/errors.ts b/packages/api/src/utils/errors.ts
+index a7e69f253c15f2c427fa552e7c7d576177825842..43fcf4eaebfc1b710e10bd71923c0fe396ac0e34 100644
+--- a/packages/api/src/utils/errors.ts
++++ b/packages/api/src/utils/errors.ts
+@@ -35,8 +35,14 @@ export function getSafeErrorMetadata(error: unknown): SafeErrorMetadata {
+       ? statusCandidate
+       : undefined;
+ 
++  let type = 'UnknownError';
++  try {
++    type = error instanceof Error ? 'Error' : 'UnknownError';
++  } catch {
++    // A hostile prototype trap must not make diagnostic collection fail.
++  }
+   return {
+-    type: error instanceof Error ? 'Error' : 'UnknownError',
++    type,
+     ...(status !== undefined && { status }),
+   };
+ }

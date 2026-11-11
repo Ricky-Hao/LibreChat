@@ -1,0 +1,649 @@
+{
+  "format": 1,
+  "base": "f4154b649efa37e1345ccc517a4d8d1ed2178c82",
+  "patches": [
+    {
+      "id": "sdk",
+      "status": "keep",
+      "depends_on": [],
+      "patch": "patches/sdk/changes.patch",
+      "paths": [
+        ".dockerignore",
+        "Dockerfile",
+        "Dockerfile.multi",
+        "api/package.json",
+        "e2e/specs/mock/scenarios/locked-registry.spec.ts",
+        "e2e/specs/mock/scenarios/registry.helpers.ts",
+        "e2e/specs/mock/scenarios/registry.spec.ts",
+        "package-lock.json",
+        "packages/api/package.json",
+        "vendor/README.md",
+        "vendor/agents-4.2.2-ricky.1.patch",
+        "vendor/agents.json",
+        "vendor/librechat-agents-4.2.2-ricky.1.tgz",
+        "vendor/verify-agents.mjs"
+      ],
+      "tests": "patches/sdk/tests.json"
+    },
+    {
+      "id": "summary-checkpoints",
+      "status": "keep",
+      "depends_on": [
+        "sdk"
+      ],
+      "patch": "patches/summary-checkpoints/changes.patch",
+      "paths": [
+        "api/app/clients/BaseClient.js",
+        "api/server/controllers/agents/__tests__/summaryReasoning.integration.spec.js",
+        "api/server/controllers/agents/__tests__/usageEvents.integration.spec.js",
+        "api/server/controllers/agents/client.js",
+        "packages/api/src/agents/checkpointer.integration.spec.ts",
+        "packages/api/src/agents/checkpointer.ts",
+        "packages/api/src/agents/compaction.spec.ts",
+        "packages/api/src/agents/compaction.ts",
+        "packages/api/src/agents/compatibility.spec.ts",
+        "packages/api/src/agents/compatibility.ts",
+        "packages/data-provider/src/types/content.ts",
+        "packages/data-schemas/src/methods/conversation.spec.ts",
+        "packages/data-schemas/src/methods/conversation.ts",
+        "packages/data-schemas/src/schema/convo.ts",
+        "packages/data-schemas/src/types/convo.ts"
+      ],
+      "tests": "patches/summary-checkpoints/tests.json"
+    },
+    {
+      "id": "skill-provenance",
+      "status": "keep",
+      "depends_on": [
+        "summary-checkpoints"
+      ],
+      "patch": "patches/skill-provenance/changes.patch",
+      "paths": [
+        "api/server/controllers/agents/client.js",
+        "api/server/controllers/agents/client.test.js",
+        "packages/api/src/agents/__tests__/skills.integration.spec.ts",
+        "packages/api/src/agents/__tests__/skills.test.ts",
+        "packages/api/src/agents/handlers.ts",
+        "packages/api/src/agents/provenance.spec.ts",
+        "packages/api/src/agents/skillFiles.spec.ts",
+        "packages/api/src/agents/skillFiles.ts",
+        "packages/api/src/agents/skills.ts"
+      ],
+      "tests": "patches/skill-provenance/tests.json"
+    },
+    {
+      "id": "ptc-invocation",
+      "status": "keep",
+      "depends_on": [
+        "sdk"
+      ],
+      "patch": "patches/ptc-invocation/changes.patch",
+      "paths": [
+        "packages/api/src/agents/handlers.spec.ts",
+        "packages/api/src/agents/handlers.ts",
+        "packages/api/src/agents/ptc.ts"
+      ],
+      "tests": "patches/ptc-invocation/tests.json"
+    },
+    {
+      "id": "ptc-errors",
+      "status": "keep",
+      "depends_on": [
+        "ptc-invocation"
+      ],
+      "patch": "patches/ptc-errors/changes.patch",
+      "paths": [
+        "packages/api/src/agents/ptc.spec.ts",
+        "packages/api/src/agents/ptc.ts",
+        "packages/api/src/mcp/status.spec.ts"
+      ],
+      "tests": "patches/ptc-errors/tests.json"
+    },
+    {
+      "id": "subagent-diagnostics",
+      "status": "local",
+      "depends_on": [
+        "sdk"
+      ],
+      "patch": "patches/subagent-diagnostics/changes.patch",
+      "paths": [
+        "api/server/services/Endpoints/agents/initialize.js",
+        "api/server/services/Endpoints/agents/initialize.spec.js",
+        "packages/api/src/agents/__tests__/initialize.test.ts",
+        "packages/api/src/agents/__tests__/run-codeTools.test.ts",
+        "packages/api/src/agents/index.ts",
+        "packages/api/src/agents/initialization.spec.ts",
+        "packages/api/src/agents/initialization.ts",
+        "packages/api/src/agents/initialize.ts",
+        "packages/api/src/agents/run.ts",
+        "packages/api/src/utils/errors.spec.ts",
+        "packages/api/src/utils/errors.ts"
+      ],
+      "tests": "patches/subagent-diagnostics/tests.json"
+    },
+    {
+      "id": "task-callbacks",
+      "status": "feature",
+      "depends_on": [
+        "ptc-errors",
+        "summary-checkpoints"
+      ],
+      "patch": "patches/task-callbacks/changes.patch",
+      "paths": [
+        "README.md",
+        "api/app/clients/tools/manifest.json",
+        "api/app/clients/tools/util/handleTools.js",
+        "api/server/routes/agents/index.js",
+        "api/server/services/Agents/triggers.js",
+        "api/server/services/Agents/triggers.spec.js",
+        "api/server/services/ToolService.js",
+        "api/server/services/__tests__/ToolService.spec.js",
+        "api/server/services/start/tools.js",
+        "client/src/components/Chat/Messages/Content/Markdown.tsx",
+        "client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts",
+        "client/src/components/SidePanel/Agents/Tools/items/catalog.ts",
+        "client/src/components/SidePanel/Agents/Tools/items/icons.ts",
+        "client/src/components/SidePanel/Agents/Tools/items/mutations.ts",
+        "client/src/components/SidePanel/Agents/Tools/items/selectors.ts",
+        "client/src/components/SidePanel/Agents/Tools/items/types.ts",
+        "client/src/hooks/Messages/useCopyToClipboard.ts",
+        "client/src/locales/en/translation.json",
+        "docs/task-callbacks.md",
+        "librechat.example.yaml",
+        "packages/api/src/agents/callbackDefinition.ts",
+        "packages/api/src/agents/callbacks.integration.spec.ts",
+        "packages/api/src/agents/callbacks.ptc.spec.ts",
+        "packages/api/src/agents/callbacks.ts",
+        "packages/api/src/agents/index.ts",
+        "packages/api/src/agents/ptc.ts",
+        "packages/api/src/agents/triggers/README.md",
+        "packages/api/src/agents/triggers/service.delivery.spec.ts",
+        "packages/api/src/agents/triggers/service.ts",
+        "packages/api/src/code/command.ts",
+        "packages/api/src/langfuse/config.spec.ts",
+        "packages/api/src/langfuse/config.ts",
+        "packages/api/src/tools/classification.ts",
+        "packages/api/src/tools/definitions.spec.ts",
+        "packages/api/src/tools/definitions.ts",
+        "packages/api/src/tools/registry/definitions.ts",
+        "packages/data-provider/src/config.ts",
+        "packages/data-provider/src/index.ts",
+        "packages/data-provider/src/taskCallbacks.spec.ts",
+        "packages/data-provider/src/taskCallbacks.ts",
+        "packages/data-schemas/src/config/parsers.spec.ts",
+        "packages/data-schemas/src/config/parsers.ts",
+        "packages/data-schemas/src/index.ts",
+        "packages/data-schemas/src/methods/index.ts",
+        "packages/data-schemas/src/methods/taskCallback.ts",
+        "packages/data-schemas/src/methods/triggerDelivery.ts",
+        "packages/data-schemas/src/models/index.ts",
+        "packages/data-schemas/src/types/triggerDelivery.ts"
+      ],
+      "tests": "patches/task-callbacks/tests.json"
+    },
+    {
+      "id": "bounded-reads",
+      "status": "feature",
+      "depends_on": [],
+      "patch": "patches/bounded-reads/changes.patch",
+      "paths": [
+        "api/server/experimental.js",
+        "api/server/index.js",
+        "api/server/routes/index.js",
+        "api/server/routes/message-reads.js",
+        "api/server/routes/prompts.test.js",
+        "api/server/routes/skills.tenant.test.js",
+        "api/server/routes/skills.test.js",
+        "docs/mcp-message-reads-patch.md",
+        "packages/api/src/messages/index.ts",
+        "packages/api/src/messages/reads.spec.ts",
+        "packages/api/src/messages/reads.ts",
+        "packages/api/src/middleware/messageValidation.ts",
+        "packages/data-provider/src/config.ts",
+        "packages/data-provider/src/index.ts",
+        "packages/data-provider/src/messageReads.ts",
+        "packages/data-schemas/src/app/service.ts",
+        "packages/data-schemas/src/index.ts",
+        "packages/data-schemas/src/methods/message.ts",
+        "packages/data-schemas/src/methods/messageReads.spec.ts",
+        "packages/data-schemas/src/methods/messageReads.ts",
+        "packages/data-schemas/src/schema/message.ts",
+        "packages/data-schemas/src/types/app.ts"
+      ],
+      "tests": "patches/bounded-reads/tests.json"
+    },
+    {
+      "id": "stream-recovery",
+      "status": "keep",
+      "depends_on": [],
+      "patch": "patches/stream-recovery/changes.patch",
+      "paths": [
+        "api/server/routes/__tests__/config.spec.js",
+        "api/server/routes/config.js",
+        "client/src/Providers/ChatHostContext.tsx",
+        "client/src/Providers/__tests__/ChatHostContext.spec.tsx",
+        "client/src/hooks/Chat/contract.ts",
+        "client/src/hooks/SSE/resumable.ts",
+        "client/src/routes/ChatSettings.tsx",
+        "librechat.example.yaml",
+        "packages/api/src/app/config.test.ts",
+        "packages/api/src/app/config.ts",
+        "packages/chat/src/core/__fixtures__/resumable.ts",
+        "packages/chat/src/core/__tests__/subscription.spec.ts",
+        "packages/chat/src/core/__tests__/terminal.spec.ts",
+        "packages/chat/src/core/__tests__/transport.spec.ts",
+        "packages/chat/src/core/resumable/attach.ts",
+        "packages/chat/src/core/resumable/ceiling.ts",
+        "packages/chat/src/core/resumable/failure.ts",
+        "packages/chat/src/core/resumable/frames.ts",
+        "packages/chat/src/core/resumable/host.ts",
+        "packages/chat/src/core/resumable/missing.ts",
+        "packages/chat/src/core/resumable/mount.ts",
+        "packages/chat/src/core/resumable/reconcile.ts",
+        "packages/chat/src/core/resumable/run.ts",
+        "packages/chat/src/core/resumable/subscription.ts",
+        "packages/chat/src/core/resumable/terminal.ts",
+        "packages/chat/src/core/transport/sse.ts",
+        "packages/data-provider/src/config.spec.ts",
+        "packages/data-provider/src/config.ts"
+      ],
+      "tests": "patches/stream-recovery/tests.json"
+    },
+    {
+      "id": "retained-prefix",
+      "status": "keep",
+      "depends_on": [
+        "stream-recovery",
+        "summary-checkpoints"
+      ],
+      "patch": "patches/retained-prefix/changes.patch",
+      "paths": [
+        "api/app/clients/BaseClient.js",
+        "api/app/clients/specs/BaseClient.test.js",
+        "api/server/controllers/agents/__tests__/request.partialDisconnect.spec.js",
+        "api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js",
+        "api/server/controllers/agents/__tests__/resume.spec.js",
+        "api/server/controllers/agents/request.js",
+        "api/server/controllers/agents/resume.js",
+        "api/server/routes/agents/__tests__/abort.spec.js",
+        "client/src/hooks/SSE/__tests__/stepEquivalence.spec.ts",
+        "client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts",
+        "client/src/hooks/SSE/__tests__/useResumeOnLoad.spec.tsx",
+        "client/src/hooks/SSE/__tests__/useStepHandler.spec.ts",
+        "client/src/hooks/SSE/events.ts",
+        "client/src/hooks/SSE/resumable.ts",
+        "e2e/setup/fake-model.js",
+        "e2e/specs/mock/retained-prefix.spec.ts",
+        "packages/api/src/agents/hitl/preflight.ts",
+        "packages/api/src/agents/hitl/protection.ts",
+        "packages/api/src/protection/provenance.ts",
+        "packages/api/src/stream/GenerationJobManager.ts",
+        "packages/api/src/stream/__tests__/RedisJobStore.spec.ts",
+        "packages/api/src/stream/__tests__/retained.spec.ts",
+        "packages/api/src/stream/__tests__/steering.spec.ts",
+        "packages/api/src/stream/abortContent.ts",
+        "packages/api/src/stream/implementations/RedisJobStore.ts",
+        "packages/api/src/stream/index.ts",
+        "packages/api/src/stream/interfaces/IJobStore.ts",
+        "packages/api/src/stream/metadata.ts",
+        "packages/api/src/stream/retained.ts",
+        "packages/api/src/types/stream.ts",
+        "packages/api/src/utils/content.ts",
+        "packages/chat/src/core/__tests__/steps.spec.ts",
+        "packages/chat/src/core/reducer.ts",
+        "packages/chat/src/core/resumable/attach.ts",
+        "packages/chat/src/core/resumable/host.ts",
+        "packages/chat/src/core/resumable/patches.ts",
+        "packages/chat/src/core/resumable/resume.ts",
+        "packages/chat/src/core/resumable/run.ts",
+        "packages/chat/src/core/resumable/sync.ts",
+        "packages/chat/src/core/steps/content.ts",
+        "packages/chat/src/core/steps/text.ts",
+        "packages/data-provider/specs/messages.spec.ts",
+        "packages/data-provider/src/messages.ts",
+        "packages/data-provider/src/types.ts",
+        "packages/data-provider/src/types/agents.ts"
+      ],
+      "tests": "patches/retained-prefix/tests.json"
+    },
+    {
+      "id": "subagent-snapshots",
+      "status": "keep",
+      "depends_on": [
+        "retained-prefix",
+        "skill-provenance"
+      ],
+      "patch": "patches/subagent-snapshots/changes.patch",
+      "paths": [
+        "api/server/controllers/agents/__tests__/callbacks.spec.js",
+        "api/server/controllers/agents/callbacks.js",
+        "api/server/controllers/agents/client.js",
+        "api/server/controllers/agents/client.test.js",
+        "api/server/controllers/agents/request.js",
+        "client/src/components/Chat/Subagents/Recovery.test.tsx",
+        "client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx",
+        "client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx",
+        "e2e/setup/fake-model.js",
+        "e2e/specs/mock/subagent-recovery.spec.ts",
+        "packages/api/src/agents/aggregation.ts",
+        "packages/api/src/agents/index.ts",
+        "packages/api/src/agents/occurrence.ts",
+        "packages/api/src/agents/retainedSubagentContent.spec.ts",
+        "packages/api/src/agents/retainedSubagentContent.ts",
+        "packages/api/src/stream/GenerationJobManager.ts",
+        "packages/api/src/stream/__tests__/GenerationJobManager.resumeReplay.spec.ts",
+        "packages/api/src/stream/__tests__/RedisJobStore.subagents.spec.ts",
+        "packages/api/src/stream/__tests__/RedisJobStore.toolTiming.spec.ts",
+        "packages/api/src/stream/implementations/InMemoryJobStore.ts",
+        "packages/api/src/stream/implementations/RedisJobStore.ts",
+        "packages/api/src/stream/interfaces/IJobStore.ts",
+        "packages/chat/src/core/subagents/content.ts",
+        "packages/chat/src/react/stream/step.ts",
+        "packages/chat/src/react/subagents/__tests__/adapters.spec.ts",
+        "packages/chat/src/react/subagents/__tests__/state.spec.ts",
+        "packages/chat/src/react/subagents/adapters.ts",
+        "packages/chat/src/react/subagents/state.ts",
+        "packages/data-provider/src/types/content.ts",
+        "packages/data-provider/src/types/runs.ts"
+      ],
+      "tests": "patches/subagent-snapshots/tests.json"
+    },
+    {
+      "id": "autoscroll",
+      "status": "keep",
+      "depends_on": [],
+      "patch": "patches/autoscroll/changes.patch",
+      "paths": [
+        "client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx",
+        "client/src/hooks/Messages/useMessageScrolling.ts",
+        "e2e/setup/fake-model.js",
+        "e2e/specs/mock/running-autoscroll.spec.ts"
+      ],
+      "tests": "patches/autoscroll/tests.json"
+    },
+    {
+      "id": "history-window",
+      "status": "feature",
+      "depends_on": [
+        "bounded-reads"
+      ],
+      "patch": "patches/history-window/changes.patch",
+      "paths": [
+        "api/server/routes/__tests__/messages-content-edit.spec.js",
+        "api/server/routes/__tests__/messages-delete.spec.js",
+        "api/server/routes/__tests__/messages-feedback.spec.js",
+        "api/server/routes/__tests__/messages-get-real-validation.spec.js",
+        "api/server/routes/__tests__/messages-get.spec.js",
+        "api/server/routes/__tests__/messages-retention.spec.js",
+        "api/server/routes/__tests__/messages-subagent-thread.spec.js",
+        "api/server/routes/__tests__/messages-update.spec.js",
+        "api/server/routes/messages.js",
+        "client/src/Providers/HistoryWindowContext.ts",
+        "client/src/Providers/MessagesHostContext.tsx",
+        "client/src/components/Chat/ChatView.tsx",
+        "client/src/components/Chat/Messages/Content/EditContentParts.tsx",
+        "client/src/components/Chat/Messages/Content/EditMessage.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/Attachment.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/LazyAttachment.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/LogContent.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/ToolArtifactCard.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/__tests__/LazyAttachment.test.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/__tests__/LogContent.test.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/attachmentTypes.ts",
+        "client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx",
+        "client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx",
+        "client/src/components/Chat/Messages/Content/parent.tsx",
+        "client/src/components/Chat/Messages/MessagesView.tsx",
+        "client/src/components/Chat/Messages/MultiMessage.tsx",
+        "client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx",
+        "client/src/components/Chat/__tests__/ChatView.spec.tsx",
+        "client/src/components/Conversations/ConvoOptions/ShareButton.tsx",
+        "client/src/components/Conversations/ConvoOptions/__tests__/ShareButton.test.tsx",
+        "client/src/data-provider/Messages/__tests__/queries.test.ts",
+        "client/src/data-provider/Messages/__tests__/window.test.ts",
+        "client/src/data-provider/Messages/queries.ts",
+        "client/src/data-provider/Messages/retention.ts",
+        "client/src/data-provider/Messages/window.ts",
+        "client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx",
+        "client/src/hooks/Chat/services.ts",
+        "client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx",
+        "client/src/hooks/Conversations/useExportConversation.ts",
+        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx",
+        "client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx",
+        "client/src/hooks/Messages/useHistoryPaging.ts",
+        "client/src/hooks/Messages/useThreadRows.ts",
+        "client/src/hooks/SSE/cache.ts",
+        "client/src/locales/en/translation.json",
+        "client/src/routes/History.tsx",
+        "client/src/routes/Root.tsx",
+        "client/src/utils/history.ts",
+        "client/test/turnServices.ts",
+        "docs/history-window-patch.md",
+        "docs/history.md",
+        "e2e/lighthouse/history.spec.ts",
+        "e2e/specs/mock/export.spec.ts",
+        "e2e/specs/mock/helpers.ts",
+        "e2e/specs/mock/scenarios/long-conversation-mount.spec.ts",
+        "e2e/specs/mock/scenarios/mobile-drawer-large-chat.spec.ts",
+        "e2e/specs/mock/scenarios/reply-read-state.spec.ts",
+        "librechat.example.yaml",
+        "packages/api/src/messages/history.spec.ts",
+        "packages/api/src/messages/history.ts",
+        "packages/api/src/messages/index.ts",
+        "packages/chat/src/__fixtures__/messagesHost.ts",
+        "packages/chat/src/components/messages/MessagesView.tsx",
+        "packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx",
+        "packages/chat/src/core/parts/rerunParent.ts",
+        "packages/chat/src/core/turns/regenerate.ts",
+        "packages/chat/src/react.ts",
+        "packages/chat/src/react/chat/__fixtures__/services.ts",
+        "packages/chat/src/react/chat/host.tsx",
+        "packages/chat/src/react/chat/turns.ts",
+        "packages/chat/src/react/messages/host.tsx",
+        "packages/chat/test/consumer.spec.tsx",
+        "packages/data-provider/src/api-endpoints.ts",
+        "packages/data-provider/src/config.ts",
+        "packages/data-provider/src/data-service.ts",
+        "packages/data-provider/src/history.spec.ts",
+        "packages/data-provider/src/history.ts",
+        "packages/data-provider/src/index.ts",
+        "packages/data-provider/src/keys.ts",
+        "packages/data-provider/src/schemas.ts",
+        "packages/data-schemas/src/methods/history.spec.ts",
+        "packages/data-schemas/src/methods/history.ts",
+        "packages/data-schemas/src/methods/index.ts"
+      ],
+      "tests": "patches/history-window/tests.json"
+    },
+    {
+      "id": "native-overlays",
+      "status": "feature",
+      "depends_on": [],
+      "patch": "patches/native-overlays/changes.patch",
+      "paths": [
+        "client/src/components/Artifacts/Artifacts.tsx",
+        "client/src/components/Chat/Messages/Content/DialogImage.tsx",
+        "client/src/components/Chat/Subagents/SubagentThreadPanel.tsx",
+        "client/src/components/Input/SetKeyDialog/InputWithLabel.tsx",
+        "client/src/components/Nav/Settings/Dialog.tsx",
+        "client/src/hooks/SSE/pane.ts",
+        "client/src/routes/Overlays.test.tsx",
+        "client/src/routes/Overlays.tsx",
+        "client/src/routes/index.tsx",
+        "client/src/store/__tests__/families.spec.tsx",
+        "client/src/store/families.ts",
+        "client/src/utils/overlays.ts",
+        "e2e/specs/mock/mobile-overlay-back.spec.ts",
+        "packages/chat/src/components/composer/files/ImagePreview.tsx",
+        "packages/client/src/Providers/Overlay.tsx",
+        "packages/client/src/Providers/index.ts",
+        "packages/client/src/components/AlertDialog.tsx",
+        "packages/client/src/components/DialogRoot.tsx",
+        "packages/client/src/components/OriginalDialog.tsx",
+        "packages/client/src/components/__tests__/dialogBack.spec.tsx"
+      ],
+      "tests": "patches/native-overlays/tests.json"
+    },
+    {
+      "id": "vendor-chunks",
+      "status": "awaiting-upstream",
+      "depends_on": [],
+      "patch": "patches/vendor-chunks/changes.patch",
+      "paths": [
+        "client/vite.config.ts",
+        "e2e/client-build.test.mjs"
+      ],
+      "tests": "patches/vendor-chunks/tests.json"
+    },
+    {
+      "id": "mcp-ping",
+      "status": "awaiting-upstream",
+      "depends_on": [],
+      "patch": "patches/mcp-ping/changes.patch",
+      "paths": [
+        "packages/api/src/mcp/__tests__/ping.integration.spec.ts",
+        "packages/api/src/mcp/__tests__/ping.spec.ts",
+        "packages/api/src/mcp/connection.ts"
+      ],
+      "tests": "patches/mcp-ping/tests.json"
+    },
+    {
+      "id": "mcp-images",
+      "status": "awaiting-upstream",
+      "depends_on": [],
+      "patch": "patches/mcp-images/changes.patch",
+      "paths": [
+        "api/app/clients/specs/BaseClient.test.js",
+        "api/server/services/MCP.spec.js",
+        "packages/api/src/mcp/__tests__/parsers.test.ts",
+        "packages/api/src/mcp/parsers.ts"
+      ],
+      "tests": "patches/mcp-images/tests.json"
+    },
+    {
+      "id": "sidebar-focus",
+      "status": "awaiting-upstream",
+      "depends_on": [],
+      "patch": "patches/sidebar-focus/changes.patch",
+      "paths": [
+        "client/src/components/Chat/Menus/OpenSidebar.tsx",
+        "client/src/components/Chat/Menus/__tests__/OpenSidebar.spec.tsx"
+      ],
+      "tests": "patches/sidebar-focus/tests.json"
+    },
+    {
+      "id": "intent-labels",
+      "status": "local",
+      "depends_on": [],
+      "patch": "patches/intent-labels/changes.patch",
+      "paths": [
+        "client/src/components/Chat/Messages/Content/CodeAnalyze.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx",
+        "client/src/components/Chat/Messages/Content/ProgressText.tsx",
+        "client/src/components/Chat/Messages/Content/RetrievalCall.tsx",
+        "client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx",
+        "client/src/utils/__tests__/activityLabels.spec.ts",
+        "client/src/utils/activityLabels.ts",
+        "e2e/specs/mock/activity-fold.spec.ts",
+        "packages/api/src/agents/intent.spec.ts",
+        "packages/api/src/agents/intent.ts",
+        "packages/chat/src/components/parts/rows.ts",
+        "tool-intent-spec.md"
+      ],
+      "tests": "patches/intent-labels/tests.json"
+    },
+    {
+      "id": "file-guidance",
+      "status": "local",
+      "depends_on": [
+        "sdk"
+      ],
+      "patch": "patches/file-guidance/changes.patch",
+      "paths": [
+        "packages/api/src/agents/tools.spec.ts",
+        "packages/api/src/agents/tools.ts"
+      ],
+      "tests": "patches/file-guidance/tests.json"
+    },
+    {
+      "id": "loading-priority",
+      "status": "local",
+      "depends_on": [],
+      "patch": "patches/loading-priority/changes.patch",
+      "paths": [
+        "client/src/routes/ChatRoute.tsx"
+      ],
+      "tests": "patches/loading-priority/tests.json"
+    },
+    {
+      "id": "dev-environment",
+      "status": "local",
+      "depends_on": [],
+      "patch": "patches/dev-environment/changes.patch",
+      "paths": [
+        ".devcontainer/Dockerfile",
+        ".devcontainer/README.md",
+        ".devcontainer/devcontainer.json",
+        ".devcontainer/lighthouse.sh",
+        ".devcontainer/setup.sh",
+        ".devcontainer/setup.test.mjs",
+        ".dockerignore",
+        ".github/workflows/frontend-review.yml"
+      ],
+      "tests": "patches/dev-environment/tests.json"
+    },
+    {
+      "id": "fork-image",
+      "status": "local",
+      "depends_on": [],
+      "patch": "patches/fork-image/changes.patch",
+      "paths": [
+        ".github/workflows/rickyhao-dev-image.yml"
+      ],
+      "tests": "patches/fork-image/tests.json"
+    },
+    {
+      "id": "test-adaptations",
+      "status": "local",
+      "depends_on": [
+        "history-window",
+        "intent-labels",
+        "stream-recovery"
+      ],
+      "patch": "patches/test-adaptations/changes.patch",
+      "paths": [
+        "e2e/specs/mock/activity-fold.spec.ts",
+        "e2e/specs/mock/content-filters.persisted.spec.ts",
+        "e2e/specs/mock/scenarios/pinned-drag-rules.spec.ts",
+        "e2e/specs/mock/scenarios/pinned.helpers.ts",
+        "e2e/specs/mock/scenarios/sidebar-single-scroll.spec.ts",
+        "e2e/specs/mock/scenarios/unseen-replies.spec.ts",
+        "e2e/specs/mock/streaming.spec.ts"
+      ],
+      "tests": "patches/test-adaptations/tests.json"
+    },
+    {
+      "id": "contributor-guidance",
+      "status": "local",
+      "depends_on": [],
+      "patch": "patches/contributor-guidance/changes.patch",
+      "paths": [
+        ".github/pull_request_template.md",
+        "AGENTS.md"
+      ],
+      "tests": "patches/contributor-guidance/tests.json"
+    },
+    {
+      "id": "index-retry",
+      "status": "upstream",
+      "depends_on": [],
+      "patch": null,
+      "paths": [],
+      "tests": "patches/index-retry/tests.json",
+      "replacement": {
+        "commit": "e2b2839375d5e8052dec4785bf3117ce27aa67dc",
+        "evidence": "patches/index-retry/README.md: fixed base already contains the shared helper and retry.spec.ts; callback-specific callers stay in task-callbacks"
+      }
+    }
+  ]
+}

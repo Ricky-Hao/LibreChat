@@ -1,0 +1,163 @@
+{
+  "checks": [
+    {
+      "name": "api focused tests",
+      "tier": "focused",
+      "cwd": "api",
+      "requires": [
+        "api/package.json",
+        "api/server/routes/__tests__/config.spec.js"
+      ],
+      "runner": "jest",
+      "files": [
+        "api/server/routes/__tests__/config.spec.js"
+      ]
+    },
+    {
+      "name": "client focused tests",
+      "tier": "focused",
+      "cwd": "client",
+      "requires": [
+        "client/package.json",
+        "client/src/Providers/__tests__/ChatHostContext.spec.tsx"
+      ],
+      "runner": "jest",
+      "files": [
+        "client/src/Providers/__tests__/ChatHostContext.spec.tsx"
+      ]
+    },
+    {
+      "name": "packages/api focused tests",
+      "tier": "focused",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/package.json",
+        "packages/api/src/app/config.test.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/api/src/app/config.test.ts"
+      ]
+    },
+    {
+      "name": "packages/chat focused tests",
+      "tier": "focused",
+      "cwd": "packages/chat",
+      "requires": [
+        "packages/chat/package.json",
+        "packages/chat/src/core/__tests__/subscription.spec.ts",
+        "packages/chat/src/core/__tests__/terminal.spec.ts",
+        "packages/chat/src/core/__tests__/transport.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/chat/src/core/__tests__/subscription.spec.ts",
+        "packages/chat/src/core/__tests__/terminal.spec.ts",
+        "packages/chat/src/core/__tests__/transport.spec.ts"
+      ]
+    },
+    {
+      "name": "packages/data-provider focused tests",
+      "tier": "focused",
+      "cwd": "packages/data-provider",
+      "requires": [
+        "packages/data-provider/package.json",
+        "packages/data-provider/src/config.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/data-provider/src/config.spec.ts"
+      ]
+    },
+    {
+      "name": "client tsc --noEmit",
+      "tier": "types",
+      "cwd": "client",
+      "requires": [
+        "client/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/api tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/chat tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/chat",
+      "requires": [
+        "packages/chat/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/data-provider tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/data-provider",
+      "requires": [
+        "packages/data-provider/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    },
+    {
+      "name": "Lighthouse application gate",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "e2e/playwright.config.lighthouse.ts",
+        "e2e/lighthouse/README.md"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "lighthouse"
+      ]
+    }
+  ]
+}

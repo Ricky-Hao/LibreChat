@@ -1,0 +1,174 @@
+{
+  "checks": [
+    {
+      "name": "api focused tests",
+      "tier": "focused",
+      "cwd": "api",
+      "requires": [
+        "api/package.json",
+        "api/server/controllers/agents/__tests__/callbacks.spec.js",
+        "api/server/controllers/agents/client.test.js"
+      ],
+      "runner": "jest",
+      "files": [
+        "api/server/controllers/agents/__tests__/callbacks.spec.js",
+        "api/server/controllers/agents/client.test.js"
+      ]
+    },
+    {
+      "name": "client focused tests",
+      "tier": "focused",
+      "cwd": "client",
+      "requires": [
+        "client/package.json",
+        "client/src/components/Chat/Subagents/Recovery.test.tsx",
+        "client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx",
+        "client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx"
+      ],
+      "runner": "jest",
+      "files": [
+        "client/src/components/Chat/Subagents/Recovery.test.tsx",
+        "client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx",
+        "client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx"
+      ]
+    },
+    {
+      "name": "packages/api focused tests",
+      "tier": "focused",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/package.json",
+        "packages/api/src/agents/retainedSubagentContent.spec.ts",
+        "packages/api/src/stream/__tests__/GenerationJobManager.resumeReplay.spec.ts",
+        "packages/api/src/stream/__tests__/RedisJobStore.subagents.spec.ts",
+        "packages/api/src/stream/__tests__/RedisJobStore.toolTiming.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/api/src/agents/retainedSubagentContent.spec.ts",
+        "packages/api/src/stream/__tests__/GenerationJobManager.resumeReplay.spec.ts",
+        "packages/api/src/stream/__tests__/RedisJobStore.subagents.spec.ts",
+        "packages/api/src/stream/__tests__/RedisJobStore.toolTiming.spec.ts"
+      ]
+    },
+    {
+      "name": "packages/chat focused tests",
+      "tier": "focused",
+      "cwd": "packages/chat",
+      "requires": [
+        "packages/chat/package.json",
+        "packages/chat/src/react/subagents/__tests__/adapters.spec.ts",
+        "packages/chat/src/react/subagents/__tests__/state.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/chat/src/react/subagents/__tests__/adapters.spec.ts",
+        "packages/chat/src/react/subagents/__tests__/state.spec.ts"
+      ]
+    },
+    {
+      "name": "subagent-snapshots browser contract",
+      "tier": "browser",
+      "cwd": ".",
+      "runner": "playwright",
+      "files": [
+        "e2e/specs/mock/subagent-recovery.spec.ts"
+      ],
+      "config": "e2e/playwright.config.mock.ts",
+      "requires": [
+        "e2e/playwright.config.mock.ts",
+        "e2e/specs/mock/subagent-recovery.spec.ts"
+      ]
+    },
+    {
+      "name": "client tsc --noEmit",
+      "tier": "types",
+      "cwd": "client",
+      "requires": [
+        "client/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/api tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/chat tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/chat",
+      "requires": [
+        "packages/chat/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "packages/data-provider tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/data-provider",
+      "requires": [
+        "packages/data-provider/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+      ]
+    },
+    {
+      "name": "Lighthouse application gate",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "e2e/playwright.config.lighthouse.ts",
+        "e2e/lighthouse/README.md"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "lighthouse"
+      ]
+    }
+  ]
+}

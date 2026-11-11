@@ -1,0 +1,801 @@
+diff --git a/api/server/controllers/agents/client.js b/api/server/controllers/agents/client.js
+index 5648dcb3b8939377961d7277caad2a023c93c824..dbe87d33e0c0bb55e37b7d4f96e5c24e6fb933f7 100644
+--- a/api/server/controllers/agents/client.js
++++ b/api/server/controllers/agents/client.js
+@@ -2230,7 +2230,10 @@ class AgentClient extends BaseClient {
+       checkpointMessageOverlay: {
+         source: 'skill',
+         retainedFromMessageId: summary?.coverage?.retainedFromMessageId,
+-        messages: buildAgentEventActorSkillMessages(skillBodies),
++        messages: buildAgentEventActorSkillMessages(skillBodies, [
++          ...(rootAgentContext?.manualSkillPrimes ?? []),
++          ...(rootAgentContext?.alwaysApplySkillPrimes ?? []),
++        ]),
+       },
+     };
+   }
+diff --git a/api/server/controllers/agents/client.test.js b/api/server/controllers/agents/client.test.js
+index 9b5cabe4113d9e87c3575d70515f795d932eac85..0589b0a400b8b9ed105ed173d3609a76f43e2da4 100644
+--- a/api/server/controllers/agents/client.test.js
++++ b/api/server/controllers/agents/client.test.js
+@@ -356,7 +356,9 @@ describe('AgentClient - event actor history adapter', () => {
+     const skillManifest = [{ id: 'skill-1', name: 'analysis', version: 3 }];
+     const skillPrimeResult = {
+       skillManifest,
+-      skills: new Map([['analysis', 'Analyze carefully.']]),
++      skills: new Map([
++        ['analysis', { body: 'Analyze carefully.', skillId: 'skill-1', skillVersion: 3 }],
++      ]),
+     };
+     const primeInvokedSkills = jest.fn().mockResolvedValue(skillPrimeResult);
+     const client = Object.create(AgentClient.prototype);
+@@ -373,16 +375,15 @@ describe('AgentClient - event actor history adapter', () => {
+       compactionSemanticIndex,
+     });
+ 
+-    await expect(
+-      client.prepareEventActorContext({
+-        contextFingerprint: fingerprint,
+-        skillManifest,
+-        discoveredToolNames: ['deferred_tool'],
+-        summary: { text: 'Earlier compacted context.', tokenCount: 12, version: 1 },
+-        contextMeta: { calibrationRatio: 1.25, encoding: 'o200k_base' },
+-        compactionSemanticIndex,
+-      }),
+-    ).resolves.toMatchObject({
++    const context = await client.prepareEventActorContext({
++      contextFingerprint: fingerprint,
++      skillManifest,
++      discoveredToolNames: ['deferred_tool'],
++      summary: { text: 'Earlier compacted context.', tokenCount: 12, version: 1 },
++      contextMeta: { calibrationRatio: 1.25, encoding: 'o200k_base' },
++      compactionSemanticIndex,
++    });
++    expect(context).toMatchObject({
+       fingerprint,
+       skillManifest,
+       discoveredToolNames: ['deferred_tool'],
+@@ -393,18 +394,31 @@ describe('AgentClient - event actor history adapter', () => {
+         source: 'skill',
+         messages: [
+           expect.objectContaining({
+-            content: 'Analyze carefully.',
++            content: expect.stringContaining('\nAnalyze carefully.\n[End skill source]'),
++            id: expect.stringMatching(/^event-actor-skill:[\w-]+$/),
+             additional_kwargs: expect.objectContaining({
++              isMeta: true,
+               source: 'skill',
++              trigger: 'model',
+               skillName: 'analysis',
++              skillId: 'skill-1',
++              skillVersion: 3,
+             }),
+           }),
+         ],
+       },
+     });
++    const [message] = context.checkpointMessageOverlay.messages;
++    expect(message.getType()).toBe('human');
++    expect(message.content).toContain(
++      '[Skill source {"name":"analysis","id":"skill-1","version":3}]',
++    );
++    expect(message.content).toContain('application-loaded Skill resource');
++    expect(message.content.match(/\[Skill source /g)).toHaveLength(1);
++    expect(primeInvokedSkills).toHaveBeenCalledTimes(1);
+     expect(primeInvokedSkills).toHaveBeenCalledWith([], ['analysis']);
+     expect(client.getEventActorContext).toHaveBeenCalledWith(skillManifest, ['deferred_tool']);
+-    expect(client.eventActorSkillPrimeResult).toEqual(skillPrimeResult);
++    expect(client.eventActorSkillPrimeResult).toBe(skillPrimeResult);
+     expect(client.eventActorDiscoveredToolNames).toEqual(['deferred_tool']);
+     expect(client.eventActorSummary).toEqual({
+       text: 'Earlier compacted context.',
+@@ -486,8 +500,16 @@ describe('AgentClient - event actor history adapter', () => {
+ 
+     expect(context.checkpointMessageOverlay.messages).toEqual([
+       expect.objectContaining({
+-        content: 'Root instructions.',
+-        additional_kwargs: expect.objectContaining({ skillName: 'root-skill' }),
++        content: expect.stringContaining('\nRoot instructions.\n[End skill source]'),
++        id: expect.stringMatching(/^event-actor-skill:[\w-]+$/),
++        additional_kwargs: expect.objectContaining({
++          isMeta: true,
++          source: 'skill',
++          trigger: 'model',
++          skillName: 'root-skill',
++          skillId: 'root-skill',
++          skillVersion: 1,
++        }),
+       }),
+     ]);
+     expect(context.checkpointMessageOverlay.messages).not.toEqual(
+@@ -497,6 +519,17 @@ describe('AgentClient - event actor history adapter', () => {
+         }),
+       ]),
+     );
++    expect(context.checkpointMessageOverlay.source).toBe('skill');
++    const [message] = context.checkpointMessageOverlay.messages;
++    expect(message.getType()).toBe('human');
++    expect(message.content).toContain(
++      '[Skill source {"name":"root-skill","id":"root-skill","version":1}]',
++    );
++    expect(message.content).toContain('application-loaded Skill resource');
++    expect(message.content.match(/\[Skill source /g)).toHaveLength(1);
++    expect(message.content).not.toContain('Child instructions.');
++    const replay = await client.prepareEventActorContext({ contextFingerprint: fingerprint });
++    expect(replay.checkpointMessageOverlay.messages[0].id).toBe(message.id);
+   });
+ 
+   it('keeps child manual Skills out of the root durable manifest', async () => {
+diff --git a/packages/api/src/agents/__tests__/skills.integration.spec.ts b/packages/api/src/agents/__tests__/skills.integration.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..6010fceb17d4d9386b4a610454e13f1cd80ec712
+--- /dev/null
++++ b/packages/api/src/agents/__tests__/skills.integration.spec.ts
+@@ -0,0 +1,156 @@
++import mongoose from 'mongoose';
++import { MongoMemoryServer } from 'mongodb-memory-server';
++import { HumanMessage } from '@librechat/agents/langchain/messages';
++import { createModels, createMethods } from '@librechat/data-schemas';
++import { Run, Providers, FakeChatModel, SkillToolDefinition } from '@librechat/agents';
++import type { Agent } from 'librechat-data-provider';
++import { createToolExecuteHandler } from '../handlers';
++import { injectSkillCatalog } from '../skills';
++
++let mongo: MongoMemoryServer;
++let methods: ReturnType<typeof createMethods>;
++const user = new mongoose.Types.ObjectId();
++const accessibleId = new mongoose.Types.ObjectId();
++const inaccessibleId = new mongoose.Types.ObjectId();
++const body = '# Analyze\n\nKeep this complete reference body.\nTarget: $ARGUMENTS';
++
++beforeAll(async () => {
++  mongo = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
++  await mongoose.connect(mongo.getUri());
++  createModels(mongoose);
++  methods = createMethods(mongoose);
++  await mongoose.models.Skill.create([
++    {
++      _id: accessibleId,
++      name: 'sdk-skill',
++      description: 'Analyze the requested subject with this reference.',
++      body,
++      author: user,
++      authorName: 'Fixture user',
++      version: 7,
++    },
++    {
++      _id: inaccessibleId,
++      name: 'private-skill',
++      description: 'An inaccessible skill.',
++      body: 'PRIVATE SKILL BODY',
++      author: new mongoose.Types.ObjectId(),
++      authorName: 'Other user',
++    },
++  ]);
++}, 60000);
++
++afterAll(async () => {
++  await mongoose.disconnect();
++  await mongo?.stop();
++});
++
++it.each(['sdk-skill', 'private-skill'])(
++  'routes %s through the real SDK event and host access scope into the next model input',
++  async (skillName) => {
++    const agent: Agent = {
++      id: 'skill-fixture',
++      name: 'Skill fixture',
++      description: 'Real SDK skill access fixture',
++      created_at: 0,
++      avatar: null,
++      provider: 'openai',
++      model: 'gpt-4o-mini',
++      model_parameters: {
++        temperature: null,
++        maxContextTokens: null,
++        max_context_tokens: null,
++        max_output_tokens: null,
++        top_p: null,
++        frequency_penalty: null,
++        presence_penalty: null,
++      },
++    };
++    const catalog = await injectSkillCatalog({
++      agent,
++      accessibleSkillIds: [accessibleId],
++      contextWindowTokens: 200_000,
++      listSkillsByAccess: methods.listSkillsByAccess,
++      toolDefinitions: undefined,
++      toolRegistry: undefined,
++      userId: user.toString(),
++    });
++    expect(agent.additional_instructions).toContain('sdk-skill');
++    expect(agent.additional_instructions).not.toContain('private-skill');
++    expect(catalog.toolDefinitions).toContainEqual(SkillToolDefinition);
++    const getSkillByName = jest.fn(methods.getSkillByName);
++    const handler = createToolExecuteHandler({
++      loadTools: async () => ({ loadedTools: [] }),
++      getSkillByName,
++    });
++    const execute = jest.spyOn(handler, 'handle');
++    const llmConfig = {
++      provider: Providers.OPENAI,
++      model: 'gpt-4o-mini',
++      apiKey: 'fixture-key',
++      streaming: true,
++      streamUsage: false,
++    };
++    const run = await Run.create({
++      runId: `skill-${skillName}`,
++      graphConfig: {
++        type: 'standard',
++        llmConfig,
++        agents: [
++          {
++            agentId: agent.id,
++            provider: Providers.OPENAI,
++            clientOptions: llmConfig,
++            instructions: agent.additional_instructions ?? undefined,
++            tools: [],
++            toolDefinitions: catalog.toolDefinitions,
++          },
++        ],
++      },
++      customHandlers: { on_tool_execute: handler },
++      returnContent: true,
++      tokenCounter: (text) => String(text ?? '').length,
++      indexTokenCountMap: {},
++    });
++    if (!run.Graph) throw new Error('The test run did not initialize its graph.');
++    const model = new FakeChatModel({
++      responses: ['Load the skill.', 'Done.'],
++      toolCalls: [
++        { name: SkillToolDefinition.name, args: { skillName, args: 'fixture' }, id: 'skill-call' },
++      ],
++    });
++    const modelInput = jest.spyOn(model, '_streamResponseChunks');
++    run.Graph.overrideModel = model;
++    await run.processStream(
++      { messages: [new HumanMessage('Analyze the fixture.')] },
++      {
++        configurable: { thread_id: skillName, accessibleSkillIds: catalog.activeSkillIds },
++        version: 'v2',
++      },
++    );
++    expect(execute).toHaveBeenCalledTimes(1);
++    expect(getSkillByName).toHaveBeenCalledWith(skillName, [accessibleId], {
++      preferModelInvocable: true,
++    });
++    expect(modelInput).toHaveBeenCalledTimes(2);
++    const messages = modelInput.mock.calls[1][0];
++    expect(JSON.stringify(messages)).not.toContain('PRIVATE SKILL BODY');
++    const carriers = messages.filter((message) =>
++      message.content.toString().includes('[Skill source'),
++    );
++    if (skillName === 'private-skill') {
++      expect(carriers).toHaveLength(0);
++      expect(
++        messages.some((message) => message.content.toString().includes('not accessible')),
++      ).toBe(true);
++      return;
++    }
++    expect(carriers).toHaveLength(1);
++    expect(carriers[0].getType()).toBe('human');
++    expect(carriers[0].content).toContain(
++      `[Skill source {"name":"sdk-skill","id":"${accessibleId}","version":7}]`,
++    );
++    expect(carriers[0].content).toContain(body.replace('$ARGUMENTS', 'fixture'));
++    expect(carriers[0].content).toContain('[End skill source]');
++  },
++);
+diff --git a/packages/api/src/agents/__tests__/skills.test.ts b/packages/api/src/agents/__tests__/skills.test.ts
+index 1f372eb0f836743f495c72d464d40a9378bb18e2..ecd227eeefca72187a127f52e9ad2faa5352ba70 100644
+--- a/packages/api/src/agents/__tests__/skills.test.ts
++++ b/packages/api/src/agents/__tests__/skills.test.ts
+@@ -1,55 +1,3 @@
+-/**
+- * Mock the pieces of `@librechat/agents` the installed SDK version may not
+- * export yet — the `Constants.SKILL_TOOL` stub and the tool definitions
+- * needed to exercise `injectSkillCatalog`.
+- *
+- * `formatSkillCatalog` is deliberately NOT stubbed. Its truncation ladder is
+- * the behaviour the catalog warnings report on, and a passthrough stub hides
+- * every truncation the model actually sees.
+- */
+-jest.mock('@librechat/agents', () => ({
+-  ...jest.requireActual('@librechat/agents'),
+-  Constants: {
+-    ...(jest.requireActual('@librechat/agents') as { Constants: Record<string, unknown> })
+-      .Constants,
+-    SKILL_TOOL: 'skill',
+-  },
+-  SkillToolDefinition: {
+-    name: 'skill',
+-    description: `skill tool
+-
+-CONSTRAINTS:
+-- Skill names come from the catalog only. Do not guess names.`,
+-    parameters: {
+-      type: 'object',
+-      properties: {
+-        skillName: {
+-          type: 'string',
+-          description: 'Must match a name from the "Available Skills" section.',
+-        },
+-      },
+-      required: ['skillName'],
+-    },
+-  },
+-  ReadFileToolDefinition: {
+-    name: 'read_file',
+-    description: 'read file',
+-    parameters: {},
+-    responseFormat: 'content',
+-  },
+-  BashExecutionToolDefinition: {
+-    name: 'bash_tool',
+-    description: 'bash',
+-    schema: {},
+-  },
+-  buildBashExecutionToolDescription: ({
+-    enableToolOutputReferences,
+-  }: {
+-    enableToolOutputReferences?: boolean;
+-  } = {}): string =>
+-    enableToolOutputReferences === true ? 'bash {{tool<idx>turn<turn>}}' : 'bash',
+-}));
+-
+ import { Types } from 'mongoose';
+ import { logger } from '@librechat/data-schemas';
+ import { SkillsScope } from 'librechat-data-provider';
+@@ -1367,11 +1315,7 @@ describe('injectSkillCatalog', () => {
+      * Symmetry check with `initializeAgent`'s call: `injectSkillCatalog`
+      * must forward `enableToolOutputReferences` so that if call order
+      * ever flips (skills-first), the resulting `bash_tool` description
+-     * still contains the `{{tool<idx>turn<turn>}}` syntax guide. Using
+-     * the registry mock's stub of `buildBashExecutionToolDescription`
+-     * (defined at the top of this file), the guide collapses to a
+-     * `{{tool<idx>turn<turn>}}` literal substring when the flag is on
+-     * and is absent when off.
++     * still contains the SDK's `{{tool<idx>turn<turn>}}` syntax guide.
+      */
+     const owned = makeSkill('owned-skill', userObjectId);
+     const listSkillsByAccess = buildPager([[owned]]);
+@@ -1990,7 +1934,8 @@ describe('injectManualSkillPrimes', () => {
+     expect(result.inserted).toBe(1);
+     expect(result.insertIdx).toBe(0);
+     expect(messages).toHaveLength(2);
+-    expect(messages[0].content).toBe('X means...');
++    expect(messages[0].content).toContain('X means...');
++    expect(messages[0].content).toContain('Skill source');
+     expect(messages[1]).toBe(userMsg);
+     // The prior-index-0 count follows the message it was attached to: now at idx 1.
+     expect(result.indexTokenCountMap).toEqual({ 1: 7 });
+@@ -2012,8 +1957,8 @@ describe('injectManualSkillPrimes', () => {
+     expect(messages).toHaveLength(5);
+     expect(messages[0].content).toBe('turn 1 user');
+     expect(messages[1].content).toBe('turn 1 reply');
+-    expect(messages[2].content).toBe('A body');
+-    expect(messages[3].content).toBe('B body');
++    expect(messages[2].content).toContain('A body');
++    expect(messages[3].content).toContain('B body');
+     expect(messages[4].content).toBe('turn 2 user');
+     // idx 0 unchanged, idx 1 unchanged, idx 2 shifts to 4 (+ numPrimes).
+     expect(result.indexTokenCountMap).toEqual({ 0: 1, 1: 2, 4: 3 });
+@@ -2583,8 +2528,8 @@ describe('injectSkillPrimes', () => {
+     });
+     expect(result.inserted).toBe(2);
+     expect(messages).toHaveLength(3);
+-    expect(messages[0].content).toBe('legal-body');
+-    expect(messages[1].content).toBe('brand-body');
++    expect(messages[0].content).toContain('legal-body');
++    expect(messages[1].content).toContain('brand-body');
+     expect(messages[2]).toBe(userMsg);
+   });
+ 
+@@ -2629,7 +2574,12 @@ describe('injectSkillPrimes', () => {
+     expect(result.inserted).toBe(3);
+     expect(result.alwaysApplyDropped).toBe(2);
+     // Ordering: [a1, m1, m2, user]
+-    expect(messages.map((m) => (m as HumanMessage).content)).toEqual(['a1', 'm1', 'm2', 'user']);
++    expect(messages.map((m) => (m as HumanMessage).content)).toEqual([
++      expect.stringContaining('\na1\n'),
++      expect.stringContaining('\nm1\n'),
++      expect.stringContaining('\nm2\n'),
++      'user',
++    ]);
+   });
+ 
+   it('preserves all manual primes when the cap is below their count (budget clamped to 0)', () => {
+@@ -2649,7 +2599,10 @@ describe('injectSkillPrimes', () => {
+     // resolver is responsible for capping manual to MAX_MANUAL_SKILLS before here).
+     expect(result.inserted).toBe(5);
+     const contents = messages.map((m) => (m as HumanMessage).content);
+-    expect(contents).toEqual(['m0', 'm1', 'm2', 'm3', 'm4', 'user']);
++    expect(contents).toEqual([
++      ...['m0', 'm1', 'm2', 'm3', 'm4'].map((body) => expect.stringContaining(`\n${body}\n`)),
++      'user',
++    ]);
+   });
+ 
+   it('uses MAX_PRIMED_SKILLS_PER_TURN as the default combined cap', () => {
+@@ -2692,7 +2645,8 @@ describe('injectSkillPrimes', () => {
+     expect(result.inserted).toBe(1);
+     expect(result.alwaysApplyDedupedFromManual).toBe(1);
+     expect(messages).toHaveLength(2);
+-    expect((messages[0] as HumanMessage).content).toBe('manual-body');
++    expect((messages[0] as HumanMessage).content).toContain('manual-body');
++    expect(String(messages[0].content).match(/Skill source/g)).toHaveLength(1);
+     expect((messages[0] as HumanMessage).additional_kwargs.trigger).toBe('manual');
+   });
+ 
+@@ -2708,7 +2662,11 @@ describe('injectSkillPrimes', () => {
+     expect(result.alwaysApplyDedupedFromManual).toBe(1);
+     // Order: always-apply first (distinct), then manual (shared), then user.
+     const contents = messages.map((m) => (m as HumanMessage).content);
+-    expect(contents).toEqual(['dist-body', 'shared-manual', 'user']);
++    expect(contents).toEqual([
++      expect.stringContaining('\ndist-body\n'),
++      expect.stringContaining('\nshared-manual\n'),
++      'user',
++    ]);
+   });
+ 
+   it('dedups before applying the combined cap so the cap reflects real primes', () => {
+diff --git a/packages/api/src/agents/handlers.ts b/packages/api/src/agents/handlers.ts
+index f8d1928118f071b4d513320c2134863629be19f2..420adad664a7f9307e882ab1a7e9a63db717c504 100644
+--- a/packages/api/src/agents/handlers.ts
++++ b/packages/api/src/agents/handlers.ts
+@@ -5314,7 +5314,9 @@ async function handleSkillToolCall(
+     return filtered;
+   }
+ 
+-  const injectedMessages: InjectedMessage[] = [buildSkillPrimeMessage({ name: skill.name, body })];
++  const injectedMessages: InjectedMessage[] = [
++    buildSkillPrimeMessage({ name: skill.name, body, _id: skill._id, version: skill.version }),
++  ];
+ 
+   let contentText = `Skill "${args.skillName}" loaded. Follow the instructions below.`;
+   let artifact:
+diff --git a/packages/api/src/agents/provenance.spec.ts b/packages/api/src/agents/provenance.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ab345e8fa007f3f5036d1f506b2f1db03c68162a
+--- /dev/null
++++ b/packages/api/src/agents/provenance.spec.ts
+@@ -0,0 +1,67 @@
++import { Types } from 'mongoose';
++import { HumanMessage } from '@librechat/agents/langchain/messages';
++import { convertInjectedMessages, projectMessageStructure } from '@librechat/agents';
++import {
++  buildAgentEventActorSkillMessages,
++  buildSkillPrimeMessage,
++  injectSkillPrimes,
++} from './skills';
++import {
++  dropUnusableSummaryParts,
++  findPreviousSummary,
++  resolveCheckpointMessage,
++} from './compaction';
++
++describe('context provenance offline fixtures', () => {
++  const skill = {
++    _id: new Types.ObjectId('000000000000000000000001'),
++    name: 'fixture',
++    body: 'SECRET_CANARY_BODY',
++    version: 3,
++  };
++
++  it('preserves source identity in model, manual, always-apply and actor skill paths', () => {
++    const model = convertInjectedMessages([buildSkillPrimeMessage(skill)]);
++    const manual = [new HumanMessage('question')];
++    injectSkillPrimes({
++      initialMessages: manual,
++      indexTokenCountMap: undefined,
++      manualSkillPrimes: [skill],
++      alwaysApplySkillPrimes: [skill],
++    });
++    const always = [new HumanMessage('question')];
++    injectSkillPrimes({
++      initialMessages: always,
++      indexTokenCountMap: undefined,
++      alwaysApplySkillPrimes: [skill],
++    });
++    const actor = buildAgentEventActorSkillMessages(new Map([[skill.name, skill.body]]), [skill]);
++    expect(manual).toHaveLength(2);
++    for (const message of [model[0], manual[0], always[0], actor[0]]) {
++      expect(message.getType()).toBe('human');
++      expect(message.content).toContain(skill.body);
++      expect(message.content).toContain(`"id":"${skill._id.toString()}"`);
++      expect(message.content).toContain('"version":3');
++      expect(String(message.content).match(/Skill source/g)).toHaveLength(1);
++      expect(JSON.stringify(projectMessageStructure([message]))).not.toContain('SECRET_CANARY');
++    }
++  });
++
++  it('keeps early history selection and replay aligned on diagnostic stubs', () => {
++    const summary = '[Metadata summary: 2 messages (1 human, 1 ai)]';
++    const prior = { summary: 'Valid prior checkpoint', tokenCount: 12 };
++    const invalid = { summary, tokenCount: 1 };
++    expect(findPreviousSummary([prior, invalid])).toBe(prior);
++    expect(resolveCheckpointMessage(invalid)).toBeNull();
++    const parts = [
++      {
++        type: 'summary' as const,
++        content: [{ type: 'text' as const, text: summary }],
++        boundary: { messageId: 'step', contentIndex: 0 },
++      },
++    ];
++    const message = { content: parts };
++    expect(dropUnusableSummaryParts(message)).toBe(true);
++    expect(message.content).toEqual([]);
++  });
++});
+diff --git a/packages/api/src/agents/skillFiles.spec.ts b/packages/api/src/agents/skillFiles.spec.ts
+index 5c6dd875c412c794f3760499b95fef17e54ba94e..019f99567b68b8a77e66bf02adf8f60c78e66c64 100644
+--- a/packages/api/src/agents/skillFiles.spec.ts
++++ b/packages/api/src/agents/skillFiles.spec.ts
+@@ -65,7 +65,9 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
+ 
+     const result = await primeInvokedSkills(deps);
+ 
+-    expect(result.skills?.get('brand-guidelines')).toBe('skill body');
++    expect(result.skills?.get('brand-guidelines')).toEqual(
++      expect.objectContaining({ body: 'skill body', skillVersion: 7 }),
++    );
+     expect(deps.listSkillFiles).not.toHaveBeenCalled();
+     expect(deps.batchUploadCodeEnvFiles).not.toHaveBeenCalled();
+   });
+@@ -883,7 +885,14 @@ describe('primeInvokedSkillsForProfiles', () => {
+ 
+     const result = await primeInvokedSkillsForProfiles(deps);
+ 
+-    expect(result.skills).toEqual(new Map([['brand-guidelines', 'skill body']]));
++    expect(result.skills).toEqual(
++      new Map([
++        [
++          'brand-guidelines',
++          expect.objectContaining({ body: 'skill body', skillId: SKILL_ID.toString() }),
++        ],
++      ]),
++    );
+     expect(result.skillManifest).toEqual([
+       {
+         id: SKILL_ID.toString(),
+diff --git a/packages/api/src/agents/skillFiles.ts b/packages/api/src/agents/skillFiles.ts
+index 8c5d0a420bef640c9bd99039648b3ff567ce2188..cb92d658703cbc89ebb7908988578b2ce30f3073 100644
+--- a/packages/api/src/agents/skillFiles.ts
++++ b/packages/api/src/agents/skillFiles.ts
+@@ -7,7 +7,7 @@ import {
+   type CodeEnvRef,
+   type CodeEnvRefMap,
+ } from 'librechat-data-provider';
+-import type { CodeEnvFile, ToolSessionMap, CodeSessionContext } from '@librechat/agents';
++import type { CodeEnvFile, ToolSessionMap, CodeSessionContext, SkillBody } from '@librechat/agents';
+ import type { Types } from 'mongoose';
+ import type { ServerRequest } from '~/types';
+ import {
+@@ -730,7 +730,7 @@ export interface PrimeInvokedSkillsResult {
+   initialSessions?: ToolSessionMap;
+   /** Pre-resolved skill bodies keyed by skill name. Passed to formatAgentMessages
+    *  so it can reconstruct HumanMessages at the right position in the message sequence. */
+-  skills?: Map<string, string>;
++  skills?: Map<string, SkillBody>;
+   /** Exact records resolved under the current request's ACL. */
+   skillManifest?: Array<{
+     id: string;
+@@ -768,7 +768,7 @@ export async function primeInvokedSkills(
+     return {};
+   }
+ 
+-  const skills = new Map<string, string>();
++  const skills = new Map<string, SkillBody>();
+ 
+   // Phase 1: Resolve all skills in parallel (DB lookups)
+   const resolveResults = await Promise.allSettled(
+@@ -789,7 +789,11 @@ export async function primeInvokedSkills(
+   for (const r of resolveResults) {
+     if (r.status === 'fulfilled' && r.value) {
+       assertStoredSkillBodyAllowed(r.value, deps.req);
+-      skills.set(r.value.name, r.value.body);
++      skills.set(r.value.name, {
++        body: r.value.body,
++        skillId: r.value._id.toString(),
++        skillVersion: r.value.version,
++      });
+       resolvedSkills.push(r.value);
+     } else if (r.status === 'rejected') {
+       logger.warn('[primeInvokedSkills] Skill resolution failed:', getSafeErrorMetadata(r.reason));
+@@ -1033,7 +1037,7 @@ export async function primeInvokedSkillsForProfiles(
+   );
+ 
+   let initialSessions: ToolSessionMap | undefined;
+-  const skills = new Map<string, string>();
++  const skills = new Map<string, SkillBody>();
+   const skillManifestByName = new Map<
+     string,
+     NonNullable<PrimeInvokedSkillsResult['skillManifest']>[number]
+@@ -1052,7 +1056,7 @@ export async function primeInvokedSkillsForProfiles(
+       if (
+         (existingIdentity != null &&
+           JSON.stringify(existingIdentity) !== JSON.stringify(identity)) ||
+-        (existingBody != null && existingBody !== body)
++        (existingBody != null && JSON.stringify(existingBody) !== JSON.stringify(body))
+       ) {
+         throw new Error(`Skill "${name}" changed while execution profiles were initialized`);
+       }
+diff --git a/packages/api/src/agents/skills.ts b/packages/api/src/agents/skills.ts
+index 7de9d671177a605efb6e44c5602bb1c15777aca0..de015b172655e6d91794847a7c6032fc214ca410 100644
+--- a/packages/api/src/agents/skills.ts
++++ b/packages/api/src/agents/skills.ts
+@@ -1,13 +1,18 @@
+ import { logger } from '@librechat/data-schemas';
+ import { HumanMessage } from '@librechat/agents/langchain/messages';
+ import { SkillsScope, isEphemeralAgentId, resolveAgentSkillsScope } from 'librechat-data-provider';
+-import { formatSkillCatalog, SkillToolDefinition, ReadFileToolDefinition } from '@librechat/agents';
++import {
++  formatSkillCatalog,
++  SkillToolDefinition,
++  ReadFileToolDefinition,
++  buildSkillCarrierText,
++} from '@librechat/agents';
+ import type {
+   Agent,
+   CodeWorkspaceOperation,
+   CodeWorkspaceDescriptor,
+ } from 'librechat-data-provider';
+-import type { LCToolRegistry, LCTool, InjectedMessage } from '@librechat/agents';
++import type { LCToolRegistry, LCTool, InjectedMessage, SkillBody } from '@librechat/agents';
+ import type { BaseMessage } from '@librechat/agents/langchain/messages';
+ import type { AppConfig } from '@librechat/data-schemas';
+ import type { Types } from 'mongoose';
+@@ -913,35 +918,54 @@ export async function injectSkillCatalog(
+  *  - `handleSkillToolCall` for model-invoked skills — called from the tool
+  *    execution handler.
+  */
+-export function buildSkillPrimeMessage(skill: { name: string; body: string }): InjectedMessage {
++export function buildSkillPrimeMessage(skill: {
++  name: string;
++  body: string;
++  _id?: { toString(): string };
++  version?: number;
++}): InjectedMessage {
+   return {
+     role: 'user',
+     content: skill.body,
+     isMeta: true,
+     source: SKILL_MESSAGE_SOURCE,
+     skillName: skill.name,
++    skillId: skill._id?.toString(),
++    skillVersion: skill.version,
+   };
+ }
+ 
+ /** Builds the exact live Skill overlay placed at the tail of an event actor checkpoint fork. */
+ export function buildAgentEventActorSkillMessages(
+-  skills: ReadonlyMap<string, string>,
++  skills: ReadonlyMap<string, SkillBody>,
++  primes: readonly ResolvedSkillPrime[] = [],
+ ): HumanMessage[] {
+-  return [...skills.entries()]
++  const sources = new Map(skills);
++  for (const prime of primes) {
++    sources.set(prime.name, {
++      body: prime.body,
++      skillId: prime._id.toString(),
++      skillVersion: prime.version,
++    });
++  }
++  return [...sources.entries()]
+     .sort(([left], [right]) => left.localeCompare(right))
+-    .map(
+-      ([name, body]) =>
+-        new HumanMessage({
+-          id: `event-actor-skill:${createSkillContentDigest(`${name}\0${body}`)}`,
+-          content: body,
+-          additional_kwargs: {
+-            isMeta: true,
+-            source: SKILL_MESSAGE_SOURCE,
+-            trigger: SKILL_TRIGGER_MODEL,
+-            skillName: name,
+-          },
+-        }),
+-    );
++    .map(([name, resolved]) => {
++      const body = typeof resolved === 'string' ? resolved : resolved.body;
++      const source = { ...(typeof resolved === 'string' ? {} : resolved), skillName: name };
++      return new HumanMessage({
++        id: `event-actor-skill:${createSkillContentDigest(`${name}\0${body}`)}`,
++        content: buildSkillCarrierText(body, source),
++        additional_kwargs: {
++          isMeta: true,
++          source: SKILL_MESSAGE_SOURCE,
++          trigger: SKILL_TRIGGER_MODEL,
++          skillName: name,
++          skillId: source.skillId,
++          skillVersion: source.skillVersion,
++        },
++      });
++    });
+ }
+ 
+ export interface ResolveManualSkillsParams {
+@@ -1345,18 +1369,19 @@ export async function resolveAlwaysApplySkills(
+   return resolved;
+ }
+ 
++type SkillPrimeInput = Pick<ResolvedSkillPrime, 'name' | 'body'> &
++  Partial<Pick<ResolvedSkillPrime, '_id' | 'version'>>;
++
+ export interface InjectManualSkillPrimesParams {
+   /** Formatted LangChain messages produced by `formatAgentMessages`. Mutated in place. */
+   initialMessages: BaseMessage[];
+   /** Per-index token count map returned by `formatAgentMessages`. */
+   indexTokenCountMap: Record<number, number> | undefined;
+   /**
+-   * Resolved skill primes to splice in. Only `name` and `body` are used
+-   * to construct the meta `HumanMessage`; widening the type to `Pick<...>`
+-   * lets tests pass minimal `{ name, body }` literals without inventing
+-   * `_id`s. The resolver always returns full primes in production.
++   * Resolved skill primes to splice in, retaining source identity when known.
++   * Minimal callers may omit identity; the carrier marks it unknown.
+    */
+-  manualSkillPrimes: Pick<ResolvedManualSkill, 'name' | 'body'>[];
++  manualSkillPrimes: SkillPrimeInput[];
+ }
+ 
+ export interface InjectManualSkillPrimesResult {
+@@ -1418,12 +1443,18 @@ export function injectManualSkillPrimes(
+   const primeMessages = manualSkillPrimes.map(
+     (p) =>
+       new HumanMessage({
+-        content: p.body,
++        content: buildSkillCarrierText(p.body, {
++          skillName: p.name,
++          skillId: p._id?.toString(),
++          skillVersion: p.version,
++        }),
+         additional_kwargs: {
+           isMeta: true,
+           source: SKILL_MESSAGE_SOURCE,
+           trigger: SKILL_TRIGGER_MANUAL,
+           skillName: p.name,
++          skillId: p._id?.toString(),
++          skillVersion: p.version,
+         },
+       }),
+   );
+@@ -1464,9 +1495,9 @@ export interface InjectSkillPrimesParams {
+   /** Per-index token count map returned by `formatAgentMessages`. */
+   indexTokenCountMap: Record<number, number> | undefined;
+   /** Resolved manual-invocation primes ($-popover). */
+-  manualSkillPrimes?: Pick<ResolvedManualSkill, 'name' | 'body'>[];
++  manualSkillPrimes?: SkillPrimeInput[];
+   /** Resolved `always-apply` primes (frontmatter-driven, auto-applied every turn). */
+-  alwaysApplySkillPrimes?: Pick<ResolvedAlwaysApplySkill, 'name' | 'body'>[];
++  alwaysApplySkillPrimes?: SkillPrimeInput[];
+   /**
+    * Combined ceiling on primes per turn. Defaults to
+    * `MAX_PRIMED_SKILLS_PER_TURN`. When the sum of `manualSkillPrimes` +
+@@ -1617,14 +1648,20 @@ export function injectSkillPrimes(params: InjectSkillPrimesParams): InjectSkillP
+     indexTokenCountMap = shifted;
+   }
+ 
+-  const buildPrime = (p: { name: string; body: string }, trigger: SkillTrigger): HumanMessage =>
++  const buildPrime = (p: SkillPrimeInput, trigger: SkillTrigger): HumanMessage =>
+     new HumanMessage({
+-      content: p.body,
++      content: buildSkillCarrierText(p.body, {
++        skillName: p.name,
++        skillId: p._id?.toString(),
++        skillVersion: p.version,
++      }),
+       additional_kwargs: {
+         isMeta: true,
+         source: SKILL_MESSAGE_SOURCE,
+         trigger,
+         skillName: p.name,
++        skillId: p._id?.toString(),
++        skillVersion: p.version,
+       },
+     });
+ 

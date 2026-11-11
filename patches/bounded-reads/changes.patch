@@ -1,0 +1,2936 @@
+diff --git a/api/server/experimental.js b/api/server/experimental.js
+index 5290cfac983bec01a19a4835c427d09c6ee0aaff..cac4398a25e20c66efd4b582d8aef0f0ed436bf9 100644
+--- a/api/server/experimental.js
++++ b/api/server/experimental.js
+@@ -664,6 +664,7 @@ if (cluster.isMaster) {
+     app.use('/api/user', routes.user);
+     app.use('/api/search', routes.search);
+     app.use('/api/messages', routes.messages);
++    app.use('/api/message-reads', routes.messageReads);
+     app.use('/api/convos', routes.convos);
+     app.use('/api/pull-requests', preAuthTenantMiddleware, routes.pullRequests);
+     app.use('/api/presets', routes.presets);
+diff --git a/api/server/index.js b/api/server/index.js
+index 0d47bf31485488f1d7bb32dc3192bfa62d5153ad..4d9486651037c4eee11dc7c9c5068aabe04bac47 100644
+--- a/api/server/index.js
++++ b/api/server/index.js
+@@ -452,6 +452,7 @@ const startServer = async () => {
+   app.use('/api/user', routes.user);
+   app.use('/api/search', routes.search);
+   app.use('/api/messages', routes.messages);
++  app.use('/api/message-reads', routes.messageReads);
+   app.use('/api/convos', routes.convos);
+   app.use('/api/pull-requests', preAuthTenantMiddleware, routes.pullRequests);
+   app.use('/api/traces', routes.traces);
+diff --git a/api/server/routes/index.js b/api/server/routes/index.js
+index d0d678ab2d8bc1c3ee87ec193c89206ae62e5100..fc159f89837a29a430d1071348d91bd210cdac51 100644
+--- a/api/server/routes/index.js
++++ b/api/server/routes/index.js
+@@ -15,6 +15,7 @@ const adminAuditLog = require('./admin/audit');
+ const endpoints = require('./endpoints');
+ const staticRoute = require('./static');
+ const messages = require('./messages');
++const messageReads = require('./message-reads');
+ const memories = require('./memories');
+ const presets = require('./presets');
+ const projects = require('./projects');
+@@ -86,6 +87,7 @@ module.exports = {
+   presets,
+   balance,
+   messages,
++  messageReads,
+   memories,
+   endpoints,
+   assistants,
+diff --git a/api/server/routes/message-reads.js b/api/server/routes/message-reads.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..384ea15bbc64e9908f10b8fcbfb5893d887105ec
+--- /dev/null
++++ b/api/server/routes/message-reads.js
+@@ -0,0 +1,19 @@
++const express = require('express');
++const { createMessageReadHandler, createMessageReadLimits } = require('@librechat/api');
++const { requireJwtAuth, createMessageRequestValidation } = require('~/server/middleware');
++const { getAppConfig } = require('~/server/services/Config');
++const db = require('~/models');
++const router = express.Router();
++const deps = {
++  getMessageReadMetadata: db.getMessageReadMetadata,
++  getMessageReadContent: db.getMessageReadContent,
++  validate: (req) =>
++    createMessageRequestValidation(req, { activeJobMessageRead: true, explicitTenantScope: true }),
++  getLimits: createMessageReadLimits(getAppConfig),
++  getCursorKey: () => process.env.JWT_SECRET,
++};
++router.use(requireJwtAuth);
++router.get('/list', createMessageReadHandler(deps, 'list'));
++router.get('/content', createMessageReadHandler(deps, 'content'));
++router.get('/read', createMessageReadHandler(deps, 'read'));
++module.exports = router;
+diff --git a/api/server/routes/prompts.test.js b/api/server/routes/prompts.test.js
+index 3e3cd9e152b2c1b6f0387ef23c00f05f68a7d613..b47a7f018abaa044e806bb0362ebf024a3eb2baf 100644
+--- a/api/server/routes/prompts.test.js
++++ b/api/server/routes/prompts.test.js
+@@ -23,8 +23,12 @@ jest.mock('~/server/services/Config', () => ({
+ 
+ jest.mock('~/models', () => {
+   const mongoose = require('mongoose');
++  const { createMessageBudgetReader } = require('@librechat/api');
+   const { createMethods } = require('@librechat/data-schemas');
++  // createMethods 不导出宿主初始化接口；复用真实 reader，保留 Config/app 的组合契约。
++  const messageBudget = createMessageBudgetReader();
+   const methods = createMethods(mongoose, {
++    getMCPAppMessageBudget: messageBudget.getBudget,
+     removeAllPermissions: async ({ resourceType, resourceId }) => {
+       const AclEntry = mongoose.models.AclEntry;
+       if (AclEntry) {
+@@ -34,6 +38,7 @@ jest.mock('~/models', () => {
+   });
+   return {
+     ...methods,
++    initializeMessageBudget: messageBudget.initialize,
+     getRoleByName: jest.fn(),
+   };
+ });
+diff --git a/api/server/routes/skills.tenant.test.js b/api/server/routes/skills.tenant.test.js
+index 8c78a8897d70bf28a1604614ce377dfc8b8ed393..0e5199083343ed27d4fa304c54be92092971369b 100644
+--- a/api/server/routes/skills.tenant.test.js
++++ b/api/server/routes/skills.tenant.test.js
+@@ -52,8 +52,12 @@ jest.mock('~/server/utils/getFileStrategy', () => ({
+ 
+ jest.mock('~/models', () => {
+   const mongoose = require('mongoose');
++  const { createMessageBudgetReader } = require('@librechat/api');
+   const { createMethods } = require('@librechat/data-schemas');
++  // createMethods 不导出宿主初始化接口；复用真实 reader，保留 Config/app 的组合契约。
++  const messageBudget = createMessageBudgetReader();
+   const methods = createMethods(mongoose, {
++    getMCPAppMessageBudget: messageBudget.getBudget,
+     removeAllPermissions: async ({ resourceType, resourceId }) => {
+       const AclEntry = mongoose.models.AclEntry;
+       if (AclEntry) {
+@@ -63,6 +67,7 @@ jest.mock('~/models', () => {
+   });
+   return {
+     ...methods,
++    initializeMessageBudget: messageBudget.initialize,
+     getRoleByName: jest.fn(),
+   };
+ });
+diff --git a/api/server/routes/skills.test.js b/api/server/routes/skills.test.js
+index a91ca7f0bfede87bcd0298a7b147a3e662f6495e..18be32db59e301454b077d9cca69452e9db9a7f7 100644
+--- a/api/server/routes/skills.test.js
++++ b/api/server/routes/skills.test.js
+@@ -80,8 +80,12 @@ jest.mock('~/server/services/Skills/sync', () => ({
+ 
+ jest.mock('~/models', () => {
+   const mongoose = require('mongoose');
++  const { createMessageBudgetReader } = require('@librechat/api');
+   const { createMethods } = require('@librechat/data-schemas');
++  // createMethods 不导出宿主初始化接口；复用真实 reader，保留 Config/app 的组合契约。
++  const messageBudget = createMessageBudgetReader();
+   const methods = createMethods(mongoose, {
++    getMCPAppMessageBudget: messageBudget.getBudget,
+     removeAllPermissions: async ({ resourceType, resourceId }) => {
+       const AclEntry = mongoose.models.AclEntry;
+       if (AclEntry) {
+@@ -94,6 +98,7 @@ jest.mock('~/models', () => {
+   // suite intentionally skips to keep setup minimal.
+   return {
+     ...methods,
++    initializeMessageBudget: messageBudget.initialize,
+     getRoleByName: jest.fn(),
+   };
+ });
+diff --git a/docs/mcp-message-reads-patch.md b/docs/mcp-message-reads-patch.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..0b5f657fc7cfb4f05f9019dd55b0aa3bf17833e2
+--- /dev/null
++++ b/docs/mcp-message-reads-patch.md
+@@ -0,0 +1,421 @@
++# MCP 消息有界读取：补丁维护与上游移植指南
++
++## 状态与适用范围
++
++**当前维护状态（2026-11-11）：功能保留。** 普通消息分页或工具预览不能替代本补丁的数据库投影、完整响应预算、逐页鉴权和字段级续读。继续提供 v2 reader 时，保留相应 revision 写路径和 DocumentDB 兼容投影。统一基线、保留与替换决策见 [补丁状态表](https://github.com/Ricky-Hao/LibreChat/blob/patches/docs/status.md)；这次状态记录未重跑配套服务或 live 测试。
++
++本文记录 **2026-10-13 的 v2 三工具源码实现，配套 MCP v0.4.0 发布候选**，解释 LibreChat 为什么需要配套修改，以及未来如何按语义移植到新上游。发布/部署状态须单独核验；本指南不依赖本次任务的临时目录或聊天记录。
++
++- LibreChat 工作分支：`feat/mcp-bounded-message-reads`；基线 HEAD：`78e40464e4df7f36f1110e7258de54f47259c8e5`。
++- 配套 LibreChat-MCP 工作分支：`feat/bounded-message-reads`；基线 HEAD：`0ac84637d6eafddcc5a25520176d65f66a720243`。
++- **这些是补丁之前的基线，不是实现提交。** 应通过下述 Git 历史定位两边真正的补丁提交和发布版本，不能拿上述 HEAD 作为实现的可重放提交；不在本文虚构自引用 SHA。
++- 下述移植、构建、测试和发布步骤是维护 runbook，不代表对未来上游已经执行。最初文档轮次仅修改文档；本指南也随 v0.4.0 本地发布准备更新。当时未检查未来上游；上述当前状态只记录后续固定基线的源码比较，不证明移植或配套发布已完成。
++- 当前源码 MCP catalog 共 **57** 个工具，其中消息分析 reader 恰好 **3** 个；历史 v0.3.1 发布包为 56 个，不能用源码数字描述已部署服务。
++
++### 定位真正的补丁提交
++
++在已取得授权的本地 checkout 中，使用文件历史定位实现，而非要求某个临时任务目录存在：
++
++```sh
++# LibreChat 根目录；--follow 一次只跟踪一个路径
++git log --follow --format='%H %s' -- packages/api/src/messages/reads.ts
++git log --follow --format='%H %s' -- docs/mcp-message-reads-patch.md
++git log --all --fixed-strings --grep='feat: add bounded MCP message analysis API' --format='%H %s'
++```
++
++`feat: add bounded MCP message analysis API` 是本次计划的 LibreChat 实现提交主题；以实际历史、变更文件与第 3 节清单核对，不能只凭主题或出现本指南的提交认定实现完整。若主题不同，按文件历史追溯。记录找到的实际 SHA、新上游 base 和移植结果；基线 `78e40464` **不是实现 SHA**。在配套 MCP checkout 中可用 `git log --follow --format='%H %s' -- src/tools/message-reads.ts` 定位实现；**确认 v0.4.0 已发布且本地已有该 tag 后**，`git rev-parse 'v0.4.0^{commit}'` 可定位发布源码，再核对其包含的实现提交。缺少历史/tag 时单独取得获取授权，不假定本地 tag 存在。
++
++**影响的是消息读取，不是整个 conversations 或 Agents 功能。** 原有专用 `librechat_conversations_messages_list` / `librechat_conversations_messages_read` 被移除；会话资源的列举、元数据读取、创建、更新、删除等操作保持原注册，`agentsTools` 注册也未更改。MCP `src/server.ts` 的 `guardedMessageTools` 和 `src/client.ts` 的 `maxResponseBytes` / `messageReadsCapability` 按此读取路径启用保护，并非给全部资源换协议。共享 client 仍有通用 SSE 错误处理，不能把“作用域内有界保护”误写成“共享文件完全未动”。
++
++独立 `librechat_messages_search`、通用 `api_request`、浏览器 `/api/messages` 保留原用途，**不是**本方案的有界分析路径。没有旧 reader 别名、八工具分发器或 `full` 模式。
++
++配套仓库的 `docs/BOUNDED-MESSAGE-READS.md` 是 Agent 调用契约，`docs/MESSAGE-READ-REFERENCES.md` 是 usage 与网关证据摘要。若两仓库相邻检出，可从本仓库根目录访问 `../LibreChat-MCP/docs/`。这些是 checkout-relative 路径，不依赖某个远程分支的发布状态；本指南自身包含移植所需的核心契约。
++
++## 1. 为什么必须配套修改 LibreChat
++
++### 1.1 问题发生在哪一跳
++
++旧链路可能从数据库取得整条消息及大型工具输出，LibreChat 发出大 JSON，MCP 再将其包装成文本 JSON。**已知会实施缓冲限制的位置是网关作为 MCP 上游客户端消费 MCP HTTP 响应的那一跳，不是 HTTP 请求体。** 外层 JSON 转义还可能放大消息正文。
++
++已有只读证据与公开源码相匹配：agentgateway `v1.5.0`，源码 revision `fe6732474a96a0363dfb9822859af4e9bab360fa`。
++
++1. [streamablehttp.rs](https://github.com/agentgateway/agentgateway/blob/fe6732474a96a0363dfb9822859af4e9bab360fa/crates/agentgateway/src/mcp/upstream/streamablehttp.rs)：成功 JSON 响应经 `response_buffer_limit`、`to_bytes_with_decompression` 后解析为 `ServerJsonRpcMessage`。
++2. [compression/mod.rs](https://github.com/agentgateway/agentgateway/blob/fe6732474a96a0363dfb9822859af4e9bab360fa/crates/agentgateway/src/http/compression/mod.rs)：限制解压后的字节，超限可产生 `body exceeded buffer limit`；压缩不能绕过该限制。
++3. [http/src/lib.rs](https://github.com/agentgateway/agentgateway/blob/fe6732474a96a0363dfb9822859af4e9bab360fa/crates/http/src/lib.rs)：响应 `BufferLimit` extension 可覆盖 `DEFAULT_BUFFER_LIMIT = 2_097_152`，即 **2 MiB 解码字节**。
++
++这是匹配版本的机制和默认值，**不是已测得的事故阈值**。事故响应的实际 extension、运行时有效策略、失败 payload 大小仍未测量；配置源没有 override 也不能证明内存中的策略。原事故未复现。`-32603` 是 JSON-RPC internal error，不是 HTTP 状态码。界面截断显示与传输读取失败是两个问题，显示截断并未被证明是事故原因。本文省略私有运行时名称、标识符和所有凭据。
++
++### 1.2 为什么几个简单办法不够
++
++| 方案                       | 不足及本方案取舍                                                                                                                                                                                                                                                                                                                                                                                                    |
++| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| MCP 收到完整响应后裁剪     | 已发生 LibreChat→MCP 大响应、驱动物化和 Node 分配；也无法在裁剪后可靠恢复被丢掉的内容。MCP 仍需最终保险，但不能替代数据库投影和上游发送前预算。                                                                                                                                                                                                                                                                     |
++| 按消息条数分页             | 一条消息就可能有巨型 args/output/嵌套内容；`limit:1` 不是字节上界。                                                                                                                                                                                                                                                                                                                                                 |
++| 复用 preview + parts       | [previews.ts](../packages/api/src/messages/previews.ts) 的 `prepareToolCallPreviews` / `previewMessagesToolCalls` 对已取得的消息生成展示预览，字符限制不是完整 wire 字节预算；[parts.ts](../packages/api/src/messages/parts.ts) 的 `readToolCallPart` 先调用 `getMessages(..., CLIENT_MESSAGE_SELECT)` 再定位 part，并返回完整 part。两者服务浏览器恢复，不能直接提供投影前置、可连续重建、版本栅栏和全包字节上限。 |
++| 整条消息内容 hash          | 每个分页请求都需读/序列化全源，破坏“仅选中字段”的成本目标。改用 writer-maintained revision，明确缩小一致性保证范围。                                                                                                                                                                                                                                                                                                |
++| 全局提高网关 buffer        | 只移动阈值，不能限制更大的消息或减少上游物化，且扩大每连接内存暴露。本补丁不改网关。                                                                                                                                                                                                                                                                                                                                |
++| 八个专用 reader 加旧工具   | 增大 tools/list 和选择成本、重复参数；改为 list → content → read 三阶段。历史八工具/严格全 hash 方案不是当前合同。                                                                                                                                                                                                                                                                                                  |
++| 保留兼容别名或静默回退全文 | 重新引入无界入口并掩盖配套版本错误；新 reader 能力不匹配即失败。浏览器旧 API 本身仍保持原合同。                                                                                                                                                                                                                                                                                                                     |
++
++数据归属、租户、retention 和消息结构由 LibreChat 掌握，所以 **Mongo 投影、选中字段读取、游标签名和完整 HTTP JSON 的预算必须在 LibreChat 内完成**。MCP 负责更薄的严格 schema、映射、解码响应保险、脱敏后最终 JSON-RPC 预算及安全错误。
++
++## 2. 调用链与精确合同
++
++```text
++Agent / MCP client
++  → gateway（消费 MCP 响应时还有自己的解码 buffer 限制）
++  → LibreChat-MCP：三个 reader，严格 start 或仅 cursor
++  → JWT GET /api/message-reads/{list|content|read}
++  → createMessageRequestValidation：每次重新授权
++  → createBoundedMessageMethods：显式 scope + Mongo 投影/截窗
++  → createMessageReadHandler：revision、UTF-8 与完整 JSON 预算
++  → MCP：能力检查、decoded HTTP 上限、单一文本 payload
++  → 连接凭据脱敏、最终 JSON-RPC envelope 上限
++  → gateway → Agent
++```
++
++### 2.1 三工具与三路由
++
++| MCP 工具名                   | 唯一上游路由                     | 初始参数与结果                                                                                                                                                                          |
++| ---------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| `librechat_messages_list`    | `GET /api/message-reads/list`    | 必须 `conversationId`；可选精确 `messageId` 或时间分页选择器。返回 `{conversationId,observability,items,nextCursor}`。非精确查询另有 `consistency:"live"`。                             |
++| `librechat_messages_content` | `GET /api/message-reads/content` | `conversationId` + `messageId` **或**先前 content 的 `ref`；可选 `kind`、`ancestry`、`limit`。返回 `{ref,ancestry,items,nextCursor}`；根 text 存在时有 `text:true`。                    |
++| `librechat_messages_read`    | `GET /api/message-reads/read`    | 必须 content 的 `ref`；`field` 默认 `entry`，另有 `text`、`args`、`output`；除根 `text` 外必须 `index`，可选 `maxBytes`。返回 `{representation,offsetBytes,data,complete,nextCursor}`。 |
++
++三个操作的续页都**只能传 `{cursor}`**，不可再带任何初始参数；未知字段、重复 query 值、无关选择器均拒绝。默认值只在 start 归一化，后续使用签名状态。ref 与 cursor 不互换：ref 选择某一消息版本/ancestry，cursor 继续同一操作与位置。当前 token 仍包含完整归一化 Selection，未做可选的 token 紧缩优化。
++
++`messages_list` 默认 `timeField:createdAt`、`direction:asc`、`limit:25`、`includeContext:false`，最大 100。按指定时间戳与 `messageId`、simple collation 排序，保留所有分支和 `parentMessageId`。`from` 含边界、`to` 不含；UTC 必须包含秒，允许无小数或 1–3 位小数且以 `Z` 结尾。时间范围必须有效且 `from < to`。精确 `messageId` 返回零或一条，禁止同时给 `timeField/from/to/direction/limit`，但允许 `includeContext`。这是 live 分页，不是跨请求快照；排序字段改变可能使消息在遍历中移动。
++
++`includeContext:true` 才在数据库选择 allowlist 中的 context measurement 字段，并在页级返回 `contextProjection:"measurements"`。每个成功 list 页（含空结果、精确结果、cursor-only 页）只返回一次会话身份及：
++
++```json
++{
++  "conversationId": "CONVERSATION_ID",
++  "observability": {
++    "llmRequests": "not_recorded",
++    "ptcInnerCalls": "not_recorded"
++  },
++  "consistency": "live",
++  "items": [{ "messageId": "MESSAGE_ID", "parentMessageId": "PARENT_ID" }],
++  "nextCursor": null
++}
++```
++
++`not_recorded` 指可靠持久调用计数未记录，不是“不支持分析”，也不是零；stored usage 可缺失、不完整。身份与 observability 不逐行重复，也都计入完整响应预算。
++
++content 每页最多扫描 `limit` 个**原始存储下标**，`kind:"tools"` 过滤后可返回空页但仍有 cursor。重复 tool-call ID 以 scope + 下标区分。`kind` 默认 `all`，不是实时生命周期事件流。页级只发一个 ref；descriptor 的 `children:{ancestry:[...],omitted:true}` 要求调用者显式请求该 ancestry。MCP 接受整数数组，HTTP 映射为逗号分隔数字路径，最多 16 层，禁止任意 Mongo 路径。嵌套 ref 不允许越出已有 ancestry 前缀；`text` 仅支持根消息，不能与 index 混用。descriptor/entry 都不递归展开子内容。
++
++名称取实际存储的值：优先 `tool_call.name`，缺失时依次 `function.name`、`code_interpreter.name`；已存 null 不当作缺失。超过 512 UTF-8 字节的名称在 descriptor 标为 `omittedFields`，可读 public entry 恢复；不会凭类型虚构 `code_interpreter` 名字。
++
++### 2.2 安全的合成调用示例
++
++以下是独立 MCP 调用，所有 ID/token 均为占位符，不是可用凭据；`index:3` 仅表示假设前页确实返回下标 3：
++
++```jsonl
++{"name":"librechat_messages_list","arguments":{"conversationId":"CONVERSATION_ID","includeContext":true}}
++{"name":"librechat_messages_list","arguments":{"cursor":"RETURNED_LIST_CURSOR"}}
++{"name":"librechat_messages_content","arguments":{"conversationId":"CONVERSATION_ID","messageId":"MESSAGE_ID","kind":"tools"}}
++{"name":"librechat_messages_read","arguments":{"ref":"RETURNED_REF","field":"output","index":3,"maxBytes":8192}}
++{"name":"librechat_messages_read","arguments":{"cursor":"RETURNED_READ_CURSOR"}}
++{"name":"librechat_messages_content","arguments":{"ref":"RETURNED_REF","ancestry":[3]}}
++```
++
++对应 HTTP 使用 JWT 的现有认证入口；例如 `GET /api/message-reads/content?conversationId=CONVERSATION_ID&messageId=MESSAGE_ID&kind=tools`。由 MCP client 编码 query，不能手工拼接未经编码的 ref/cursor。本指南不要求读取任何密钥。
++
++按 `offsetBytes` 连续拼接 `data`，直到 `complete:true` / `nextCursor:null`。字符串即使看起来像 JSON 仍为 `representation:"utf8"`；对象、数组、数字、布尔和 null 为 `"json"`，只在完整拼接后解析。offset/maxBytes 以**表示内容的 UTF-8 字节**计，先于外层 JSON 转义；不是 codepoint、UTF-16 单元或模型 token。没有 `totalBytes` 全扫描。若一个 codepoint 都装不下，增大 `maxBytes` 重新开始。stale/expired 后重新发现，不把不同 revision 的片段接在一起。
++
++entry 另带 `projection:"public-entry"`、`nestedContentOmitted:true`、`unlistedFieldsOmitted:true`；是公开投影，不是原始 BSON 的完整导出。
++
++### 2.3 内部协议、配置、预算与错误
++
++LibreChat 内部成功/安全错误 JSON 有 `schemaVersion:2`；handler 设置 `x-librechat-message-reads: 2` 与 `Cache-Control: private, no-store`。常量为 `MESSAGE_READS_VERSION` / `MESSAGE_READS_HEADER`。MCP 校验能力并剥离内部 schema/version 与 HTTP status/data 包装，只返回一个 `content:[{type:"text",text:...}]`，不再复制 `structuredContent`。
++
++`librechat.yaml` 中现有配置链可承载：
++
++```yaml
++messageReads:
++  responseBytes: 65536
++  bodyBytes: 16384
++  pageSize: 25
++  tokenTtlSeconds: 3600
++```
++
++| 配置              |   默认 | 允许范围/单位                                    |
++| ----------------- | -----: | ------------------------------------------------ |
++| `responseBytes`   | 65,536 | 4,096–65,536，完整序列化 HTTP JSON 的 UTF-8 字节 |
++| `bodyBytes`       | 16,384 | 256–32,768，单个正文表示片段的 UTF-8 字节        |
++| `pageSize`        |     25 | 1–100，metadata 行或 content 源下标窗口          |
++| `tokenTtlSeconds` |  3,600 | 60–86,400，签发后的秒数                          |
++
++请求 `maxBytes` 可低至 1，但不能超过服务配置 `bodyBytes`。LibreChat 的 `fits`/`send` 测量包含 schemaVersion、identity、observability、ref/cursor、转义的完整 JSON，而非只算 `data`。MCP 再限制解码 HTTP 为 65,536 字节，脱敏后的完整 JSON-RPC envelope 为 262,144 字节。token、重复 JSON 编码和错误 envelope 都必须考虑；预算不是单条消息允许大小，也不是恒定输出大小。
++
++| LibreChat handler 错误                   | HTTP | 调用者行为                                                       |
++| ---------------------------------------- | ---: | ---------------------------------------------------------------- |
++| `INVALID_REQUEST` / `INVALID_CURSOR`     |  400 | 修正参数；失效、篡改、过期、跨 principal 或错操作 token 不可继续 |
++| `NOT_FOUND` / `FIELD_NOT_RECORDED`       |  404 | 分别表示不可访问/不存在，或选中字段未记录；不能据此补成空串或零  |
++| `STALE_CURSOR`                           |  409 | 内容 revision 变化，重新发现/读取                                |
++| `ITEM_TOO_LARGE` / `UNSUPPORTED_CONTENT` |  422 | 单项/最小片段无法适配或结构不支持；不能回退完整消息              |
++| `UNAVAILABLE`                            |  503 | 安全的暂不可用错误，不转发数据库异常详情                         |
++
++这是 handler 的错误合同；JWT middleware 的认证失败仍由现有认证层处理。MCP 用 `isError:true` 和 `{error:{code,message}}` 返回安全错误；能力缺失/不兼容为 `BOUNDED_READ_UNSUPPORTED`，client/envelope 超限为 `MESSAGE_READ_TOO_LARGE`，工具 start/混参校验可返回 `INVALID_INPUT`。不得将上游 body、stack、query、header 或 token 放进诊断回包。新增 MCP 工具日志只记录工具名、耗时、最终结果；不要为了调试添加正文日志。
++
++## 3. LibreChat 完整语义补丁清单（18 个源/测试文件）
++
++下面的链接指向当前文件；**符号/行为是移植锚点，行号不是合同**。未来路径改变时先找等价职责。只要等价实现经过第 8 节断言矩阵证明，本地重复实现可以适配或删除；不能仅因上游出现同名工具就删掉。
++
++### 3.1 路由与 package wiring（5）
++
++| 文件                                                                        | 为什么需要、关键锚点                                                                            | 移植时保留/可替换条件                                                                               |
++| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
++| [api/server/index.js](../api/server/index.js)                               | `startServer` 挂载 `app.use('/api/message-reads', routes.messageReads)`，让普通启动入口可达。   | 保留独立 namespace 和 JWT 路由；如入口改为统一 router，在真实启动链等效挂载后可删旧接线。           |
++| [api/server/experimental.js](../api/server/experimental.js)                 | experimental/cluster worker 入口同样挂载三路由，避免只在普通 server 成功。                      | 检查新上游是否仍支持该入口；只有入口退役或被统一实现覆盖才能丢掉这一处。                            |
++| [api/server/routes/index.js](../api/server/routes/index.js)                 | 暴露 `messageReads` router 给两个入口。                                                         | 可随 router 注册机制移动，不能忘掉其中一个 server。                                                 |
++| [api/server/routes/message-reads.js](../api/server/routes/message-reads.js) | `requireJwtAuth`、三个 GET、数据库依赖、`createMessageReadLimits`、`getCursorKey` 的 CJS 接线。 | 业务仍在 TS；保留每次 validation 和配置适配。上游依赖注入等价后可改接，不把读取算法移入 legacy JS。 |
++| [packages/api/src/messages/index.ts](../packages/api/src/messages/index.ts) | barrel 导出 `./reads`，使 CJS `@librechat/api` 能取得 handler/limits。                          | 上游 package export 改制时按新出口适配；不能只有源码导出、构建包缺失。                              |
++
++### 3.2 共享合同与配置传递（5）
++
++| 文件                                                                                        | 为什么需要、关键锚点                                                                               | 移植时保留/可替换条件                                                                                                                                                                       |
++| ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| [packages/data-provider/src/messageReads.ts](../packages/data-provider/src/messageReads.ts) | v2 常量及 `MessageReadTimeField` / `MessageReadBodyField` / `MessageReadOperation`。               | 保留与 MCP 可验证的协议；上游有等价共享类型可合并，不能偷偷把版本改成兼容任意 API。                                                                                                         |
++| [packages/data-provider/src/config.ts](../packages/data-provider/src/config.ts)             | `messageReadsConfigSchema`、`TMessageReadsConfig`、`configSchema.messageReads` 定义默认和硬上限。  | 遵从新配置机制，但须仍有校验后的默认、单位和最大值；不能只添加 YAML 文档。                                                                                                                  |
++| [packages/data-provider/src/index.ts](../packages/data-provider/src/index.ts)               | 导出 `./messageReads`，跨包编译和常量引用才成立。                                                  | 上游 barrel/exports 等价时替换。                                                                                                                                                            |
++| [packages/data-schemas/src/types/app.ts](../packages/data-schemas/src/types/app.ts)         | `AppConfig.messageReads?: TCustomConfig['messageReads']` 贯通服务配置类型。                        | 新 AppConfig 等价字段可取代；避免类型存在而运行时丢字段。                                                                                                                                   |
++| [packages/data-schemas/src/app/service.ts](../packages/data-schemas/src/app/service.ts)     | `AppService` 将 `messageReadsConfigSchema.parse(config.messageReads ?? {})` 放入运行时 AppConfig。 | 与用户/租户配置解析对齐；只有上游服务已传播等价配置才可删。handler 的 `createMessageReadLimits` 经 `getAppConfigOptionsFromUser`，并用 `skipRuntimeAugmentation:true`，不需加载无关运行时。 |
++
++### 3.3 处理、安全与数据库边界（6）
++
++| 文件                                                                                                      | 为什么需要、关键锚点                                                                                                                                                 | 移植时保留/可替换条件                                                                                                      |
++| --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
++| [packages/api/src/messages/reads.ts](../packages/api/src/messages/reads.ts)                               | `createMessageReadHandler` / `createMessageReadLimits`、`codec`、`measurements`、`metadata`、`checkEntry`：选择器、HMAC、revision、语义与完整 HTTP 预算。            | 可分拆职责或换等价上游实现，但所有 wire/auth/一致性不变量均须有测试；不能恢复全文 hash 或 fallback。                       |
++| [packages/api/src/middleware/messageValidation.ts](../packages/api/src/middleware/messageValidation.ts)   | `createMessageRequestMiddleware` 内的 `createMessageRequestValidation` / `canReadActiveJobConversation`；新增 opt-in `activeJobMessageRead`、`explicitTenantScope`。 | 新路径显式租户、active-job 精确读取；旧路由默认行为不受 opt-in 影响。上游权限系统变动是必须重新审计的冲突点。              |
++| [packages/data-schemas/src/methods/messageReads.ts](../packages/data-schemas/src/methods/messageReads.ts) | `createBoundedMessageMethods`、`MESSAGE_READ_METADATA_PROJECTION`、`scope`、`descriptor`、`publicEntryProjection`；数据库前置选择与字符串截窗。                      | 等价 repository 方法可以替换；必须在 driver 返回前投影，保留数值 ancestry、同一查询 revision/data、显式 retention/tenant。 |
++| [packages/data-schemas/src/methods/message.ts](../packages/data-schemas/src/methods/message.ts)           | `MessageMethods extends BoundedMessageMethods`，`createMessageMethods` 合入新方法；四个后台 claim 写点增加 `$inc:{__v:1}`。                                          | 不是通用 writer 重写；第 4 节写点逐一映射。若新上游统一 revision，避免重复递增，验证原子性后删除重复 inc。                 |
++| [packages/data-schemas/src/index.ts](../packages/data-schemas/src/index.ts)                               | 导出 `BoundedMessageMethods` / `MessageReadRow` / `MessageReadScope` / `MessageReadPageInput` 类型，API 不直接依赖 Mongo 查询细节。                                  | 上游 storage 接口替换时沿用分层边界；不能把完整 ORM 文档泄漏到 API 公共合同。                                              |
++| [packages/data-schemas/src/schema/message.ts](../packages/data-schemas/src/schema/message.ts)             | `messageSchema.index` 添加 `{conversationId:1,user:1,createdAt:1,messageId:1}` 与 updatedAt 版本，为列表顺序提供候选索引。                                           | 这是性能支持，不是授权或正确性代用品；上游有等价索引可不重复。需分别评估租户、collation、query plan、空间和建索引成本。    |
++
++### 3.4 新旧路由与生产方法测试（2）
++
++| 文件                                                                                                                                    | 为什么需要、关键锚点                                                                   | 移植时保留/可替换条件                                                    |
++| --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
++| [packages/api/src/messages/reads.spec.ts](../packages/api/src/messages/reads.spec.ts)                                                   | 合成 Mongo + 生产方法/handler；投影、同毫秒 writer、预算、权限、cursor、历史数据测试。 | 测试框架可变，但不能用 mock 全文裁剪来替代实际查询投影断言；见断言矩阵。 |
++| [api/server/routes/**tests**/messages-get-real-validation.spec.js](../api/server/routes/__tests__/messages-get-real-validation.spec.js) | 实际 router + validation，测试新 namespace、旧浏览器 GET/HEAD 与私有 child 限制。      | 新上游路由体系可适配，必须继续检查真实 wiring，不能只测独立 handler。    |
++
++当前没有数据迁移、revision 回填或索引部署动作。旧记录允许缺失 `__v`；新增 schema index 声明不等于现网已建索引，将来启动的 autoIndex/运维策略需另外确认。上述 18 个文件是实现清单；本维护文档和索引链接另计，不属于业务补丁。
++
++## 4. 为什么只读功能需要 revision 写路径审计
++
++### 4.1 一致性模型
++
++content ref/cursor 和 read cursor 的 version 由小型 identity/revision 摘要产生：文档 `_id`（incarnation）、`__v`（**missing 与 0 区分**）、`updatedAt`、`parentMessageId`、`unfinished`、`error`。不 hash 全源内容。列表 cursor 只有 live 排序位置，不提供同样的内容快照。
++
++只用 `updatedAt` 会漏掉同毫秒写入；只用 `__v` 会混淆删后以相同 messageId/version 重建的文档。`getMessageReadContent` 在**同一单文档 aggregation** 取 revision 和选中数据，避免先查 revision、后查正文的竞态。读取后发生写入，当前响应可以仍是旧快照的片段，下一次将 stale；它不是持有到网络交付的所有权锁，也不是跨请求事务快照。
++
++任一受支持 writer 更新使旧 ref/continuation 返回 `STALE_CURSOR`。claim-only 的私有状态变化也可能保守失效，即使公开正文没变；不要据“这字段不显示”删掉栅栏。完成标志不代表不可变：后台结果仍可结算。
++
++### 4.2 实际 writer 与 mutation 点
++
++以下符号都在 [methods/message.ts](../packages/data-schemas/src/methods/message.ts)，除特别注明外 `$inc` 在本补丁前已存在。本补丁只增加表中四个 claim 写点的 inc，未引入全局 Mongoose hook。
++
++| writer / mutation 点                                                   | revision 来自哪里                                                                                    | 移植必须保留的语义                                                                                                                                     |
++| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
++| `saveMessage` → `writeMessage` 快路径                                  | `buildMessageSaveUpdate` 中 `$set` 与 `$inc:{__v:1}` 同写（已有）                                    | save/upsert、retention-on-insert、隐私 sidecar 与 provenance；不能只靠 Mongoose 对 save 的默认 version 行为。                                          |
++| `writeMessage` 慢路径 → `findOneAndMergeMessageProvenance`             | CAS 成功的 `findOneAndUpdate` 中 `$set` 与 inc（已有）                                               | 合并 provenance、App snapshot admission、重试和 `_id`/revision fence，不绕过 CAS。                                                                     |
++| `updateMessageText` / `updateMessage`                                  | 经 `writeMessage`（已有）                                                                            | canonical text 写入走 `unsetPrivateText` 清理；保留普通编辑的字段校验/清理，同毫秒也递增。                                                             |
++| `recordMessage`                                                        | 经 `writeMessage`（已有）                                                                            | 无 UUID 校验的 record 入口也不能漏；拒绝来自普通参数的 private sidecar。                                                                               |
++| `bulkSaveMessages`                                                     | ordinary `updateOne` 的 `$set` + inc；App/竞争回退经 `writeMessage`（已有）                          | `overrideTimestamp` 导入即使保留时间也须更新 revision；保留 tenant-safe bulk、计数和隐私字段剥离。                                                     |
++| `saveMessage` 的 `metadata.privateText`，以及普通编辑清除 private text | 正常 `writeMessage` / save update 同步保存或 `$unset`，复用已有 inc                                  | `privacyRevision` 是另一个隐私机制，不能代替消息 `__v`；密文不能泄漏到读投影。                                                                         |
++| `updateToolCallResult` → `settleToolCallResult` 的 `settleUpdate`      | 正式结算 `$inc:{__v:1}`（已有），fast/CAS 路径沿用                                                   | 保留 output/status/attachments 原子更新、去重、unfinished 返回与重试；stepless fallback 不能改错重复 call ID。                                         |
++| `settleToolCallResult` 的 **claim pre-stamp**                          | `fallback == null` 且有 supplied claim 时，独立 `Message.updateOne` 设置 `resultClaim`，**新增 inc** | 必须先 claim 后 terminal settle；不能在两写之间暴露可被重复领取的终态。fallback 的 claim 与 settle 已在 CAS 内，不另做 pre-stamp。                     |
++| `claimBackgroundToolResults` 的 **acquire**                            | 非 replay 的 `findOneAndUpdate` 设置 admitted parts 的 `resultClaim`，**新增 inc**                   | 保留 arrayFilters、batch/owner/task/agent/generation 限制；replay 是读取，不应硬加写。                                                                 |
++| `confirmBackgroundToolResultClaim` 的 **confirm**                      | `updateOne` 设置 `resultClaim.receiptReconciled:true`，**新增 inc**                                  | owner/claim 条件和幂等恢复必须不变。                                                                                                                   |
++| `releaseBackgroundToolResultClaims` 的 **release**                     | `findOneAndUpdate` `$unset` 匹配 parts 的 `resultClaim`，**新增 inc**                                | 保留 kind/claimId/batchId/taskIds 与 `onlyIfUnreconciled` 过滤、`allowMissingMessage` 语义，不能清掉继任 owner。匹配文档但公开内容未变仍可能保守失效。 |
++| 删除/重建                                                              | 删除后不可读；重建 `_id` 改变                                                                        | 即使 messageId、时间、`__v` 相同，旧 ref 也不能继续。                                                                                                  |
++
++一次逻辑 settle 可能有 pre-stamp 和 settle 两次物理写，各有自己的 revision；它们不是同一次写被重复递增。未来若 upstream 已把两者合为原子写或统一 revision 管理，应按**物理 mutation 点**重新审计，不能机械叠加旧 inc。
++
++保证范围是这些受支持写路径。任意 raw DB 写若既不改 revision 也不改 timestamp，可能无法检测，**明确不在保证内**；不能把历史全 hash 测试的承诺挪到 v2。retention/tenant/ownership 另行在每次请求和 DB scope 重验，不以 version 是否改变为前提。新增 writer 时追到真实 `updateOne` / `findOneAndUpdate` / bulk / pipeline，而不只看外层方法名；记录它是改公开数据、改 scope，还是只改无关记录，再证明对应栅栏与授权行为。
++
++## 5. 安全与公开投影不变量
++
++1. **认证/授权**：router 使用 `requireJwtAuth`；handler 每次包括 ref/cursor-only 调用都调用 `createMessageRequestValidation`。先解析/验证 token 不代表已授权；必须验证后才取选中数据。
++2. **租户/关系**：validation 的 `explicitTenantScope:true` 调用用户/租户 scoped `getConvo` 依赖槽位；现有 [middleware/messageValidation.js](../api/server/middleware/messageValidation.js) 实际注入 [methods/conversation.ts](../packages/data-schemas/src/methods/conversation.ts) 的 `getConvoOwnership`，只查 ownership/child 判别字段而非整个会话。DB `scope` 同时匹配 `user`、`conversationId`、可选 `messageId`。tenantless 查询为 `tenantId:{$exists:false}`，不是“不加租户过滤”；有租户精确匹配。不能仅按 messageId 找到记录就返回。
++3. **retention**：消息查询显式 `activeExpirationFilter`；会话查询沿用 retention-aware `getConvo`。TTL sweeper 尚未删除不代表仍可访问。会话/消息在两页之间过期必须重新拒绝。
++4. **active job**：会话尚未持久化时，现有授权 fallback 允许 owner 的 `running` 或未过期有效 `requires_action` job；`activeJobMessageRead:true` 使新精确读可走此语义。保留 `hasTenantMismatch` 的既有 legacy tenantless job 行为；实际消息读取仍必须通过上述显式 DB scope。终止、无效 pending action 或其他用户不能借 job 访问。
++5. **child**：直接以 durable `subagentThread` 会话读取 GET/HEAD，表现为不可见；不能拿 child thread ID 绕过父级。inline `tool_call.subagent_content` 只能以用户可见父消息 ref、显式数字 ancestry 向下读；不是开放所有子线程。
++6. **正向投影**：`MESSAGE_READ_METADATA_PROJECTION` / `publicEntryProjection` 在 DB 边界排除未列出的 trace/auth/config、private text/密文、claim/wakeup 内部数据、attachment 集合和嵌套 transcript；`checkEntry` 再拒绝畸形标量。公开 `thread_id` 不等于公开私有 trace ID。finish_reason 缺失保持缺失，不从 unfinished/error 推断 completion。
++7. **签名域**：`codec` 使用现有 `JWT_SECRET`，HMAC-SHA256 前缀 `message-reads-v2\0` 做域分离，不新增密钥发现流程。token 绑定 user+tenant principal、operation、scope、有效 limits、版本/位置和过期时间，签名用 timing-safe 比较。签名不是加密：token 携带选择器但不含正文/凭据，应视作 opaque，不写日志。现有 key 轮换会使旧 token 失效，重新开始即可；缺 key 安全返回 unavailable。
++8. **TTL**：签发时加配置 TTL，新 continuation 有新的有效期；过期或跨 principal 必须拒绝。token 不是 bearer 授权，不得借签名绕过每次权限/retention。
++9. **数据边界**：args/output 是用户有权读取的任意工具内容，不是通用 DLP 清洗结果。MCP 的既有连接凭据 redactor 仍作用；若正文含连接自身 secret，会改变与上游 byte offset 对应的数据，因此不能承诺被脱敏 payload 仍逐字节重建。合成重建测试使用非秘密数据。
++10. **安全失败**：不支持上游/结构时不落回旧全文 API；错误不回显任意异常，新增日志不包含正文或 credential。保持通用资源与浏览器合同，不给所有 API 无差别套 v2。
++
++## 6. 成本模型：保证什么，不保证什么
++
++| 路径                                   | 数据库到 Node 的行为                                                                                        | 仍存在的成本                                                                                                                      |
++| -------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
++| metadata                               | `.select(MESSAGE_READ_METADATA_PROJECTION)`，非 opt-in context 不选                                         | 历史 `metadata.usage` 对象可能较大，随后 Node 的 `measurements` 才做深度/节点/叶子限制；不能声称所有 DB result 都有固定字节上界。 |
++| descriptors                            | Mongo 用 `$range`/`$arrayElemAt` 在固定 ancestry 上选择有限源下标，`descriptor` 只返回小摘要                | Mongo 仍读文档/访问数组；有界的是返回窗口，不是整个 DB 执行常量时间。不把整 content 数组传到 Node 再 slice。                      |
++| string body                            | `$substrCP` 在 driver 物化前最多返回 `maxBytes+1` 个 codepoint；Node 再按 UTF-8 边界和完整 wire budget 缩短 | Mongo 仍可能扫描/seek 大字符串；codepoint 数不是字节数。cursor 保存 codepoint position 与 byte offset，两者不能混用。             |
++| structured args/output 与 public entry | 只返回选中 value 或公开 entry，再由 Node `JSON.stringify`                                                   | 每段仍可能 O(选中值大小) 的物化/序列化，重复请求会重复该成本；没有通用流式 JSON 引擎或缓存服务。                                  |
++
++引号、反斜杠、控制字符在外层 JSON 中膨胀，所以预算必须检查完整 serialized response；只检查 Buffer(data) 不够。没有 descriptor body length、全文 hash 或 `totalBytes` 探测；不为获取摘要先把大 body 序列化。
++
++因此本方案限制传输和若干读取物化路径，但不承诺端到端常量内存/CPU、所有 Mongo 操作低成本、通用 token 节省或用户可见延迟提升。新增索引是否被使用、部署数据库行为和吞吐均需单独测量。
++
++## 7. usage 与“调用次数”的正确含义
++
++读 API 返回已存的 measurement，不重新计费，不把消息条数变成调用次数。
++
++- [agents/usage.ts](../packages/api/src/agents/usage.ts) 的 `aggregateEmittedUsage` 聚合**实际捕获的 emitted usage events**；`aggregateCollectedUsage` 与 `recordCollectedUsage` 服务 collected/billing/accounting 路径，不能假设全部同义。
++- `metadata.usage.input` 是归一化后的非缓存 input；cache read 与 cache creation/write 分开。subset-cache provider 从原 input 扣 cached 部分，additive-cache provider 保留分别报告的 cache。output 有 provider-aware 的 total-minus-input 恢复，不能把 additive cache 算成 output。只有已捕获事件的 cost 覆盖完整才发出 cost。历史 writer 曾把未知/无效数变成 0，reader 无法恢复丢失的不确定性。
++- [agents/callbacks.js](../api/server/controllers/agents/callbacks.js) 的 `ModelEndHandler`、`usageEmitSink` / `contextUsageSink` 说明事件进入聚合的路径。primary、转发 subagent、summary sink 是否完整影响覆盖；一条存储消息不等于一次模型请求。
++- `recordCollectedUsage` 返回用于消息 accounting 的首个 primary input 与 primary+summary output，排除 subagent/隐藏 sequential output 的那个返回值；[BaseClient.js](../api/app/clients/BaseClient.js) 的 `tokenCount` / `getTokenCountForResponse` 历史路径还可能是文本计数。故 tokenCount 不是可靠 LLM 请求账本。
++- `summaryTokenCount` / `metadata.summaryUsedTokens` 是 summary/context accounting，不应再当额外独立账单相加。`metadata.contextUsage` 是上下文窗口快照；budget、instruction、pruning、remaining、tool breakdown 等存在子集关系，不能重复求和。
++- [subagentThreads.ts](../packages/api/src/agents/subagentThreads.ts) 使用 `aggregateEmittedUsage` 保存 child usage；detached child 可单独持久化，父子都相加可能重复计入已转发事件。**外部 OpenCode usage 不意味着已经包含**，没有证据就标未知。
++- PTC 的 `run_tools_with_bash` 是一个存储的顶层工具调用。[callbacks.js](../api/server/controllers/agents/callbacks.js) 和 [client/store/ptc.ts](../client/src/store/ptc.ts) 的 `ptcTraceByToolCallId` / `PTC_TRACE_MAX_ENTRIES` 提供 best-effort live telemetry，不是 durable inner-call ledger。脚本/manifest 不能证明每个内调用执行过。message/step/tool/run ID 也不能代替 LLM 或 PTC 次数；不声称 `N−1` 模型节省，直接工具调用也可并行。
++- `measurements` 保留安全 null、bool、有限 number、受限 numeric string/状态串、历史对象/数组；限制深度 8、节点预算 128、数值字符串 64 字符，并移除 credential/config-like key、任意 prose/不支持值，使用 `omittedFields` 标识。缺失不补 0，也不强制把旧类型转成统一账本。
++
++未来要回答精确次数，需要独立持久事件模型、幂等 call ID、coverage marker 与计数语义；不是给这个 reader 增加推测数字。
++
++## 8. 未来移植 playbook（未执行）
++
++### 8.1 准备与语义映射
++
++1. **单独取得维护者授权**后再获取未来新 upstream ref。记录新 ref 的完整 SHA、目标分支、通过上述历史定位的两仓库原始补丁提交与依赖版本。在独立干净 worktree 开始；先记录原工作树/未提交修改，绝不 broad reset、清理、无标识 stash 或覆盖用户工作。
++2. 先读新上游贡献约定和现有 message endpoints、数据库接口、权限/retention、配置链、writer revision 机制。不要假设本指南的路径或未来上游缺陷仍成立；用第 3 节符号搜索映射表记录“旧职责 → 新位置/等价实现”。
++3. 评估 upstream 已有实现是否同时覆盖：DB 前置 projection/string window、完整 wire 预算、每次 auth/tenant/retention、revision 同读和 writer fencing、明确 cursor-only、branch pagination、公开投影及 nested scope。**同名 endpoint/tool 或 count pagination 不是等价证据。** 有等价就最小适配/删除重复代码，无等价才移植缺失部分。
++4. 在实现顺序上先定义共享合同与 storage 接口，移植 DB scope/projection、auth、writer invariants，再接配置、handler 与两个启动入口。依赖类型可先落地；不要先接公开路由后再补权限。保留 legacy 浏览器路由，不把三工具塞进旧动态 message 路由引发冲突。
++5. 逐写点核对 `__v` 或替代 revision：已有统一机制就不要 double-increment；不存在则补最窄的原子 mutation。检查 bulk/import、privacy、App admission、settle/CAS、claim pre-stamp/acquire/confirm/release，不只常规 save。保留 claim ownership 和 retry 语义。
++6. 数据库若改成 DocumentDB、FerretDB 或其他后端，单独验证 `$substrCP`、`$type`、`$$REMOVE`、`$arrayElemAt`、`$range`、`$map`、`$objectToArray`/`$arrayToObject`、`$mergeObjects`、collation 与 driver 行为。现有 claim writer 的兼容注释**不证明新读 aggregation 兼容**；当前仅有 Mongo 合成测试证据。未经验证不能启用或宣称兼容。
++7. token key 只经已授权的现有配置/依赖注入路径；不去搜索 runtime secret、日志、cookie 或其他工作目录。若上游 token 服务变化，保留域分离、TTL、principal、scope、operation 和非授权属性，必要时有明确重新开始策略。
++
++### 8.2 构建与最小可复现命令
++
++以下从已安装项目依赖、具备测试 Mongo 条件的本地开发环境执行；这是当前有效配置路径，不代表已替未来上游验证。不要改测试去连生产 Mongo。测试 fixture 使用临时数据库；缺离线 Mongo 二进制等依赖时记录阻塞而不是切生产。
++
++**先按依赖顺序构建和 typecheck**，构建完成后才开始下游消费；build 成功不等于 tsc 成功。从 LibreChat 根目录：
++
++```sh
++npm run build:data-provider
++./node_modules/.bin/tsc --noEmit -p packages/data-provider/tsconfig.json
++npm --prefix packages/data-schemas run build
++./node_modules/.bin/tsc --noEmit -p packages/data-schemas/tsconfig.json
++npm --prefix packages/api run build
++NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/tsc --noEmit -p packages/api/tsconfig.json
++```
++
++最小功能验证是 bounded handler 与实际 router；移植涉及 writer/auth 时还必须运行紧接其后的 methods/privacy/background/旧路由回归：
++
++```sh
++./node_modules/.bin/jest --projects packages/api/jest.config.mjs api/jest.config.js --runInBand --coverage=false --runTestsByPath packages/api/src/messages/reads.spec.ts api/server/routes/__tests__/messages-get-real-validation.spec.js
++
++./node_modules/.bin/jest --config packages/data-schemas/jest.config.mjs --runInBand --coverage=false --runTestsByPath packages/data-schemas/src/methods/message.spec.ts packages/data-schemas/src/methods/message.privateText.spec.ts
++
++./node_modules/.bin/jest --projects packages/api/jest.config.mjs api/jest.config.js --runInBand --coverage=false --runTestsByPath packages/api/src/agents/backgroundClaims.spec.ts packages/api/src/agents/backgroundCompletionWakeup.spec.ts packages/api/src/agents/backgroundCompletionWakeup.integration.spec.ts api/server/routes/__tests__/messages-{content-edit,delete,feedback,get,retention,subagent-thread,update,tool-previews}.spec.js
++```
++
++当前为 Bash brace expansion；不支持它的 shell 需展开八个路径。API/data-schemas Jest config 为 **`.mjs`**，legacy `api/jest.config.js` 才是 `.js`。CAS/claim/隐私失败是移植失败，不能增加 timeout 或放宽断言来掩盖。保留失败命令与原因，再记录修正后的结果。
++
++针对第 3 节 18 个文件做 format/lint，勿运行全库自动改写。当前可在 LibreChat 根目录复用如下 Bash 路径数组：
++
++```sh
++patch_files=(
++  api/server/index.js
++  api/server/experimental.js
++  api/server/routes/index.js
++  api/server/routes/message-reads.js
++  api/server/routes/__tests__/messages-get-real-validation.spec.js
++  packages/api/src/messages/index.ts
++  packages/api/src/messages/reads.ts
++  packages/api/src/messages/reads.spec.ts
++  packages/api/src/middleware/messageValidation.ts
++  packages/data-provider/src/config.ts
++  packages/data-provider/src/index.ts
++  packages/data-provider/src/messageReads.ts
++  packages/data-schemas/src/app/service.ts
++  packages/data-schemas/src/index.ts
++  packages/data-schemas/src/methods/message.ts
++  packages/data-schemas/src/methods/messageReads.ts
++  packages/data-schemas/src/schema/message.ts
++  packages/data-schemas/src/types/app.ts
++)
++./node_modules/.bin/prettier --check "${patch_files[@]}"
++./node_modules/.bin/eslint "${patch_files[@]}"
++git diff --check
++```
++
++**配套 MCP**：在相邻 LibreChat-MCP 根目录，LibreChat 相关包已构建后：
++
++```sh
++npm run check
++npm test
++npm run build
++LIBRECHAT_SOURCE_ROOT=../LibreChat node --import tsx --test test/bounded-upstream.integration.ts
++git diff --check
++```
++
++这是无需历史任务文件即可重现的跨仓库最小合同测试。它使用编译后的 package exports、生产 DB 方法、真实 handler/validation 和 SDK HTTP，不是只 mock 出一个正确 envelope。`test/message-reads.test.ts` 中 SDK discovery 验证当前三工具 schema、start/cursor 与 catalog；不需要旧设计。
++
++`test/message-schema.integration.ts` 的历史 A/B **额外要求** `MESSAGE_READ_BASELINE_DIR` 包含当时的 `message-reads.ts` 和 `conversations.ts`，并允许 `MESSAGE_READ_SCHEMA_OUTPUT` 导出当前三个 reader 的实际 tools/list 数组。这些旧源并非本仓库依赖，也不是移植前置条件；没有可信的已归档基线就不要伪造 A/B。未来可独立归档本次已提交的 tools/list 与编译来源，用新旧已知版本比较；指标是紧凑 JSON 的 UTF-8 bytes，不是漂亮打印文件大小、模型 token 或延迟。
++
++### 8.3 必须保留的断言矩阵
++
++以下是当前真实测试名称/语义锚点；文件移动可适配，保证不能减弱。参数化标题中的 `%s/%p/%j` 是原测试标题。
++
++| 必须断言                                                                                                         | 当前文件与测试锚点                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
++| ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| metadata DB 正向投影、context opt-in，缺失 usage/finish_reason 不造值                                            | [reads.spec.ts](../packages/api/src/messages/reads.spec.ts)：`positive metadata projection excludes bodies and opt-in context at the database boundary`；`preserves usage without invented counts: %p`；`preserves stored finish_reason without completion inference: %p`                                                                                                                                                                                                                                                                                |
++| timestamp+ID ties、上下界、正反方向、所有分支                                                                    | 同文件：`pages all branches with exact ties, bounds and directions: %s`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
++| DB 不把巨型 descriptor/string 正文全量交给 Node                                                                  | 同文件：`projects descriptor windows and string segments before Node hydration`；`does not hydrate private entry metadata or sibling/descendant bodies in the public entry result`                                                                                                                                                                                                                                                                                                                                                                       |
++| Unicode、JSON-looking string、结构化值，cursor-only 精确拼接                                                     | 同文件：`reconstructs string, JSON-looking string, structured args and escaped Unicode using cursor only`                                                                                                                                                                                                                                                                                                                                                                                                                                                |
++| 嵌套显式访问、重复 call ID、过滤空页仍前进                                                                       | 同文件：`explicit nested scope and public entry projection exclude descendants and private fields`；`bounds source-index scanning, including empty tool pages and repeated call IDs`                                                                                                                                                                                                                                                                                                                                                                     |
++| 真实 writer 同毫秒 save/edit/import/settle/claim/confirm/release/recreate 都 stale                               | 同文件：`invalidates references and cursors after supported same-ms %s`（冻结 `mongoose.now`，实际调用 methods）                                                                                                                                                                                                                                                                                                                                                                                                                                         |
++| repeated same-ms、missing revision、原子 revision/data、raw-write 排除项                                         | 同文件：`detects repeated same-ms supported edits and the missing-to-present revision transition`；`binds revision and selected data to the same atomic query despite a subsequent writer`；`documents raw database writes without revision/timestamp changes as outside the consistency guarantee`                                                                                                                                                                                                                                                      |
++| user/tenant/tenantless/conversation 关系、retention、child、匿名及续页重新授权                                   | 同文件：`rechecks access for cursor-only requests: %s`，以及 wrong-user/wrong-tenant/tenantless/wrong-conversation/child 参数化组；实际 router 用 `wires bounded routes through real validation before fetching selected data`                                                                                                                                                                                                                                                                                                                           |
++| token 篡改、过期、跨操作、混用 query、非法 limit/ancestry/date、重复 query                                       | 同文件：`rejects token tampering, expiration, operation confusion and mixed scope overrides`；`rejects invalid request %s %p`；`enforces configured body ceilings, rejects duplicate query values, and bounds safe DB errors`；UTC 精度两个参数化组                                                                                                                                                                                                                                                                                                      |
++| 完整序列化预算含 escaping、identity、observability，exact/empty/cursor 只出现一次                                | 同文件：`fits outer JSON budgets under control-character expansion without skipping data`；`attributes every list/exact/cursor page once and budgets the complete observability envelope`                                                                                                                                                                                                                                                                                                                                                                |
++| function/code-interpreter legacy name、oversize omitted/recoverable，stored null                                 | 同文件：`uses bounded stored name fallbacks, preserves direct precedence, and recovers oversized names through entry`；`supports historical tool forms, null values and public summary entries`                                                                                                                                                                                                                                                                                                                                                          |
++| 新旧路由不冲突、旧浏览器 GET/HEAD、私有 child 禁止                                                               | [messages-get-real-validation.spec.js](../api/server/routes/__tests__/messages-get-real-validation.spec.js)：`serves the noncolliding list and single metadata routes with authorization and byte bounds`；`wires content and ref-only body reads, and exposes no superseded analysis routes`；`does not return messages for a directly addressed child thread`；`does not expose a directly addressed child thread through HEAD`                                                                                                                        |
++| writer CAS、并发 App admission、claim 归属与 pre-stamp                                                           | [message.spec.ts](../packages/data-schemas/src/methods/message.spec.ts)：`serializes concurrent App attachment settlements under the shared BSON budget`；`leaves a concurrent %s change intact and retryable`；`atomically settles a fallback while preserving claim ownership: %j`；`stamps a supplied claim only on a part that carries none`                                                                                                                                                                                                         |
++| 隐私 sidecar 原子保存、失效、retention/import 剥离                                                               | [message.privateText.spec.ts](../packages/data-schemas/src/methods/message.privateText.spec.ts)：`stores both views atomically and excludes ciphertext from ordinary and client reads`；`does not accept sidecar writes from message parameters or generic edits`；`does not return expired originals even before the TTL sweeper runs`；`strips private fields from bulk copies, including overwrites of protected rows`                                                                                                                                |
++| claim rollback/确认/继任 owner、丢响应恢复，不因新 inc 破坏后台状态机                                            | [backgroundClaims.spec.ts](../packages/api/src/agents/backgroundClaims.spec.ts)：`does not report arbitration as complete if rollback fails`；[backgroundCompletionWakeup.integration.spec.ts](../packages/api/src/agents/backgroundCompletionWakeup.integration.spec.ts)：`cleans a late predecessor projection without clearing its successor receipt batch`；`resolves a committed manual confirmation whose write reply was lost`；同时保留 [backgroundCompletionWakeup.spec.ts](../packages/api/src/agents/backgroundCompletionWakeup.spec.ts) 全套 |
++| MCP 三工具、57 catalog、只移除两旧 message reader、会话/Agents 注册保留，初始提示、严格 schema、UTC 与单 payload | 配套 `test/message-reads.test.ts`：`exactly three concise reader tools, strict starts/cursor-only calls and compact single payload`；`test/conversations.test.ts`；对照 `src/server.ts` / `src/tools/conversations.ts` / `src/tools/agents.ts` 的注册                                                                                                                                                                                                                                                                                                    |
++| 旧/不兼容 API 安全失败、decoded HTTP 与脱敏后 JSON-RPC full-wire 上限、最终日志                                  | 配套 `test/message-reads.test.ts`：`old upstream and incompatible success schema fail closed with no fallback or diagnostic echo`；`advertised bounded response is stopped at the decoded HTTP backstop`；`post-redaction MCP envelope backstop logs only final error metadata`                                                                                                                                                                                                                                                                          |
++| 编译后跨仓库实际 HTTP/DB 字节与巨型 args/output 重建                                                             | 配套 `test/bounded-upstream.integration.ts`；可选历史 `test/message-schema.integration.ts` 只测 discovery schema bytes，不替代行为测试                                                                                                                                                                                                                                                                                                                                                                                                                   |
++
++### 8.4 证据、独立复核与冲突决策
++
++移植完成时记录旧补丁提交、新上游 base、最终变更清单、编译依赖版本、实际命令/退出码/测试结果及未测项；由独立 reviewer 对**最终代码**复核 auth、DB projection、writer/CAS、token 与整个 response envelope。干净 cherry-pick 不代表语义正确。冲突热点优先看 message writer（尤其 App/隐私/CAS）、tenant/retention middleware、AppConfig service、barrel/build exports、两套 server wiring 和 MCP SDK schema/JSON-RPC 包装。
++
++遇到等价新 API 时，先通过断言矩阵证明 budgets/auth/revision/pagination/usage 全部覆盖，再最小替换；若只能覆盖一部分，保留缺失层而非盲套旧文件。新的集中 revision 机制不能与旧 claim inc 叠加；新的 router/配置服务不能只改声明而漏运行时传播。index 可因等价计划删除，鉴权过滤不可以 index 替代。
++
++## 9. 已有验证、未测项与配套发布
++
++### 9.1 实现复核的历史证据
++
++- 最后窄范围实现复核通过 **117 affected cases**：65 bounded API + 9 实际 router，41 MCP，2 编译后 HTTP/schema。更早的 206 methods/private-text 与 94 background case 证据沿用；它们不是本轮重新运行，且不与历史总数相加。
++- 当时依赖顺序构建/typecheck、focused ESLint/Prettier 与两仓库 `git diff --check` 通过。随后的纯文档轮次只验证文档/路径/符号及业务文件前后哈希；v0.4.0 版本/文档准备另外执行 MCP check/test/build/pack 与 SDK 握手校验，不重复 LibreChat 业务套件。
++- 实际 SDK discovery：历史首版 10 reader / 10,313 bytes → 当前 3 reader / **3,876 bytes**。10 包含首版 8 工具与 2 旧 reader，不是完整 catalog；当前完整源码 catalog 为 57。
++- 合成巨型 fixture：legacy HTTP 3,970,485 bytes；248 次有界请求的最大 upstream HTTP 22,279、MCP HTTP 32,721、descriptor DB result 457、string-window DB result 20,972 bytes。另一 550,000-byte 字段 fixture 的投影结果最大 1,078 bytes。这是测试 byte 测量，不是线上事件复现或所有数据的最大值。
++- 先前 Lighthouse 失败为 **`NO_FCP`**，没有有效 LCP/CLS/TBT 或性能验收结论；这是历史未满足的性能验证项，不是功能成功。本轮未重跑。将来代码移植涉及启动/消息加载时按 [AGENTS.md](../AGENTS.md) 和 [Lighthouse 指南](../e2e/lighthouse/README.md) 另行复现性能门槛，保留原失败记录。
++
++### 9.2 发布和真实目标测试的前置条件
++
++发布与部署分别需要相应授权；源码准备和本地通过不等于已经发布，更不等于生产部署。本次版本准备由本地 writer 完成，Git 推送与发布由协调者处理；部署不属于本次准备范围。新 MCP 需要暴露 v2 能力的 LibreChat；旧 API、首版八工具 API 或不兼容 schema 对新 reader 都应 fail closed。旧 MCP 不会因 API 已部署就自动取得新三工具能力；不能宣称任意新旧组合都兼容，也不能依靠旧全文工具满足有界保证。回滚/发布顺序应以匹配组合为单位设计，能力未就绪时可用性降低但不回退无界读取。
++
++浏览器 `/api/messages` 合同保留；不删除用户仍在用的会话操作、Agents 或泛用 API，不增加 compatibility aliases。发布前通过真实 tools/list 检查三个名称/描述与当前 catalog，核实各部署入口的 capability、配置上限和错误行为。
++
++真实目标回测必须有**已授权现有认证入口**、配套新 API/MCP 部署、允许读取的数据范围和测试窗口；不要为测试搜取其他会话 token、容器 secret 或未授权工作目录。只读取测试范围内消息，日志/报告保存脱敏后的 byte、status、耗时和结论，不保存正文、ref、cursor 或 credential。验证多页/大字段/子 scope、实时修改后 stale、权限/retention 变化和最终网关路径；实际阈值和载入策略只能在授权范围单独确认。没有这些条件就明确写“未做 live retest”。当前部署数据库/index/performance 与事故有效阈值仍未测。
++
++### 9.3 未来移除条件与维护清单
++
++只有上游或替代实现经配套合同测试覆盖全部关键不变量、消费者已迁移、授权发布/回滚方案完成后，才移除本地补丁。可先删被等价 upstream 接管的配置/exports/index/revision 重复部分；不能把 security 或完整 wire budget 当成可选优化删掉。
++
++- [ ] 两仓库真正 patch commits、新 base、协议与发布版本已记录；baseline 不冒充实现提交。
++- [ ] 新 writer/新字段逐项审核 revision、公开 allowlist、retention 与 tenant。
++- [ ] 同毫秒与 recreate、CAS/claim/privacy、cursor-only/混参、Unicode 与 full-wire 测试保持。
++- [ ] 文档说明结构化字段成本与 usage 不确定性；无虚构 count/finish/savings。
++- [ ] tools/list 恰好三专用 reader，旧 message 别名消失，会话/Agents 注册未被误删。
++- [ ] 配置确实经 AppConfig 到 handler；两个启动入口与依赖构建产物可用。
++- [ ] 数据库替代实现、索引计划、线上回测和性能门槛分别标明实测或未测。
++- [ ] 变更经过独立代码复核；配套发布仅在单独授权后进行。
+diff --git a/packages/api/src/messages/index.ts b/packages/api/src/messages/index.ts
+index ad8154f7b38209cea3bd5ba03ac2e351d42372ec..2793738989895779b08569a80ca17170c87d9872 100644
+--- a/packages/api/src/messages/index.ts
++++ b/packages/api/src/messages/index.ts
+@@ -1,3 +1,4 @@
+ export * from './parts';
+ export * from './previews';
++export * from './reads';
+ export * from './page';
+diff --git a/packages/api/src/messages/reads.spec.ts b/packages/api/src/messages/reads.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..91198da3bf92c5865720e5d9a513543d86b389a6
+--- /dev/null
++++ b/packages/api/src/messages/reads.spec.ts
+@@ -0,0 +1,783 @@
++import express from 'express';
++import mongoose from 'mongoose';
++import request from 'supertest';
++import { MongoMemoryServer } from 'mongodb-memory-server';
++import { messageReadsConfigSchema } from 'librechat-data-provider';
++import { createMethods, createModels, tenantStorage } from '@librechat/data-schemas';
++import type { AllMethods, IMessage } from '@librechat/data-schemas';
++import type { Request } from 'express';
++import { createMessageRequestMiddleware } from '~/middleware/messageValidation';
++import { createMessageReadHandler } from './reads';
++
++const conversationId = '00000000-0000-4000-8000-000000000001';
++const otherConversation = '00000000-0000-4000-8000-000000000002';
++const childConversation = '00000000-0000-4000-8000-000000000003';
++const now = new Date('2026-10-01T12:00:00.123Z');
++let mongo: MongoMemoryServer;
++let methods: AllMethods;
++let app: express.Express;
++let Message: mongoose.Model<IMessage>;
++let limits = messageReadsConfigSchema.parse({});
++const identity = { conversationId, messageId: 'm' };
++const url = (op: string) => `/api/message-reads/${op}`;
++const bounded = (response: request.Response, status = 200) => {
++  expect(response.status).toBe(status);
++  expect(Buffer.byteLength(response.text)).toBeLessThanOrEqual(limits.responseBytes);
++  expect(response.headers['x-librechat-message-reads']).toBe('2');
++  expect(response.text).not.toMatch(/private-sentinel|secret-sentinel|stack trace/);
++};
++async function seed(messageId = 'm', values: Record<string, unknown> = {}) {
++  await Message.collection.insertOne({
++    user: 'owner',
++    conversationId,
++    messageId,
++    parentMessageId: 'root',
++    createdAt: now,
++    updatedAt: now,
++    isCreatedByUser: false,
++    ...values,
++  });
++}
++async function content(query: Record<string, unknown> = {}) {
++  const res = await request(app)
++    .get(url('content'))
++    .query({ ...identity, ...query });
++  bounded(res);
++  return res.body;
++}
++async function reconstruct(ref: string, field: string, index?: number, expected?: string) {
++  let query: Record<string, unknown> = {
++    ref,
++    field,
++    ...(index === undefined ? {} : { index }),
++    maxBytes: 257,
++  };
++  let result = '';
++  let offset = 0;
++  let pages = 0;
++  do {
++    const response = await request(app).get(url('read')).query(query);
++    bounded(response);
++    expect(response.body.offsetBytes).toBe(offset);
++    expect(response.body.complete).toBe(response.body.nextCursor === null);
++    result += response.body.data;
++    offset += Buffer.byteLength(response.body.data);
++    query = response.body.nextCursor ? { cursor: response.body.nextCursor } : {};
++    expect(++pages).toBeLessThan(10_000);
++  } while (query.cursor);
++  if (expected !== undefined) expect(result).toBe(expected);
++  return result;
++}
++beforeAll(async () => {
++  mongo = await MongoMemoryServer.create();
++  await mongoose.connect(mongo.getUri());
++  createModels(mongoose);
++  methods = createMethods(mongoose);
++  Message = mongoose.models.Message as mongoose.Model<IMessage>;
++  const validation = createMessageRequestMiddleware({
++    getConvo: (user, convo, tenant) =>
++      convo == null ? Promise.resolve(null) : methods.getConvoOwnership(user, convo, tenant),
++    getJob: async () => null,
++    isPendingActionStale: () => true,
++    logger: { warn: () => undefined },
++  });
++  app = express();
++  app.use((req, _res, next) => {
++    if (req.headers['x-user'] === 'anonymous') return next();
++    const tenantId =
++      typeof req.headers['x-tenant'] === 'string' ? req.headers['x-tenant'] : undefined;
++    (req as Request & { user: { id: string; tenantId?: string } }).user = {
++      id: String(req.headers['x-user'] ?? 'owner'),
++      tenantId,
++    };
++    if (tenantId) tenantStorage.run({ tenantId }, next);
++    else next();
++  });
++  const deps = {
++    getMessageReadMetadata: (...args: Parameters<typeof methods.getMessageReadMetadata>) =>
++      methods.getMessageReadMetadata(...args),
++    getMessageReadContent: (...args: Parameters<typeof methods.getMessageReadContent>) =>
++      methods.getMessageReadContent(...args),
++    validate: (req: Request) =>
++      validation.createMessageRequestValidation(
++        {
++          method: req.method,
++          params: req.params,
++          user: (req as Request & { user: { id: string } }).user,
++        },
++        { explicitTenantScope: true },
++      ),
++    getLimits: async () => limits,
++    getCursorKey: () => 'synthetic-reader-signing-key',
++  };
++  for (const op of ['list', 'content', 'read'] as const)
++    app.get(url(op), createMessageReadHandler(deps, op));
++});
++afterAll(async () => {
++  await mongoose.disconnect();
++  await mongo.stop();
++});
++beforeEach(async () => {
++  jest.restoreAllMocks();
++  limits = messageReadsConfigSchema.parse({});
++  await Message.deleteMany({});
++  await mongoose.models.Conversation.deleteMany({});
++  await mongoose.models.Conversation.collection.insertMany([
++    { conversationId, user: 'owner' },
++    { conversationId: otherConversation, user: 'owner' },
++    { conversationId, user: 'owner', tenantId: 'tenant-b' },
++    {
++      conversationId: childConversation,
++      user: 'owner',
++      subagentThread: { parentConversationId: conversationId },
++    },
++  ]);
++});
++
++it('positive metadata projection excludes bodies and opt-in context at the database boundary', async () => {
++  await seed('m', {
++    text: '巨'.repeat(300_000),
++    content: [{ type: 'text', text: 'x'.repeat(500_000) }],
++    metadata: {
++      usage: { input: '12', future: [1, '2', null], credential: 'secret-sentinel' },
++      contextUsage: { contextBudget: 8192, private: 'private-sentinel' },
++    },
++    langfuseRunId: 'private-sentinel',
++  });
++  const source = methods.getMessageReadMetadata;
++  const rows: unknown[] = [];
++  jest.spyOn(methods, 'getMessageReadMetadata').mockImplementation(async (input) => {
++    const result = await source(input);
++    rows.push(result);
++    return result;
++  });
++  const a = await request(app).get(url('list')).query(identity);
++  bounded(a);
++  expect(a.body.items[0].metadata).toEqual({ usage: { input: '12', future: [1, '2', null] } });
++  expect(a.body.items[0].omittedFields).toEqual(['metadata.usage']);
++  const b = await request(app)
++    .get(url('list'))
++    .query({ ...identity, includeContext: true });
++  bounded(b);
++  expect(b.body.items[0].metadata.contextUsage).toEqual({ contextBudget: 8192 });
++  expect(JSON.stringify(rows[0])).not.toContain('contextBudget');
++  expect(Buffer.byteLength(JSON.stringify(rows))).toBeLessThan(2000);
++});
++it.each([undefined, null, {}, { output: 2 }, { future: [1, '2', null] }])(
++  'preserves usage without invented counts: %p',
++  async (usage) => {
++    await seed('m', usage === undefined ? {} : { metadata: { usage } });
++    const response = await request(app).get(url('list')).query(identity);
++    bounded(response);
++    const item = response.body.items[0];
++    if (usage === undefined) expect(item.metadata).toBeUndefined();
++    else expect(item.metadata.usage).toEqual(usage);
++    expect(item.callCounts).toBeUndefined();
++    expect(item.unfinished).toBeUndefined();
++    expect(item.completed).toBeUndefined();
++  },
++);
++it.each([undefined, 'stop', 'length', 'tool_calls'])(
++  'preserves stored finish_reason without completion inference: %p',
++  async (reason) => {
++    await seed('m', {
++      ...(reason === undefined ? {} : { finish_reason: reason }),
++      thread_id: 'public-thread',
++      langfuseRunId: 'private-sentinel',
++    });
++    const r = await request(app).get(url('list')).query(identity);
++    bounded(r);
++    expect(r.body.items[0].finish_reason).toBe(reason);
++    expect(r.body.items[0].thread_id).toBe('public-thread');
++    expect(r.body.items[0].unfinished).toBeUndefined();
++    expect(r.body.items[0].error).toBeUndefined();
++  },
++);
++it.each(['createdAt', 'updatedAt'])(
++  'pages all branches with exact ties, bounds and directions: %s',
++  async (timeField) => {
++    for (const messageId of ['a', 'b', 'c', 'd'])
++      await seed(messageId, {
++        parentMessageId: messageId === 'c' ? 'branch' : null,
++        updatedAt: new Date(now.getTime() + (messageId === 'd' ? 1 : 0)),
++      });
++    for (const direction of ['asc', 'desc']) {
++      let query: Record<string, unknown> = {
++        conversationId,
++        timeField,
++        direction,
++        limit: 1,
++        from: now.toISOString(),
++        to: new Date(now.getTime() + 2).toISOString(),
++      };
++      const ids: string[] = [];
++      do {
++        const r = await request(app).get(url('list')).query(query);
++        bounded(r);
++        expect(r.body.consistency).toBe('live');
++        ids.push(...r.body.items.map((v: { messageId: string }) => v.messageId));
++        query = r.body.nextCursor ? { cursor: r.body.nextCursor } : {};
++      } while (query.cursor);
++      expect(ids).toEqual(direction === 'asc' ? ['a', 'b', 'c', 'd'] : ['d', 'c', 'b', 'a']);
++    }
++    const missing = await request(app)
++      .get(url('list'))
++      .query({ ...identity, messageId: 'absent' });
++    bounded(missing);
++    expect(missing.body.items).toEqual([]);
++  },
++);
++it('projects descriptor windows and string segments before Node hydration', async () => {
++  const giant = '中😀\n"\\\u0000'.repeat(50_000);
++  await seed('m', {
++    text: giant,
++    content: [
++      {
++        type: 'tool_call',
++        tool_call: {
++          id: 'call',
++          name: 'run_tools_with_bash',
++          args: { giant },
++          output: giant,
++          subagent_content: [{ type: 'text', text: giant }],
++        },
++      },
++      { type: 'text', text: giant },
++    ],
++  });
++  const source = methods.getMessageReadContent;
++  const sizes: number[] = [];
++  jest.spyOn(methods, 'getMessageReadContent').mockImplementation(async (input) => {
++    const row = await source(input);
++    sizes.push(Buffer.byteLength(JSON.stringify(row)));
++    expect(JSON.stringify(row)).not.toContain(giant);
++    expect(row).not.toHaveProperty('content');
++    expect(row).not.toHaveProperty('text');
++    return row;
++  });
++  const first = await content({ limit: 1 });
++  expect(first.items[0].children).toEqual({ ancestry: [0], omitted: true });
++  expect(first.items[0].fields).toEqual(['entry', 'args', 'output']);
++  expect(first.items[0].bytes).toBeUndefined();
++  const next = await request(app).get(url('content')).query({ cursor: first.nextCursor });
++  bounded(next);
++  expect(next.body.items[0].index).toBe(1);
++  const body = await request(app)
++    .get(url('read'))
++    .query({ ref: first.ref, field: 'output', index: 0, maxBytes: 257 });
++  bounded(body);
++  expect(body.body.representation).toBe('utf8');
++  expect(body.body.totalBytes).toBeUndefined();
++  expect(Math.max(...sizes)).toBeLessThan(5000);
++  console.info(
++    JSON.stringify({
++      projectedDescriptorAndStringResultMaxBytes: Math.max(...sizes),
++      syntheticFieldBytes: Buffer.byteLength(giant),
++    }),
++  );
++});
++it('reconstructs string, JSON-looking string, structured args and escaped Unicode using cursor only', async () => {
++  const text = '中😀\n"\\\u0000'.repeat(1000);
++  const args = { script: text };
++  await seed('m', {
++    text,
++    content: [{ type: 'tool_call', tool_call: { args, output: '{"literal":true}' } }],
++  });
++  const first = await content();
++  await reconstruct(first.ref, 'text', undefined, text);
++  await reconstruct(first.ref, 'args', 0, JSON.stringify(args));
++  const r = await request(app)
++    .get(url('read'))
++    .query({ ref: first.ref, field: 'output', index: 0 });
++  bounded(r);
++  expect(r.body.representation).toBe('utf8');
++  expect(r.body.data).toBe('{"literal":true}');
++});
++it('explicit nested scope and public entry projection exclude descendants and private fields', async () => {
++  await seed('m', {
++    content: [
++      {
++        type: 'tool_call',
++        tool_call: {
++          args: 'a',
++          output: 'b',
++          backgroundTask: { status: 'completed', resultClaim: { value: 'private-sentinel' } },
++          subagent_content: [
++            {
++              type: 'tool_call',
++              tool_call: { output: 'child', subagent_content: [{ type: 'text', text: 'deep' }] },
++            },
++          ],
++        },
++      },
++    ],
++  });
++  const first = await content();
++  const entry = JSON.parse(await reconstruct(first.ref, 'entry', 0));
++  expect(entry.tool_call.subagent_content).toBeUndefined();
++  expect(entry.tool_call.backgroundTask).toEqual({ status: 'completed' });
++  const child = await request(app).get(url('content')).query({ ref: first.ref, ancestry: '0' });
++  bounded(child);
++  expect(child.body.ancestry).toEqual([0]);
++  await reconstruct(child.body.ref, 'output', 0, 'child');
++  const deep = await request(app)
++    .get(url('content'))
++    .query({ ref: child.body.ref, ancestry: '0,0' });
++  bounded(deep);
++  expect(JSON.parse(await reconstruct(deep.body.ref, 'entry', 0))).toEqual({
++    type: 'text',
++    text: 'deep',
++  });
++  bounded(await request(app).get(url('read')).query({ ref: child.body.ref, field: 'text' }), 400);
++});
++it('bounds source-index scanning, including empty tool pages and repeated call IDs', async () => {
++  await seed('m', {
++    content: [
++      { type: 'text', text: 'a' },
++      { type: 'text', text: 'b' },
++      ...[1, 2].map((i) => ({ type: 'tool_call', tool_call: { id: 'same', args: i } })),
++    ],
++  });
++  let query: Record<string, unknown> = { ...identity, kind: 'tools', limit: 1 };
++  const indices: number[] = [];
++  let pages = 0;
++  do {
++    const r = await request(app).get(url('content')).query(query);
++    bounded(r);
++    indices.push(...r.body.items.map((item: { index: number }) => item.index));
++    query = r.body.nextCursor ? { cursor: r.body.nextCursor } : {};
++    pages++;
++  } while (query.cursor);
++  expect(indices).toEqual([2, 3]);
++  expect(pages).toBe(4);
++});
++it.each(['save', 'edit', 'import', 'settle', 'claim', 'confirm', 'release', 'recreate'])(
++  'invalidates references and cursors after supported same-ms %s',
++  async (mode) => {
++    const task = {
++      version: 1,
++      taskId: 'task',
++      toolName: 'synthetic',
++      status: 'completed',
++      ...(mode === 'claim' ? {} : { resultClaim: { kind: 'manual', claimId: 'claim' } }),
++    };
++    await seed('m', {
++      text: 'text'.repeat(500),
++      __v: 1,
++      content: [
++        {
++          type: 'tool_call',
++          tool_call: { id: 'call', output: 'x'.repeat(1000), backgroundTask: task },
++        },
++        { type: 'text', text: 'next' },
++      ],
++    });
++    const first = await content({ limit: 1 });
++    const body = await request(app)
++      .get(url('read'))
++      .query({ ref: first.ref, field: 'output', index: 0, maxBytes: 100 });
++    bounded(body);
++    // Freeze application timestamps: revision must do the fencing, not clock resolution.
++    const clock = jest.spyOn(mongoose, 'now').mockReturnValue(now);
++    if (mode === 'save')
++      await methods.saveMessage({ userId: 'owner' }, { ...identity, text: 'new' });
++    if (mode === 'edit') await methods.updateMessage('owner', { messageId: 'm', text: 'new' });
++    if (mode === 'import')
++      await methods.bulkSaveMessages(
++        [{ ...identity, user: 'owner', text: 'new', updatedAt: now }],
++        true,
++      );
++    if (mode === 'settle')
++      await methods.updateToolCallResult({
++        userId: 'owner',
++        ...identity,
++        toolCallId: 'call',
++        output: 'settled',
++      });
++    if (mode === 'claim') {
++      await methods.claimBackgroundToolResults({
++        userId: 'owner',
++        ...identity,
++        taskId: 'task',
++        kind: 'manual',
++        claimId: 'next',
++      });
++    }
++    if (mode === 'confirm')
++      expect(
++        await methods.confirmBackgroundToolResultClaim({
++          userId: 'owner',
++          ...identity,
++          taskId: 'task',
++          claimId: 'claim',
++        }),
++      ).toBe(true);
++    if (mode === 'release')
++      expect(
++        await methods.releaseBackgroundToolResultClaims({
++          userId: 'owner',
++          ...identity,
++          kind: 'manual',
++          claimId: 'claim',
++        }),
++      ).toBe(true);
++    if (mode === 'recreate') {
++      await Message.deleteOne({ messageId: 'm' });
++      await seed('m', { __v: 1, text: 'new' });
++    }
++    clock.mockRestore();
++    expect((await Message.findOne({ messageId: 'm' }).lean())!.updatedAt).toEqual(now);
++    for (const [op, query] of [
++      ['content', { cursor: first.nextCursor }],
++      ['read', { cursor: body.body.nextCursor }],
++      ['read', { ref: first.ref, field: 'output', index: 0 }],
++    ] as const) {
++      const r = await request(app).get(url(op)).query(query);
++      bounded(r, 409);
++      expect(r.body.error.code).toBe('STALE_CURSOR');
++    }
++  },
++);
++it('documents raw database writes without revision/timestamp changes as outside the consistency guarantee', async () => {
++  await seed('m', {
++    text: 'old',
++    content: [
++      { type: 'text', text: 'old' },
++      { type: 'text', text: 'next' },
++    ],
++  });
++  const first = await content({ limit: 1 });
++  await Message.collection.updateOne({ messageId: 'm' }, { $set: { text: 'raw-new' } });
++  const r = await request(app).get(url('read')).query({ ref: first.ref, field: 'text' });
++  bounded(r);
++  expect(r.body.data).toBe('raw-new');
++  // The earlier strict digest tests are retained in task artifacts, not claimed as passing v2.
++});
++it('binds revision and selected data to the same atomic query despite a subsequent writer', async () => {
++  await seed('m', { text: 'old'.repeat(1000) });
++  const first = await content();
++  const source = methods.getMessageReadContent;
++  jest.spyOn(methods, 'getMessageReadContent').mockImplementationOnce(async (input) => {
++    const snapshot = await source(input);
++    await methods.updateMessage('owner', { messageId: 'm', text: 'new'.repeat(1000) });
++    return snapshot;
++  });
++  const r = await request(app)
++    .get(url('read'))
++    .query({ ref: first.ref, field: 'text', maxBytes: 100 });
++  bounded(r);
++  expect(r.body.data).toBe('old'.repeat(1000).slice(0, 100));
++  bounded(await request(app).get(url('read')).query({ cursor: r.body.nextCursor }), 409);
++});
++it.each(['user', 'tenant', 'expired-message', 'expired-conversation', 'child', 'anonymous'])(
++  'rechecks access for cursor-only requests: %s',
++  async (mode) => {
++    expect.hasAssertions();
++    await seed('m', {
++      text: 'x'.repeat(1000),
++      content: [
++        { type: 'text', text: 'x' },
++        { type: 'text', text: 'y' },
++      ],
++    });
++    const first = await content({ limit: 1 });
++    if (mode === 'expired-message')
++      await Message.collection.updateOne({ messageId: 'm' }, { $set: { expiredAt: new Date(0) } });
++    if (mode === 'expired-conversation')
++      await mongoose.models.Conversation.collection.updateOne(
++        { conversationId },
++        { $set: { expiredAt: new Date(0) } },
++      );
++    if (mode === 'child')
++      await mongoose.models.Conversation.collection.updateOne(
++        { conversationId },
++        { $set: { subagentThread: {} } },
++      );
++    let r = request(app).get(url('content')).query({ cursor: first.nextCursor });
++    if (mode === 'user') r = r.set('x-user', 'other');
++    if (mode === 'tenant') r = r.set('x-tenant', 'tenant-b');
++    if (mode === 'anonymous') r = r.set('x-user', 'anonymous');
++    bounded(await r, ['user', 'tenant'].includes(mode) ? 400 : 404);
++  },
++);
++it('rejects token tampering, expiration, operation confusion and mixed scope overrides', async () => {
++  expect.hasAssertions();
++  await seed('m', {
++    content: [
++      { type: 'text', text: 'x' },
++      { type: 'text', text: 'y' },
++    ],
++  });
++  const first = await content({ limit: 1 });
++  bounded(
++    await request(app)
++      .get(url('content'))
++      .query({ cursor: `${first.nextCursor}x` }),
++    400,
++  );
++  bounded(await request(app).get(url('read')).query({ cursor: first.nextCursor }), 400);
++  bounded(
++    await request(app)
++      .get(url('content'))
++      .query({ ref: first.ref, conversationId: otherConversation }),
++    400,
++  );
++  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_001);
++  bounded(await request(app).get(url('content')).query({ cursor: first.nextCursor }), 400);
++  clock.mockRestore();
++});
++it.each([
++  ['list', { ...identity, limit: 1 }],
++  ['list', { conversationId, includeContext: 'maybe' }],
++  ['list', { conversationId, from: '2026-02-30T00:00:00Z' }],
++  ['list', { conversationId, limit: 0 }],
++  ['list', { conversationId, limit: 101 }],
++  ['content', { ...identity, limit: 1.5 }],
++  ['content', { ...identity, ancestry: '-1' }],
++  ['content', { ...identity, ancestry: 'content.0' }],
++  ['content', { ...identity, kind: 'full' }],
++  ['content', { cursor: 'x', limit: 1 }],
++  ['read', { ...identity, field: 'text' }],
++  ['read', { ref: 'x', field: 'output' }],
++])('rejects invalid request %s %p', async (op, query) => {
++  expect.hasAssertions();
++  bounded(
++    await request(app)
++      .get(url(op as string))
++      .query(query as Record<string, unknown>),
++    400,
++  );
++});
++it('fits outer JSON budgets under control-character expansion without skipping data', async () => {
++  expect.hasAssertions();
++  limits = messageReadsConfigSchema.parse({ responseBytes: 4096 });
++  const value = '\u0000中😀'.repeat(1000);
++  await seed('m', { text: value });
++  const first = await content();
++  await reconstruct(first.ref, 'text', undefined, value);
++});
++
++it('supports historical tool forms, null values and public summary entries', async () => {
++  const summary = {
++    type: 'summary',
++    content: [{ type: 'text', text: 'summary' }],
++    boundary: { messageId: 'before', contentIndex: 2 },
++  };
++  await seed('m', {
++    content: [
++      {
++        type: 'tool_call',
++        tool_call: { function: { name: 'legacy', arguments: '{"x":1}', output: null } },
++      },
++      { type: 'tool_call', tool_call: { code_interpreter: { input: 'print(1)', outputs: ['1'] } } },
++      summary,
++    ],
++  });
++  const first = await content();
++  expect(first.items[0].name).toBe('legacy');
++  await reconstruct(first.ref, 'args', 0, '{"x":1}');
++  await reconstruct(first.ref, 'output', 0, 'null');
++  await reconstruct(first.ref, 'args', 1, 'print(1)');
++  await reconstruct(first.ref, 'output', 1, '["1"]');
++  expect(JSON.parse(await reconstruct(first.ref, 'entry', 2))).toEqual(summary);
++  bounded(
++    await request(app).get(url('read')).query({ ref: first.ref, field: 'args', index: 2 }),
++    404,
++  );
++});
++
++it('does not hydrate private entry metadata or sibling/descendant bodies in the public entry result', async () => {
++  await seed('m', {
++    content: [
++      {
++        type: 'text',
++        text: {
++          value: 'display',
++          auth: 'private-sentinel',
++          annotations: [
++            {
++              type: 'citation',
++              text: 'label',
++              private: 'private-sentinel',
++              file_citation: { file_id: 'file', quote: 'quote', secret: 'private-sentinel' },
++            },
++          ],
++        },
++        trace: 'private-sentinel',
++      },
++      { type: 'tool_call', tool_call: { output: 'giant'.repeat(100_000) } },
++    ],
++  });
++  const source = methods.getMessageReadContent;
++  jest.spyOn(methods, 'getMessageReadContent').mockImplementation(async (input) => {
++    const row = await source(input);
++    expect(JSON.stringify(row)).not.toContain('private-sentinel');
++    expect(Buffer.byteLength(JSON.stringify(row))).toBeLessThan(4096);
++    return row;
++  });
++  const first = await content();
++  const entry = JSON.parse(await reconstruct(first.ref, 'entry', 0));
++  expect(entry.text.value).toBe('display');
++  expect(entry.text.annotations[0].file_citation).toEqual({ file_id: 'file', quote: 'quote' });
++});
++
++it('detects repeated same-ms supported edits and the missing-to-present revision transition', async () => {
++  await seed('m', { text: 'before' });
++  const clock = jest.spyOn(mongoose, 'now').mockReturnValue(now);
++  const a = await content();
++  await methods.updateMessage('owner', { messageId: 'm', text: 'one' });
++  const b = await content();
++  await methods.updateMessage('owner', { messageId: 'm', text: 'two' });
++  clock.mockRestore();
++  expect((await Message.findOne({ messageId: 'm' }).lean())!.updatedAt).toEqual(now);
++  expect((await Message.findOne({ messageId: 'm' }).lean())!.__v).toBe(2);
++  for (const ref of [a.ref, b.ref])
++    bounded(await request(app).get(url('read')).query({ ref, field: 'text' }), 409);
++});
++
++it('enforces configured body ceilings, rejects duplicate query values, and bounds safe DB errors', async () => {
++  limits = messageReadsConfigSchema.parse({ bodyBytes: 256 });
++  await seed('m', { text: 'x'.repeat(1000) });
++  const first = await content();
++  bounded(
++    await request(app).get(url('read')).query({ ref: first.ref, field: 'text', maxBytes: 257 }),
++    400,
++  );
++  bounded(
++    await request(app).get(`${url('list')}?conversationId=${conversationId}&limit=1&limit=2`),
++    400,
++  );
++  jest
++    .spyOn(methods, 'getMessageReadContent')
++    .mockRejectedValueOnce(new Error('secret-sentinel stack trace'));
++  const r = await request(app).get(url('read')).query({ ref: first.ref, field: 'text' });
++  bounded(r, 503);
++  expect(r.body.error.code).toBe('UNAVAILABLE');
++});
++
++it.each(['wrong-user', 'wrong-tenant', 'tenantless', 'wrong-conversation', 'child'])(
++  'denies initial scoped reads without disclosing content: %s',
++  async (mode) => {
++    expect.hasAssertions();
++    await seed('m', mode === 'tenantless' ? { tenantId: 'tenant-a' } : {});
++    let r = request(app)
++      .get(url('content'))
++      .query({
++        ...identity,
++        ...(mode === 'wrong-conversation' ? { conversationId: otherConversation } : {}),
++        ...(mode === 'child' ? { conversationId: childConversation } : {}),
++      });
++    if (mode === 'wrong-user') r = r.set('x-user', 'other');
++    if (mode === 'wrong-tenant') r = r.set('x-tenant', 'tenant-b');
++    bounded(await r, 404);
++  },
++);
++
++it('rejects malformed message text instead of exporting a legacy metadata object', async () => {
++  await seed('m', { text: { value: 'display', auth: 'private-sentinel' } });
++  const first = await content();
++  const r = await request(app).get(url('read')).query({ ref: first.ref, field: 'text' });
++  bounded(r, 422);
++  expect(r.body.error.code).toBe('UNSUPPORTED_CONTENT');
++});
++
++it('attributes every list/exact/cursor page once and budgets the complete observability envelope', async () => {
++  limits = messageReadsConfigSchema.parse({ responseBytes: 4096 });
++  const scopedConversation = 'c'.repeat(512);
++  await mongoose.models.Conversation.collection.insertOne({
++    user: 'owner',
++    conversationId: scopedConversation,
++  });
++  for (let i = 0; i < 6; i++)
++    await seed(`m${i}`, { conversationId: scopedConversation, sender: '"'.repeat(600) });
++  const verify = (r: request.Response) => {
++    bounded(r);
++    expect(r.body.conversationId).toBe(scopedConversation);
++    expect(r.body.observability).toEqual({
++      llmRequests: 'not_recorded',
++      ptcInnerCalls: 'not_recorded',
++    });
++    expect(r.text.match(/"conversationId":/g)).toHaveLength(1);
++    expect(r.text.match(/"observability":/g)).toHaveLength(1);
++    for (const item of r.body.items) {
++      expect(item).not.toHaveProperty('conversationId');
++      expect(item).not.toHaveProperty('observability');
++    }
++  };
++  let query: Record<string, unknown> = { conversationId: scopedConversation, limit: 100 };
++  const ids: string[] = [];
++  let pages = 0;
++  do {
++    const r = await request(app).get(url('list')).query(query);
++    verify(r);
++    ids.push(...r.body.items.map((item: { messageId: string }) => item.messageId));
++    pages++;
++    query = r.body.nextCursor ? { cursor: r.body.nextCursor } : {};
++  } while (query.cursor);
++  expect(pages).toBeGreaterThan(1);
++  expect(ids).toEqual(['m0', 'm1', 'm2', 'm3', 'm4', 'm5']);
++  for (const messageId of ['m0', 'missing'])
++    verify(
++      await request(app).get(url('list')).query({ conversationId: scopedConversation, messageId }),
++    );
++});
++
++it('uses bounded stored name fallbacks, preserves direct precedence, and recovers oversized names through entry', async () => {
++  const longName = '中'.repeat(171);
++  await seed('m', {
++    content: [
++      {
++        type: 'tool_call',
++        tool_call: { name: 'direct', function: { name: 'fallback', arguments: 'args' } },
++      },
++      {
++        type: 'tool_call',
++        tool_call: { function: { name: 'function-only', arguments: 'args', output: 'result' } },
++      },
++      {
++        type: 'tool_call',
++        tool_call: { code_interpreter: { name: 'stored-code-name', input: 'code', outputs: [] } },
++      },
++      { type: 'tool_call', tool_call: { code_interpreter: { input: 'code', outputs: [] } } },
++      { type: 'tool_call', tool_call: { function: { name: longName, arguments: {} } } },
++      { type: 'tool_call', tool_call: { name: null, function: { name: 'not-a-replacement' } } },
++    ],
++  });
++  const page = await content({ kind: 'tools' });
++  expect(page.items.map((item: { name?: string | null }) => item.name)).toEqual([
++    'direct',
++    'function-only',
++    'stored-code-name',
++    undefined,
++    undefined,
++    null,
++  ]);
++  expect(page.items[1].fields).toEqual(['entry', 'args', 'output']);
++  expect(page.items[4].omittedFields).toContain('name');
++  expect(JSON.parse(await reconstruct(page.ref, 'entry', 4)).tool_call.function.name).toBe(
++    longName,
++  );
++  expect(JSON.parse(await reconstruct(page.ref, 'entry', 2)).tool_call.code_interpreter.name).toBe(
++    'stored-code-name',
++  );
++});
++
++it.each(['', '.1', '.12', '.123'])(
++  'accepts UTC seconds with supported fractional precision: %s',
++  async (fraction) => {
++    const r = await request(app)
++      .get(url('list'))
++      .query({ conversationId, from: `2026-10-01T00:00:00${fraction}Z` });
++    bounded(r);
++    expect(r.body.conversationId).toBe(conversationId);
++  },
++);
++
++it.each(['2026-10-01T00:00:00.1234Z', '2026-10-01T00:00Z', '2026-10-01T00:00:00+00:00'])(
++  'rejects timestamps outside the advertised UTC syntax: %s',
++  async (from) => {
++    const r = await request(app).get(url('list')).query({ conversationId, from });
++    bounded(r, 400);
++    expect(r.body.error.code).toBe('INVALID_REQUEST');
++  },
++);
+diff --git a/packages/api/src/messages/reads.ts b/packages/api/src/messages/reads.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9e63d09fd496afebbf11b6267b4eafc82b120b78
+--- /dev/null
++++ b/packages/api/src/messages/reads.ts
+@@ -0,0 +1,584 @@
++import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
++import { MESSAGE_READS_HEADER, messageReadsConfigSchema } from 'librechat-data-provider';
++import type { MessageReadOperation, TMessageReadsConfig } from 'librechat-data-provider';
++import type { BoundedMessageMethods, MessageReadRow } from '@librechat/data-schemas';
++import type { Request, Response } from 'express';
++import type { MessageRequestValidation } from '~/middleware/messageValidation';
++import { getAppConfigOptionsFromUser } from '~/app/service';
++
++type ObjectValue = Record<string, unknown>;
++type ReadRequest = Request & { user?: { id?: string; tenantId?: string | null } };
++type Selection = {
++  conversationId: string;
++  messageId?: string;
++  ancestry: number[];
++  kind: 'all' | 'tools';
++  limit: number;
++  maxBytes: number;
++  timeField: 'createdAt' | 'updatedAt';
++  direction: 'asc' | 'desc';
++  from?: string;
++  to?: string;
++  includeContext: boolean;
++  field?: 'text' | 'entry' | 'args' | 'output';
++  index?: number;
++};
++type Token = {
++  v: 2;
++  principal: string;
++  expiresAt: number;
++  op: MessageReadOperation | 'ref';
++  selection: Selection;
++  version?: string;
++  position?: number;
++  offset?: number;
++  after?: { time: string; id: string };
++};
++type ReadDeps = BoundedMessageMethods & {
++  validate(req: ReadRequest): MessageRequestValidation;
++  getLimits(req: ReadRequest): Promise<TMessageReadsConfig | undefined>;
++  getCursorKey(): string;
++};
++const object = (value: unknown): value is ObjectValue =>
++  value != null && typeof value === 'object' && !Array.isArray(value);
++const own = (value: ObjectValue, key: string) => Object.prototype.hasOwnProperty.call(value, key);
++const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
++const hash = (value: unknown) =>
++  createHash('sha256').update(JSON.stringify(value)).digest('base64url');
++class ReadError extends Error {
++  constructor(
++    readonly code: string,
++    readonly status = 400,
++  ) {
++    super(code);
++  }
++}
++const fail = (code = 'INVALID_REQUEST', status = 400): never => {
++  throw new ReadError(code, status);
++};
++const hints: Record<string, string> = {
++  INVALID_REQUEST: 'Use either start parameters or only cursor; check selectors and limits.',
++  INVALID_CURSOR: 'Restart the read; this reference or cursor is invalid for this request.',
++  STALE_CURSOR: 'The stored message changed. Restart content discovery.',
++  NOT_FOUND: 'The message or conversation is unavailable.',
++  FIELD_NOT_RECORDED: 'The selected scope or field was not recorded.',
++  UNSUPPORTED_CONTENT: 'This stored value is not supported by the public reader.',
++  ITEM_TOO_LARGE: 'The selected record cannot fit the response budget.',
++  UNAVAILABLE: 'Bounded message reading is temporarily unavailable.',
++};
++function integer(value: unknown, fallback: number, max: number, min = 1): number {
++  if (value === undefined) return fallback;
++  if (typeof value !== 'string' || !/^\d+$/.test(value)) return fail();
++  const n = Number(value);
++  return Number.isSafeInteger(n) && n >= min && n <= max ? n : fail();
++}
++function identifier(value: unknown): string {
++  if (typeof value !== 'string' || !value.length || Buffer.byteLength(value) > 512) return fail();
++  return value;
++}
++function timestamp(value: unknown): string | undefined {
++  if (value === undefined) return undefined;
++  if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value))
++    return fail();
++  const date = new Date(value);
++  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 19) !== value.slice(0, 19))
++    return fail();
++  return date.toISOString();
++}
++function codec(key: string, principal: string, ttl: number) {
++  if (!key) return fail('UNAVAILABLE', 503);
++  const sign = (text: string) =>
++    createHmac('sha256', key).update('message-reads-v2\0').update(text).digest('base64url');
++  return {
++    encode(token: Omit<Token, 'v' | 'principal' | 'expiresAt'>): string {
++      const text = Buffer.from(
++        JSON.stringify({ ...token, v: 2, principal, expiresAt: Date.now() + ttl * 1000 }),
++      ).toString('base64url');
++      return `${text}.${sign(text)}`;
++    },
++    decode(raw: unknown, op: Token['op']): Token {
++      if (typeof raw !== 'string' || raw.length > 8192 || !/^[\w-]+\.[\w-]+$/.test(raw))
++        return fail('INVALID_CURSOR');
++      const [text, signature] = raw.split('.');
++      const expected = sign(text);
++      if (
++        signature.length !== expected.length ||
++        !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
++      )
++        return fail('INVALID_CURSOR');
++      try {
++        const token = JSON.parse(Buffer.from(text, 'base64url').toString('utf8')) as Token;
++        if (
++          token.v !== 2 ||
++          token.principal !== principal ||
++          token.op !== op ||
++          !object(token.selection) ||
++          !Number.isFinite(token.expiresAt) ||
++          token.expiresAt <= Date.now()
++        )
++          return fail('INVALID_CURSOR');
++        return token;
++      } catch {
++        return fail('INVALID_CURSOR');
++      }
++    },
++  };
++}
++
++/** Historical measurement types and absence are preserved; arbitrary metadata never leaves. */
++function measurements(input: unknown): { value?: unknown; omitted: boolean } {
++  let remaining = 128;
++  let omitted = false;
++  const visit = (value: unknown, depth: number): unknown => {
++    if (--remaining < 0 || depth > 8) {
++      omitted = true;
++      return undefined;
++    }
++    if (
++      value === null ||
++      typeof value === 'boolean' ||
++      (typeof value === 'number' && Number.isFinite(value))
++    )
++      return value;
++    if (
++      typeof value === 'string' &&
++      value.length <= 64 &&
++      /^(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|unknown|not_recorded|unsupported)$/.test(value)
++    )
++      return value;
++    if (object(value)) {
++      const result: ObjectValue = Object.create(null);
++      for (const [key, child] of Object.entries(value)) {
++        if (
++          key.length > 128 ||
++          /secret|password|credential|authorization|cookie|signature|config|routing|api[_-]?key|^token$|^jwt$/i.test(
++            key,
++          )
++        ) {
++          omitted = true;
++          continue;
++        }
++        const selected = visit(child, depth + 1);
++        if (selected !== undefined) result[key] = selected;
++      }
++      return result;
++    }
++    if (Array.isArray(value) && value.length <= remaining) {
++      const result = value.map((child) => visit(child, depth + 1));
++      if (result.every((child) => child !== undefined)) return result;
++    }
++    omitted = true;
++    return undefined;
++  };
++  const value = visit(input, 0);
++  return { value, omitted };
++}
++function metadata(row: MessageReadRow): ObjectValue {
++  const output: ObjectValue = {};
++  const omitted: string[] = [];
++  for (const key of [
++    'messageId',
++    'parentMessageId',
++    'createdAt',
++    'updatedAt',
++    'isCreatedByUser',
++    'sender',
++    'model',
++    'endpoint',
++    'thread_id',
++    'finish_reason',
++    'unfinished',
++    'error',
++  ] as const) {
++    const value = row[key];
++    if (value === undefined) continue;
++    if (value !== null && typeof value === 'object' && !(value instanceof Date)) omitted.push(key);
++    else output[key] = value;
++  }
++  for (const key of ['tokenCount', 'summaryTokenCount'] as const) {
++    if (row[key] === undefined) continue;
++    const selected = measurements(row[key]);
++    if (selected.value !== undefined) output[key] = selected.value;
++    if (selected.omitted) omitted.push(key);
++  }
++  if (object(row.metadata)) {
++    const meta: ObjectValue = {};
++    for (const key of ['usage', 'summaryUsedTokens', 'contextUsage']) {
++      if (!own(row.metadata, key)) continue;
++      const selected = measurements(row.metadata[key as keyof typeof row.metadata]);
++      if (selected.value !== undefined) meta[key] = selected.value;
++      if (selected.omitted) omitted.push(`metadata.${key}`);
++    }
++    if (Object.keys(meta).length) output.metadata = meta;
++  }
++  if (omitted.length) output.omittedFields = omitted;
++  return output;
++}
++
++/** Reject malformed scalar leaves even after the database's positive entry projection. */
++function checkEntry(value: unknown): void {
++  if (!object(value)) return fail('UNSUPPORTED_CONTENT', 422);
++  const scalars = (row: ObjectValue, exceptions: string[]) => {
++    for (const [key, child] of Object.entries(row))
++      if (!exceptions.includes(key) && child !== null && typeof child === 'object')
++        fail('UNSUPPORTED_CONTENT', 422);
++  };
++  scalars(value, [
++    'text',
++    'think',
++    'quotes',
++    'tool_call_ids',
++    'agent_ids',
++    'tool_call',
++    'content',
++    'boundary',
++    'agent_update',
++    'image_url',
++    'video_url',
++    'input_audio',
++    'image_file',
++  ]);
++  for (const key of ['quotes', 'tool_call_ids', 'agent_ids'])
++    if (
++      own(value, key) &&
++      (!Array.isArray(value[key]) || !(value[key] as unknown[]).every((v) => typeof v === 'string'))
++    )
++      fail('UNSUPPORTED_CONTENT', 422);
++  for (const key of ['text', 'think']) {
++    const text = value[key];
++    if (Array.isArray(text)) fail('UNSUPPORTED_CONTENT', 422);
++    if (object(text)) {
++      scalars(text, ['annotations']);
++      if (Array.isArray(text.annotations))
++        for (const a of text.annotations) {
++          if (!object(a)) fail('UNSUPPORTED_CONTENT', 422);
++          scalars(a, ['file_path', 'file_citation']);
++          for (const k of ['file_path', 'file_citation']) if (object(a[k])) scalars(a[k], []);
++        }
++    }
++  }
++  if (object(value.tool_call)) {
++    scalars(value.tool_call, ['args', 'output', 'function', 'code_interpreter', 'backgroundTask']);
++    if (object(value.tool_call.function))
++      scalars(value.tool_call.function, ['arguments', 'output']);
++    if (object(value.tool_call.code_interpreter))
++      scalars(value.tool_call.code_interpreter, ['input', 'outputs']);
++    if (object(value.tool_call.backgroundTask)) scalars(value.tool_call.backgroundTask, []);
++  }
++  for (const key of [
++    'boundary',
++    'agent_update',
++    'image_url',
++    'video_url',
++    'input_audio',
++    'image_file',
++  ])
++    if (object(value[key])) scalars(value[key], []);
++  if (Array.isArray(value.content))
++    for (const part of value.content)
++      if (!object(part) || part.type !== 'text' || typeof part.text !== 'string')
++        fail('UNSUPPORTED_CONTENT', 422);
++}
++
++/** Three operations; all continuation selectors live in authenticated, principal-bound tokens. */
++export function createMessageReadHandler(
++  deps: ReadDeps,
++  operation: MessageReadOperation,
++): (req: ReadRequest, res: Response) => Promise<void> {
++  return async (req, res): Promise<void> => {
++    res.setHeader(MESSAGE_READS_HEADER, '2');
++    res.setHeader('Cache-Control', 'private, no-store');
++    let budget = 65_536;
++    const wire = (value: unknown) => ({ schemaVersion: 2, ...(value as ObjectValue) });
++    const fits = (value: unknown) => bytes(wire(value)) <= budget;
++    const send = (value: unknown, status = 200) => {
++      if (!fits(value)) fail('ITEM_TOO_LARGE', 422);
++      res
++        .status(status)
++        .type('application/json')
++        .send(JSON.stringify(wire(value)));
++    };
++    try {
++      if (!req.user?.id) return fail('NOT_FOUND', 404);
++      const limits = messageReadsConfigSchema.parse((await deps.getLimits(req)) ?? {});
++      budget = limits.responseBytes;
++      const tokens = codec(
++        deps.getCursorKey(),
++        hash([req.user.id, req.user.tenantId ?? null]),
++        limits.tokenTtlSeconds,
++      );
++      const q = req.query;
++      let prior: Token | undefined;
++      let selection: Selection;
++      if (q.cursor !== undefined) {
++        if (Object.keys(q).length !== 1) return fail();
++        prior = tokens.decode(q.cursor, operation);
++        selection = prior.selection;
++      } else {
++        const allowed = {
++          list: [
++            'conversationId',
++            'messageId',
++            'timeField',
++            'from',
++            'to',
++            'direction',
++            'limit',
++            'includeContext',
++          ],
++          content: ['conversationId', 'messageId', 'ref', 'ancestry', 'kind', 'limit'],
++          read: ['ref', 'field', 'index', 'maxBytes'],
++        }[operation];
++        if (Object.keys(q).some((key) => !allowed.includes(key))) return fail();
++        if (q.ref !== undefined) prior = tokens.decode(q.ref, 'ref');
++        if (prior && (q.conversationId !== undefined || q.messageId !== undefined)) return fail();
++        if (operation === 'read' && !prior) return fail();
++        selection = {
++          conversationId: prior?.selection.conversationId ?? identifier(q.conversationId),
++          messageId:
++            prior?.selection.messageId ??
++            (q.messageId === undefined ? undefined : identifier(q.messageId)),
++          ancestry: prior?.selection.ancestry ?? [],
++          kind: 'all',
++          limit: limits.pageSize,
++          maxBytes: limits.bodyBytes,
++          timeField: 'createdAt',
++          direction: 'asc',
++          includeContext: false,
++        };
++        if (operation === 'list') {
++          if (
++            selection.messageId &&
++            ['timeField', 'from', 'to', 'direction', 'limit'].some((key) => q[key] !== undefined)
++          )
++            return fail();
++          if (
++            q.timeField !== undefined &&
++            q.timeField !== 'createdAt' &&
++            q.timeField !== 'updatedAt'
++          )
++            return fail();
++          if (q.direction !== undefined && q.direction !== 'asc' && q.direction !== 'desc')
++            return fail();
++          if (
++            q.includeContext !== undefined &&
++            q.includeContext !== 'true' &&
++            q.includeContext !== 'false'
++          )
++            return fail();
++          selection.timeField = (q.timeField as Selection['timeField']) ?? 'createdAt';
++          selection.direction = (q.direction as Selection['direction']) ?? 'asc';
++          selection.includeContext = q.includeContext === 'true';
++          selection.from = timestamp(q.from);
++          selection.to = timestamp(q.to);
++          if (selection.from && selection.to && selection.from >= selection.to) return fail();
++        } else if (!selection.messageId) return fail();
++        if (operation === 'content') {
++          if (q.kind !== undefined && q.kind !== 'all' && q.kind !== 'tools') return fail();
++          selection.kind = (q.kind as Selection['kind']) ?? 'all';
++          if (q.ancestry !== undefined) {
++            if (typeof q.ancestry !== 'string' || !/^\d+(,\d+)*$/.test(q.ancestry)) return fail();
++            const ancestry = q.ancestry
++              .split(',')
++              .map((value) => integer(value, 0, 2_147_483_647, 0));
++            if (
++              ancestry.length > 16 ||
++              (prior && prior.selection.ancestry.some((index, i) => ancestry[i] !== index))
++            )
++              return fail();
++            selection.ancestry = ancestry;
++          }
++        }
++        selection.limit = integer(q.limit, limits.pageSize, 100);
++        if (operation === 'read') {
++          const field = q.field ?? 'entry';
++          if (!['text', 'entry', 'args', 'output'].includes(field as string)) return fail();
++          if (field === 'text' && (q.index !== undefined || selection.ancestry.length))
++            return fail();
++          if (field !== 'text' && q.index === undefined) return fail();
++          selection.field = field as Selection['field'];
++          selection.index =
++            q.index === undefined ? undefined : integer(q.index, 0, 2_147_483_647, 0);
++          selection.maxBytes = integer(
++            q.maxBytes,
++            limits.bodyBytes,
++            Math.min(32_768, limits.bodyBytes),
++          );
++        }
++      }
++      // Re-resolve access on every request, including token-only calls. Tokens grant no access.
++      req.params = {
++        conversationId: selection.conversationId,
++        ...(selection.messageId ? { messageId: selection.messageId } : {}),
++      };
++      const validation = deps.validate(req);
++      const access = await validation.promise;
++      if (!access.ok || !validation.shouldFetchMessages) return fail('NOT_FOUND', 404);
++      const scope = {
++        user: req.user.id,
++        tenantId: req.user.tenantId ?? undefined,
++        conversationId: selection.conversationId,
++        ...(selection.messageId ? { messageId: selection.messageId } : {}),
++      };
++      const continuation = (extra: Partial<Token>) =>
++        tokens.encode({ op: operation, selection, ...extra });
++      if (operation === 'list') {
++        const rows = await deps.getMessageReadMetadata({
++          ...scope,
++          ...selection,
++          direction: selection.direction === 'asc' ? 1 : -1,
++          limit: selection.messageId ? 1 : selection.limit + 1,
++          after: prior?.after,
++        });
++        const base = {
++          conversationId: selection.conversationId,
++          observability: { llmRequests: 'not_recorded', ptcInnerCalls: 'not_recorded' },
++          ...(!selection.messageId ? { consistency: 'live' } : {}),
++          ...(selection.includeContext ? { contextProjection: 'measurements' } : {}),
++        };
++        const items: ObjectValue[] = [];
++        let nextCursor: string | null = null;
++        for (let i = 0; i < Math.min(rows.length, selection.limit); i++) {
++          const row = rows[i];
++          const time = row[selection.timeField];
++          if (!selection.messageId && (!(time instanceof Date) || !Number.isFinite(time.getTime())))
++            return fail('UNSUPPORTED_CONTENT', 422);
++          const next =
++            !selection.messageId && i < rows.length - 1
++              ? continuation({ after: { time: time!.toISOString(), id: row.messageId } })
++              : null;
++          const item = metadata(row);
++          if (!fits({ ...base, items: [...items, item], nextCursor: next })) {
++            if (!items.length) return fail('ITEM_TOO_LARGE', 422);
++            break;
++          }
++          items.push(item);
++          nextCursor = next;
++        }
++        send({ ...base, items, nextCursor });
++        return;
++      }
++      const position = prior?.op === operation ? (prior.position ?? 0) : 0;
++      const offset = prior?.op === operation ? (prior.offset ?? 0) : 0;
++      const maxBytes = Math.min(selection.maxBytes, limits.bodyBytes);
++      const row = await deps.getMessageReadContent({
++        ...scope,
++        messageId: selection.messageId!,
++        ancestry: selection.ancestry,
++        position,
++        limit: operation === 'read' ? maxBytes : selection.limit,
++        ...(operation === 'read' ? { field: selection.field, index: selection.index } : {}),
++      });
++      if (!row) return fail('NOT_FOUND', 404);
++      // Writer-maintained consistency, not full-source hashing. Missing __v is distinct from zero.
++      const version = hash([
++        String(row._id),
++        own(row as unknown as ObjectValue, '__v') ? row.__v : 'missing',
++        row.updatedAt,
++        row.parentMessageId,
++        row.unfinished,
++        row.error,
++      ]);
++      if (prior?.version && prior.version !== version) return fail('STALE_CURSOR', 409);
++      if (!row.validScope) return fail('FIELD_NOT_RECORDED', 404);
++      if (operation === 'content') {
++        const ref = tokens.encode({ op: 'ref', selection, version });
++        const base = {
++          ref,
++          ancestry: selection.ancestry,
++          ...(!selection.ancestry.length && row.textRecorded ? { text: true } : {}),
++        };
++        const items: ObjectValue[] = [];
++        let end = position;
++        for (const raw of row.entries ?? []) {
++          const index = raw.index as number;
++          if (selection.kind === 'tools' && !raw.tool) {
++            end = index + 1;
++            continue;
++          }
++          const { tool: _tool, children, omittedFields, ...item } = raw;
++          if (Array.isArray(omittedFields) && omittedFields.length)
++            item.omittedFields = omittedFields;
++          if (children) item.children = { ancestry: [...selection.ancestry, index], omitted: true };
++          const next = continuation({ version, position: index + 1 });
++          if (!fits({ ...base, items: [...items, item], nextCursor: next })) {
++            if (!items.length) return fail('ITEM_TOO_LARGE', 422);
++            break;
++          }
++          items.push(item);
++          end = index + 1;
++        }
++        const more = row.hasMore || end < position + (row.entries?.length ?? 0);
++        send({
++          ...base,
++          items,
++          nextCursor: more ? continuation({ version, position: end }) : null,
++        });
++        return;
++      }
++      if (!row.recorded) return fail('FIELD_NOT_RECORDED', 404);
++      const string = row.stringWindow !== undefined;
++      if (selection.field === 'text' && row.value !== null && typeof row.value === 'object')
++        return fail('UNSUPPORTED_CONTENT', 422);
++      if (!string && selection.field === 'entry') checkEntry(row.value);
++      const representation = string ? 'utf8' : 'json';
++      const data = Buffer.from(string ? row.stringWindow! : JSON.stringify(row.value), 'utf8');
++      const start = string ? 0 : offset;
++      if (start > data.length) return fail('INVALID_CURSOR');
++      let end = Math.min(start + maxBytes, data.length);
++      const make = () => {
++        while (end > start && end < data.length && (data[end] & 0xc0) === 0x80) end--;
++        const segment = data.subarray(start, end).toString('utf8');
++        const complete = end === data.length;
++        return {
++          representation,
++          offsetBytes: offset,
++          data: segment,
++          complete,
++          ...(selection.field === 'entry'
++            ? {
++                projection: 'public-entry',
++                nestedContentOmitted: true,
++                unlistedFieldsOmitted: true,
++              }
++            : {}),
++          nextCursor: complete
++            ? null
++            : continuation({
++                version,
++                position: string ? position + Array.from(segment).length : 0,
++                offset: offset + end - start,
++              }),
++        };
++      };
++      let result = make();
++      while (!fits(result) && end > start) {
++        end = start + Math.floor((end - start) / 2);
++        result = make();
++      }
++      if (end === start && start < data.length) return fail('ITEM_TOO_LARGE', 422);
++      send(result);
++    } catch (error) {
++      const known = error instanceof ReadError ? error : new ReadError('UNAVAILABLE', 503);
++      send(
++        { error: { code: known.code, message: hints[known.code] ?? hints.UNAVAILABLE } },
++        known.status,
++      );
++    }
++  };
++}
++
++/** Configuration adapter keeps legacy CJS routes wiring-only. */
++export function createMessageReadLimits(
++  getConfig: (
++    options: ReturnType<typeof getAppConfigOptionsFromUser> & { skipRuntimeAugmentation: true },
++  ) => Promise<{ messageReads?: TMessageReadsConfig } | null | undefined>,
++): ReadDeps['getLimits'] {
++  return async (req) =>
++    (
++      await getConfig({
++        ...getAppConfigOptionsFromUser({ ...req.user, tenantId: req.user?.tenantId ?? undefined }),
++        skipRuntimeAugmentation: true,
++      })
++    )?.messageReads;
++}
+diff --git a/packages/api/src/middleware/messageValidation.ts b/packages/api/src/middleware/messageValidation.ts
+index 3ff6bab12a96b364241274167426134ca438568d..73e388924ace8003a5b34a68ab34fbf5868c0803 100644
+--- a/packages/api/src/middleware/messageValidation.ts
++++ b/packages/api/src/middleware/messageValidation.ts
+@@ -65,7 +65,11 @@ type MessageValidationLogger = {
+ };
+ 
+ export type MessageValidationDeps = {
+-  getConvo: (userId: string, conversationId?: string) => Promise<ConversationRecord>;
++  getConvo: (
++    userId: string,
++    conversationId?: string,
++    tenantId?: string | null,
++  ) => Promise<ConversationRecord>;
+   getJob: (conversationId?: string) => Promise<GenerationJobRecord>;
+   isPendingActionStale: (job: { pendingAction?: PendingActionRecord }) => boolean;
+   logger: MessageValidationLogger;
+@@ -78,6 +82,8 @@ export type MessageRequestValidationOptions = {
+    * before its first save stays readable to the job's owner, as the conversation read is.
+    */
+   activeJobMessageRead?: boolean;
++  /** Bounded audit reads require an explicit tenantless predicate too. */
++  explicitTenantScope?: boolean;
+ };
+ 
+ export type MessageRequestMiddleware = {
+@@ -162,7 +168,9 @@ export function createMessageRequestMiddleware(
+     conversationId?: string,
+     options?: MessageRequestValidationOptions,
+   ): Promise<MessageValidationResult> {
+-    const conversation = await deps.getConvo(req.user.id, conversationId);
++    const conversation = await (options?.explicitTenantScope
++      ? deps.getConvo(req.user.id, conversationId, req.user.tenantId ?? null)
++      : deps.getConvo(req.user.id, conversationId));
+ 
+     if (!conversation) {
+       if (await canReadActiveJobConversation(req, conversationId, options)) {
+diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
+index 54c0550ae71a00ad4f813a8eaebf6c6fedfbb9d0..fa2aa40b0b8e59150373e24fd986de6e12ed9cd8 100644
+--- a/packages/data-provider/src/config.ts
++++ b/packages/data-provider/src/config.ts
+@@ -4445,6 +4445,15 @@ export const toolCallPreviewsConfigSchema = z.object({
+ 
+ export type TToolCallPreviewsConfig = z.infer<typeof toolCallPreviewsConfigSchema>;
+ 
++/** Serialized UTF-8 JSON ceilings for the additive, owner-only stored-message reader. */
++export const messageReadsConfigSchema = z.object({
++  responseBytes: z.number().int().min(4096).max(65_536).default(65_536),
++  bodyBytes: z.number().int().min(256).max(32_768).default(16_384),
++  pageSize: z.number().int().min(1).max(100).default(25),
++  tokenTtlSeconds: z.number().int().min(60).max(86_400).default(3600),
++});
++export type TMessageReadsConfig = z.infer<typeof messageReadsConfigSchema>;
++
+ export const configSchema = z.object({
+   version: z.string(),
+   telemetry: telemetrySchema.optional(),
+@@ -4498,6 +4507,7 @@ export const configSchema = z.object({
+   toolCallPreviews: toolCallPreviewsConfigSchema.default(() =>
+     toolCallPreviewsConfigSchema.parse({}),
+   ),
++  messageReads: messageReadsConfigSchema.default(() => messageReadsConfigSchema.parse({})),
+   includedTools: z.array(z.string()).optional(),
+   filteredTools: z.array(z.string()).optional(),
+   mcpServers: MCPServersSchema.optional(),
+diff --git a/packages/data-provider/src/index.ts b/packages/data-provider/src/index.ts
+index 3d2bc94e09da55140b50306311ea1ebf46b3d451..9667fd5f025a90e305d933ca6692949c99d11f89 100644
+--- a/packages/data-provider/src/index.ts
++++ b/packages/data-provider/src/index.ts
+@@ -14,6 +14,7 @@ export * from './resolve-llm-delivery-path';
+ /* messages  */
+ export * from './messages';
+ export * from './previews';
++export * from './messageReads';
+ export * from './errors';
+ /* run steps */
+ export * from './runSteps';
+diff --git a/packages/data-provider/src/messageReads.ts b/packages/data-provider/src/messageReads.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3e46dbf82e8a298a96c4cf0e0a2c9e78a4ba2c32
+--- /dev/null
++++ b/packages/data-provider/src/messageReads.ts
+@@ -0,0 +1,6 @@
++/** Bounded analysis protocol; unrelated browser message APIs retain their contracts. */
++export const MESSAGE_READS_VERSION = 2;
++export const MESSAGE_READS_HEADER = 'x-librechat-message-reads';
++export type MessageReadTimeField = 'createdAt' | 'updatedAt';
++export type MessageReadBodyField = 'text' | 'entry' | 'args' | 'output';
++export type MessageReadOperation = 'list' | 'content' | 'read';
+diff --git a/packages/data-schemas/src/app/service.ts b/packages/data-schemas/src/app/service.ts
+index 00001d68a463cd64775c0f65f7cccc50344b4dbe..86c650fa4404cade42cbae7941fbc612d1af7a80 100644
+--- a/packages/data-schemas/src/app/service.ts
++++ b/packages/data-schemas/src/app/service.ts
+@@ -6,6 +6,7 @@ import {
+   filtersConfigSchema,
+   conversationListConfigSchema,
+   toolCallPreviewsConfigSchema,
++  messageReadsConfigSchema,
+   hasActiveFiltersConfig,
+   getConfigDefaults,
+   langfuseConfigSchema,
+@@ -250,6 +251,7 @@ export const AppService = async (params?: {
+     credentials: { writeFormat: config.credentials?.writeFormat ?? 'v3' },
+     conversationList: loadConversationListConfig(config),
+     toolCallPreviews: loadToolCallPreviewsConfig(config),
++    messageReads: messageReadsConfigSchema.parse(config.messageReads ?? {}),
+   };
+ 
+   const agentsDefaults = agentsConfigSetup(config);
+diff --git a/packages/data-schemas/src/index.ts b/packages/data-schemas/src/index.ts
+index f9e256fd402492e09612c0c0e3c6e7807472906a..d1572235d75544af364adc989af43957ddf34ed7 100644
+--- a/packages/data-schemas/src/index.ts
++++ b/packages/data-schemas/src/index.ts
+@@ -4,6 +4,12 @@ export * from './common';
+ export * from './crypto';
+ export * from './schema';
+ export * from './utils';
++export type {
++  BoundedMessageMethods,
++  MessageReadRow,
++  MessageReadScope,
++  MessageReadPageInput,
++} from './methods/messageReads';
+ export { createModels } from './models';
+ export {
+   createMethods,
+diff --git a/packages/data-schemas/src/methods/message.ts b/packages/data-schemas/src/methods/message.ts
+index a4554a3b32a09b508fa581367cc7f996c0da9473..524fc9bfd23fe442609d9a9ebd9a6221565700f2 100644
+--- a/packages/data-schemas/src/methods/message.ts
++++ b/packages/data-schemas/src/methods/message.ts
+@@ -10,11 +10,13 @@ import type { SearchParams } from 'meilisearch';
+ import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
+ import type { ISubagentContentChunk } from '~/models/subagentContent';
+ import type { AppConfig, IConversation, IMessage } from '~/types';
++import type { BoundedMessageMethods } from './messageReads';
+ import { createChatExpirationDate, createTempChatExpirationDate } from '~/utils/tempChatRetention';
+ import { activeExpirationFilter, createFallbackRetentionDate } from '~/utils/retention';
+ import { fitBoundAppSnapshots, hasBoundAppSnapshots } from './appSnapshots';
+ import { prepareSubagentContentDeletion } from './subagentContent';
+ import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
++import { createBoundedMessageMethods } from './messageReads';
+ import { tenantStorage } from '~/config/tenantContext';
+ import logger from '~/config/winston';
+ 
+@@ -739,7 +741,7 @@ export interface PrivateTextRead {
+   readonly privateText: string;
+ }
+ 
+-export interface MessageMethods {
++export interface MessageMethods extends BoundedMessageMethods {
+   getPersistedPrivateTextId(
+     input: Parameters<MessageMethods['hasPersistedPrivateText']>[0],
+   ): Promise<string | null>;
+@@ -1800,6 +1802,7 @@ export function createMessageMethods(
+             $set: {
+               'content.$[part].tool_call.backgroundTask.resultClaim': backgroundTask.resultClaim,
+             },
++            $inc: { __v: 1 },
+           },
+           {
+             arrayFilters: [
+@@ -2418,7 +2421,10 @@ export function createMessageMethods(
+            * touches only them instead of re-emitting the whole content array, and
+            * needs no read-modify-write. Amazon DocumentDB rejects the
+            * aggregation-pipeline form this replaces. */
+-          { $set: { 'content.$[part].tool_call.backgroundTask.resultClaim': claimStamp } },
++          {
++            $set: { 'content.$[part].tool_call.backgroundTask.resultClaim': claimStamp },
++            $inc: { __v: 1 },
++          },
+           {
+             new: true,
+             projection: { content: 1 },
+@@ -2474,6 +2480,7 @@ export function createMessageMethods(
+         },
+         {
+           $set: { 'content.$[part].tool_call.backgroundTask.resultClaim.receiptReconciled': true },
++          $inc: { __v: 1 },
+         },
+         {
+           arrayFilters: [
+@@ -2543,7 +2550,7 @@ export function createMessageMethods(
+      * `$ifNull` no-op'd — a legacy row with no array simply has no claims. */
+     const updated = await Message.findOneAndUpdate(
+       { user: userId, conversationId, messageId, content: { $type: 'array' } },
+-      { $unset: { 'content.$[part].tool_call.backgroundTask.resultClaim': 1 } },
++      { $unset: { 'content.$[part].tool_call.backgroundTask.resultClaim': 1 }, $inc: { __v: 1 } },
+       {
+         new: true,
+         projection: { content: 1 },
+@@ -4464,6 +4471,7 @@ export function createMessageMethods(
+ 
+   return {
+     hasPersistedPrivateText,
++    ...createBoundedMessageMethods(mongoose),
+     getPersistedPrivateTextId,
+     getPrivateMessageTexts,
+     saveMessage,
+diff --git a/packages/data-schemas/src/methods/messageReads.spec.ts b/packages/data-schemas/src/methods/messageReads.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ab1570e16b9c06500af3c6220cde299c8b73c54c
+--- /dev/null
++++ b/packages/data-schemas/src/methods/messageReads.spec.ts
+@@ -0,0 +1,165 @@
++import mongoose from 'mongoose';
++import { MongoMemoryServer } from 'mongodb-memory-server';
++import { createBoundedMessageMethods } from './messageReads';
++import { createModels } from '../models';
++
++let mongo: MongoMemoryServer;
++const scope = { user: 'read-owner', conversationId: 'read-fixture', messageId: 'message' };
++const read = { ...scope, ancestry: [], position: 0, limit: 2 };
++const methods = createBoundedMessageMethods(mongoose);
++const privateBody = 'PRIVATE_DESCENDANT_BODY '.repeat(30_000);
++
++async function seed(values: Record<string, unknown>) {
++  await mongoose.models.Message.collection.insertOne({
++    ...scope,
++    createdAt: new Date('2026-10-01'),
++    updatedAt: new Date('2026-10-01'),
++    privateText: privateBody,
++    metadata: { privateBody },
++    attachments: [{ text: privateBody }],
++    ...values,
++  });
++}
++
++beforeAll(async () => {
++  mongo = await MongoMemoryServer.create();
++  createModels(mongoose);
++  await mongoose.connect(mongo.getUri());
++});
++afterAll(async () => {
++  await mongoose.disconnect();
++  await mongo.stop();
++});
++beforeEach(async () => {
++  await mongoose.models.Message.deleteMany({});
++});
++
++it.each([
++  { label: 'missing', value: undefined },
++  { label: 'null', value: null },
++  { label: 'false', value: false },
++  { label: 'zero', value: 0 },
++  { label: 'empty array', value: [] },
++  { label: 'object with null', value: { nested: null } },
++])('preserves the recorded value and omission boundary for $label', async ({ value }) => {
++  await seed({
++    content: [
++      {
++        type: 'tool_call',
++        tool_call: { ...(value === undefined ? {} : { output: value }) },
++      },
++    ],
++  });
++  const row = await methods.getMessageReadContent({ ...read, field: 'output', index: 0 });
++  expect(row).toMatchObject({ messageId: scope.messageId, validScope: true });
++  expect(row?.recorded).toBe(value !== undefined);
++  expect(row).not.toHaveProperty('stringWindow');
++  if (value === undefined) expect(row).not.toHaveProperty('value');
++  else expect(row).toHaveProperty('value', value);
++  expect(JSON.stringify(row)).not.toContain('PRIVATE_DESCENDANT_BODY');
++});
++
++it.each([
++  { text: '', position: 0, limit: 2, expected: '' },
++  { text: `A中😀B${privateBody}`, position: 1, limit: 1, expected: '中😀' },
++  { text: 'abc', position: 3, limit: 2, expected: '' },
++  { text: 'abc', position: 1, limit: 2, expected: 'bc' },
++])(
++  'returns only the bounded string window at $position',
++  async ({ text, position, limit, expected }) => {
++    await seed({ text, content: [{ type: 'text', text: privateBody }] });
++    const row = await methods.getMessageReadContent({ ...read, field: 'text', position, limit });
++    expect(row).toMatchObject({ validScope: true, recorded: true, stringWindow: expected });
++    expect(row).not.toHaveProperty('value');
++    expect(row).not.toHaveProperty('text');
++    expect(row).not.toHaveProperty('content');
++    expect(Buffer.byteLength(JSON.stringify(row))).toBeLessThan(1000);
++    expect(JSON.stringify(row)).not.toContain('PRIVATE_DESCENDANT_BODY');
++  },
++);
++
++it.each([
++  { label: 'missing', entry: undefined, recorded: false },
++  { label: 'null', entry: null, recorded: false },
++  { label: 'string', entry: 'invalid', recorded: false },
++  { label: 'number', entry: 1, recorded: false },
++  { label: 'boolean', entry: false, recorded: false },
++  { label: 'array', entry: [], recorded: false },
++  { label: 'empty object', entry: {}, recorded: true },
++])('preserves public-entry validity and absence for $label', async ({ entry, recorded }) => {
++  await seed({ content: entry === undefined ? [] : [entry] });
++  const row = await methods.getMessageReadContent({ ...read, field: 'entry', index: 0 });
++  expect(row).toMatchObject({ messageId: scope.messageId, validScope: true, recorded });
++  if (recorded) expect(row).toHaveProperty('value', {});
++  else expect(row).not.toHaveProperty('value');
++  expect(row).not.toHaveProperty('stringWindow');
++});
++
++it.each([
++  { label: 'missing', children: undefined },
++  { label: 'null', children: null },
++  { label: 'string', children: privateBody },
++  { label: 'object', children: { privateBody } },
++  { label: 'empty array', children: [] },
++  { label: 'populated array', children: [{ type: 'text', text: privateBody }] },
++])('returns only the child flag for $label descendants', async ({ children }) => {
++  await seed({
++    content: [
++      {
++        type: 'tool_call',
++        privateText: privateBody,
++        tool_call: {
++          name: 'subagent',
++          output: privateBody,
++          ...(children === undefined ? {} : { subagent_content: children }),
++        },
++      },
++    ],
++  });
++  const row = await methods.getMessageReadContent(read);
++  expect(row?.entries).toHaveLength(1);
++  if (Array.isArray(children)) expect(row?.entries?.[0]).toHaveProperty('children', true);
++  else expect(row?.entries?.[0]).not.toHaveProperty('children');
++  expect(row).not.toHaveProperty('content');
++  expect(JSON.stringify(row)).not.toContain('PRIVATE_DESCENDANT_BODY');
++  expect(JSON.stringify(row)).not.toContain('subagent_content');
++  expect(Buffer.byteLength(JSON.stringify(row))).toBeLessThan(1000);
++});
++
++it('projects a valid entry before returning any private, sibling or descendant bodies', async () => {
++  await seed({
++    text: privateBody,
++    content: [
++      {
++        type: 'tool_call',
++        privateText: privateBody,
++        text: { value: 'public', privateBody },
++        tool_call: {
++          id: 'call',
++          args: null,
++          subagent_content: [{ type: 'text', text: privateBody }],
++          privateBody,
++          backgroundTask: { status: 'completed', result: privateBody },
++          function: { name: 'legacy', arguments: null, privateBody },
++        },
++      },
++      { type: 'text', text: privateBody },
++    ],
++  });
++  const row = await methods.getMessageReadContent({ ...read, field: 'entry', index: 0 });
++  expect(row).toMatchObject({ validScope: true, recorded: true });
++  expect(row?.value).toEqual({
++    type: 'tool_call',
++    text: { value: 'public' },
++    tool_call: {
++      id: 'call',
++      args: null,
++      function: { name: 'legacy', arguments: null },
++      backgroundTask: { status: 'completed' },
++    },
++  });
++  expect(row).not.toHaveProperty('text');
++  expect(row).not.toHaveProperty('content');
++  expect(JSON.stringify(row)).not.toContain('PRIVATE_DESCENDANT_BODY');
++  expect(Buffer.byteLength(JSON.stringify(row))).toBeLessThan(1000);
++});
+diff --git a/packages/data-schemas/src/methods/messageReads.ts b/packages/data-schemas/src/methods/messageReads.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8a47bc4bf094c7e4ba6b843fd6ec39bdd0d4bc31
+--- /dev/null
++++ b/packages/data-schemas/src/methods/messageReads.ts
+@@ -0,0 +1,577 @@
++import type { MessageReadTimeField } from 'librechat-data-provider';
++import type { Model, PipelineStage } from 'mongoose';
++import type { IMessage } from '~/types';
++import { activeExpirationFilter } from '~/utils/retention';
++
++export interface MessageReadScope {
++  user: string;
++  tenantId?: string;
++  conversationId: string;
++  messageId?: string;
++}
++
++/** Internal projection. Identity/revision fields are digested, never returned verbatim. */
++export interface MessageReadRow {
++  _id: { toString(): string };
++  __v?: number;
++  conversationId: string;
++  messageId: string;
++  parentMessageId?: string | null;
++  createdAt?: Date;
++  updatedAt?: Date;
++  isCreatedByUser?: boolean;
++  sender?: string;
++  model?: string;
++  endpoint?: string;
++  thread_id?: string;
++  finish_reason?: string;
++  unfinished?: boolean;
++  error?: boolean;
++  tokenCount?: unknown;
++  summaryTokenCount?: unknown;
++  metadata?: { usage?: unknown; contextUsage?: unknown; summaryUsedTokens?: unknown };
++  text?: unknown;
++  content?: unknown;
++}
++
++export interface MessageReadPageInput extends MessageReadScope {
++  includeContext?: boolean;
++  timeField: MessageReadTimeField;
++  direction: 1 | -1;
++  from?: string;
++  to?: string;
++  after?: { time: string; id: string };
++  limit: number;
++}
++
++export interface BoundedMessageMethods {
++  getMessageReadMetadata(input: MessageReadPageInput): Promise<MessageReadRow[]>;
++  getMessageReadContent(input: ContentReadInput): Promise<ProjectedMessageRead | null>;
++}
++
++export interface ContentReadInput extends MessageReadScope {
++  messageId: string;
++  ancestry: number[];
++  position: number;
++  limit: number;
++  field?: 'text' | 'entry' | 'args' | 'output';
++  index?: number;
++}
++
++export interface ProjectedMessageRead extends MessageReadRow {
++  validScope: boolean;
++  entries?: Record<string, unknown>[];
++  hasMore?: boolean;
++  textRecorded?: boolean;
++  recorded?: boolean;
++  stringWindow?: string;
++  value?: unknown;
++}
++
++const identity = {
++  _id: 1,
++  __v: 1,
++  conversationId: 1,
++  messageId: 1,
++  parentMessageId: 1,
++  createdAt: 1,
++  updatedAt: 1,
++  unfinished: 1,
++  error: 1,
++} as const;
++
++/** Positive projection: metadata reads never hydrate text, content, files or other metadata. */
++const MESSAGE_READ_METADATA_PROJECTION: Record<string, 1> = {
++  ...identity,
++  isCreatedByUser: 1,
++  sender: 1,
++  model: 1,
++  endpoint: 1,
++  thread_id: 1,
++  finish_reason: 1,
++  tokenCount: 1,
++  summaryTokenCount: 1,
++  'metadata.usage': 1,
++  'metadata.contextUsage.contextBudget': 1,
++  'metadata.contextUsage.effectiveInstructionTokens': 1,
++  'metadata.contextUsage.prePruneContextTokens': 1,
++  'metadata.contextUsage.remainingContextTokens': 1,
++  'metadata.contextUsage.calibrationRatio': 1,
++  'metadata.contextUsage.cacheRead': 1,
++  'metadata.contextUsage.cacheWrite': 1,
++  'metadata.contextUsage.completedOutputTokens': 1,
++  'metadata.contextUsage.resumedOutputTokens': 1,
++  'metadata.contextUsage.retainedToolTokens': 1,
++  'metadata.contextUsage.breakdown.maxContextTokens': 1,
++  'metadata.contextUsage.breakdown.instructionTokens': 1,
++  'metadata.contextUsage.breakdown.systemMessageTokens': 1,
++  'metadata.contextUsage.breakdown.dynamicInstructionTokens': 1,
++  'metadata.contextUsage.breakdown.toolSchemaTokens': 1,
++  'metadata.contextUsage.breakdown.summaryTokens': 1,
++  'metadata.contextUsage.breakdown.toolCount': 1,
++  'metadata.contextUsage.breakdown.messageCount': 1,
++  'metadata.contextUsage.breakdown.messageTokens': 1,
++  'metadata.contextUsage.breakdown.availableForMessages': 1,
++  'metadata.contextUsage.breakdown.toolMessageTokens': 1,
++  'metadata.contextUsage.breakdown.toolTokenCounts': 1,
++  'metadata.contextUsage.breakdown.toolMessageTokenCounts': 1,
++  'metadata.summaryUsedTokens': 1,
++} as const;
++
++const scope = (input: MessageReadScope) => ({
++  user: input.user,
++  tenantId: input.tenantId == null ? { $exists: false } : input.tenantId,
++  conversationId: input.conversationId,
++  ...(input.messageId == null ? {} : { messageId: input.messageId }),
++  ...activeExpirationFilter<IMessage>(),
++});
++
++export function createBoundedMessageMethods(
++  mongoose: typeof import('mongoose'),
++): BoundedMessageMethods {
++  return {
++    async getMessageReadMetadata(input) {
++      const Message = mongoose.models.Message as Model<IMessage>;
++      const range = {
++        ...(input.from == null ? {} : { $gte: new Date(input.from) }),
++        ...(input.to == null ? {} : { $lt: new Date(input.to) }),
++      };
++      const op = input.direction === 1 ? '$gt' : '$lt';
++      return Message.find({
++        ...scope(input),
++        ...(Object.keys(range).length === 0 ? {} : { [input.timeField]: range }),
++        ...(input.after == null
++          ? {}
++          : {
++              $and: [
++                {
++                  $or: [
++                    { [input.timeField]: { [op]: new Date(input.after.time) } },
++                    {
++                      [input.timeField]: new Date(input.after.time),
++                      messageId: { [op]: input.after.id },
++                    },
++                  ],
++                },
++              ],
++            }),
++      })
++        .select(
++          Object.fromEntries(
++            Object.entries(MESSAGE_READ_METADATA_PROJECTION).filter(
++              ([key]) => input.includeContext || !key.startsWith('metadata.contextUsage.'),
++            ),
++          ),
++        )
++        .collation({ locale: 'simple' })
++        .sort({ [input.timeField]: input.direction, messageId: input.direction })
++        .limit(input.limit)
++        .lean<MessageReadRow[]>();
++    },
++    async getMessageReadContent(input) {
++      const Message = mongoose.models.Message as Model<IMessage>;
++      let content: unknown = '$content';
++      for (const index of input.ancestry) {
++        content = {
++          $let: {
++            vars: { parent: { $arrayElemAt: [array(content), index] } },
++            in: '$$parent.tool_call.subagent_content',
++          },
++        };
++      }
++      const stages: PipelineStage[] = [
++        { $match: scope(input) },
++        { $limit: 1 },
++        {
++          $project: {
++            ...identity,
++            text: input.field === 'text' ? 1 : { $ne: [{ $type: '$text' }, 'missing'] },
++            scopeContent: content,
++          },
++        },
++      ];
++      const validScope = input.ancestry.length
++        ? { $isArray: '$scopeContent' }
++        : { $in: [{ $type: '$scopeContent' }, ['array', 'missing']] };
++      if (input.field) {
++        const raw = { $arrayElemAt: [array('$scopeContent'), input.index ?? 0] };
++        const field = input.field;
++        const value =
++          field === 'text'
++            ? { value: '$text' }
++            : {
++                $let: {
++                  vars: { part: raw },
++                  in:
++                    field === 'entry'
++                      ? {
++                          $cond: [
++                            { $eq: [{ $type: '$$part' }, 'object'] },
++                            { value: publicEntryProjection('$$part') },
++                            {},
++                          ],
++                        }
++                      : {
++                          value: {
++                            $switch: {
++                              branches: [
++                                {
++                                  case: exists(`$$part.tool_call.${field}`),
++                                  then: `$$part.tool_call.${field}`,
++                                },
++                                {
++                                  case: exists(
++                                    `$$part.tool_call.function.${field === 'args' ? 'arguments' : 'output'}`,
++                                  ),
++                                  then: `$$part.tool_call.function.${field === 'args' ? 'arguments' : 'output'}`,
++                                },
++                              ],
++                              default: `$$part.tool_call.code_interpreter.${field === 'args' ? 'input' : 'outputs'}`,
++                            },
++                          },
++                        },
++                },
++              };
++        stages.push({
++          $replaceRoot: {
++            newRoot: {
++              $mergeObjects: [pick('$$ROOT', Object.keys(identity)), { validScope }, value],
++            },
++          },
++        });
++        stages.push({
++          $replaceRoot: {
++            newRoot: {
++              $mergeObjects: [
++                pick('$$ROOT', [...Object.keys(identity), 'validScope']),
++                { recorded: exists('$value') },
++                {
++                  $cond: [
++                    { $eq: [{ $type: '$value' }, 'string'] },
++                    { stringWindow: { $substrCP: ['$value', input.position, input.limit + 1] } },
++                    pick('$$ROOT', ['value']),
++                  ],
++                },
++              ],
++            },
++          },
++        });
++      } else {
++        stages.push({
++          $project: {
++            ...identity,
++            validScope,
++            textRecorded: '$text',
++            hasMore: { $gt: [{ $size: array('$scopeContent') }, input.position + input.limit] },
++            entries: {
++              $map: {
++                input: {
++                  $range: [
++                    input.position,
++                    { $min: [{ $size: array('$scopeContent') }, input.position + input.limit] },
++                  ],
++                },
++                as: 'i',
++                in: {
++                  $let: {
++                    vars: { part: { $arrayElemAt: [array('$scopeContent'), '$$i'] } },
++                    in: descriptor('$$part', '$$i'),
++                  },
++                },
++              },
++            },
++          },
++        });
++      }
++      // Single-document aggregation: revision, incarnation and selected data share one read.
++      // No full body, sibling or descendant array is returned to the driver.
++      const rows = await Message.aggregate<ProjectedMessageRead>(stages);
++      return rows[0] ?? null;
++    },
++  };
++}
++
++const array = (value: unknown): unknown => ({ $cond: [{ $isArray: value }, value, []] });
++const exists = (value: string): unknown => ({ $ne: [{ $type: value }, 'missing'] });
++const pick = (value: string, fields: readonly string[]): unknown => ({
++  $arrayToObject: {
++    $filter: {
++      input: { $objectToArray: { $cond: [{ $eq: [{ $type: value }, 'object'] }, value, {}] } },
++      as: 'f',
++      cond: { $in: ['$$f.k', fields] },
++    },
++  },
++});
++const partFields = [
++  'type',
++  'agentId',
++  'groupId',
++  'text',
++  'think',
++  'steer',
++  'error',
++  'phase',
++  'tool_call_ids',
++  'reasoning_label',
++  'reasoning_label_step_id',
++  'reasoning_label_status',
++  'reasoning_unavailable',
++  'steerId',
++  'clientSteerId',
++  'createdAt',
++  'quotes',
++  'activity_label',
++  'activity_label_type',
++  'activity_start_index',
++  'activity_end_index',
++  'activity_count',
++  'agent_ids',
++  'status',
++  'pending',
++  'tokenCount',
++  'summarizing',
++  'failed',
++  'initiatedBy',
++  'summaryVersion',
++  'model',
++  'provider',
++  'subagentRunId',
++  'subagentSequence',
++  'subagentStatus',
++  'stepId',
++];
++const toolFields = [
++  'type',
++  'id',
++  'name',
++  'args',
++  'output',
++  'stepId',
++  'agentId',
++  'groupId',
++  'progress',
++  'status',
++  'runStepStatus',
++  'runStepDurationMs',
++  'runStepClosedAt',
++  'toolPreparationStartedAt',
++  'toolDispatchedAt',
++  'toolPreparationDurationMs',
++  'toolExecutionDurationMs',
++  'backgrounded',
++  'executor',
++];
++const summaryFields = [
++  'type',
++  'agentId',
++  'groupId',
++  'id',
++  'name',
++  'stepId',
++  'status',
++  'runStepStatus',
++  'runStepDurationMs',
++  'runStepClosedAt',
++  'toolPreparationStartedAt',
++  'toolDispatchedAt',
++  'toolPreparationDurationMs',
++  'toolExecutionDurationMs',
++  'progress',
++  'backgrounded',
++];
++
++function descriptor(part: string, index: string): unknown {
++  const tool = `${part}.tool_call`;
++  const source = {
++    $mergeObjects: [
++      pick(part, summaryFields),
++      pick(`${tool}.code_interpreter`, ['name']),
++      pick(`${tool}.function`, ['name']),
++      pick(tool, summaryFields),
++    ],
++  };
++  const safe = {
++    $switch: {
++      branches: [
++        {
++          case: { $eq: [{ $type: '$$f.v' }, 'string'] },
++          then: { $lte: [{ $strLenBytes: '$$f.v' }, 512] },
++        },
++      ],
++      default: { $in: [{ $type: '$$f.v' }, ['bool', 'int', 'long', 'double', 'decimal', 'null']] },
++    },
++  };
++  return {
++    $mergeObjects: [
++      {
++        $let: {
++          vars: { source },
++          in: {
++            $arrayToObject: {
++              $filter: { input: { $objectToArray: '$$source' }, as: 'f', cond: safe },
++            },
++          },
++        },
++      },
++      {
++        index,
++        tool: { $eq: [{ $type: tool }, 'object'] },
++        supported: { $eq: [{ $type: part }, 'object'] },
++        fields: {
++          $concatArrays: [
++            { $cond: [{ $eq: [{ $type: part }, 'object'] }, ['entry'], []] },
++            ...(['args', 'output'] as const).map((field) => ({
++              $cond: [
++                {
++                  $or: [
++                    exists(`${tool}.${field}`),
++                    exists(`${tool}.function.${field === 'args' ? 'arguments' : 'output'}`),
++                    exists(`${tool}.code_interpreter.${field === 'args' ? 'input' : 'outputs'}`),
++                  ],
++                },
++                [field],
++                [],
++              ],
++            })),
++          ],
++        },
++        // Explicitly indicate invalid/oversized summary leaves without returning them.
++        omittedFields: {
++          $let: {
++            vars: { source },
++            in: {
++              $map: {
++                input: {
++                  $filter: {
++                    input: { $objectToArray: '$$source' },
++                    as: 'f',
++                    cond: { $not: [safe] },
++                  },
++                },
++                as: 'f',
++                in: '$$f.k',
++              },
++            },
++          },
++        },
++      },
++      { $cond: [{ $isArray: `${tool}.subagent_content` }, { children: true }, {}] },
++    ],
++  };
++}
++
++/** Positive public-entry projection before driver materialization. Children/private state never leave Mongo. */
++function publicEntryProjection(part: string): unknown {
++  const optional = (key: string, expression: unknown): unknown => ({
++    $cond: [exists(`${part}.${key}`), { [key]: expression }, {}],
++  });
++  const tool = `${part}.tool_call`;
++  return {
++    $cond: [
++      { $eq: [{ $type: part }, 'object'] },
++      {
++        $mergeObjects: [
++          pick(part, partFields),
++          ...['text', 'think'].map((key) =>
++            optional(key, {
++              $cond: [
++                { $eq: [{ $type: `${part}.${key}` }, 'object'] },
++                {
++                  $mergeObjects: [
++                    pick(`${part}.${key}`, ['value']),
++                    {
++                      $cond: [
++                        { $isArray: `${part}.${key}.annotations` },
++                        {
++                          annotations: {
++                            $map: {
++                              input: `${part}.${key}.annotations`,
++                              as: 'a',
++                              in: {
++                                $mergeObjects: [
++                                  pick('$$a', ['type', 'text', 'start_index', 'end_index']),
++                                  ...['file_citation', 'file_path'].map((field) => ({
++                                    $cond: [
++                                      exists(`$$a.${field}`),
++                                      { [field]: pick(`$$a.${field}`, ['file_id', 'quote']) },
++                                      {},
++                                    ],
++                                  })),
++                                ],
++                              },
++                            },
++                          },
++                        },
++                        {},
++                      ],
++                    },
++                  ],
++                },
++                `${part}.${key}`,
++              ],
++            }),
++          ),
++          optional('tool_call', {
++            $mergeObjects: [
++              pick(tool, toolFields),
++              ...[
++                ['function', ['name', 'arguments', 'output']],
++                ['code_interpreter', ['name', 'input', 'outputs']],
++                [
++                  'backgroundTask',
++                  ['version', 'taskId', 'toolName', 'status', 'cancelled', 'settledAt'],
++                ],
++              ].map(([key, fields]) => ({
++                $cond: [
++                  exists(`${tool}.${key}`),
++                  { [key as string]: pick(`${tool}.${key}`, fields as string[]) },
++                  {},
++                ],
++              })),
++            ],
++          }),
++          optional('agent_update', pick(`${part}.agent_update`, ['index', 'runId', 'agentId'])),
++          ...['image_url', 'video_url', 'input_audio', 'image_file'].map((key) =>
++            optional(key, {
++              $cond: [
++                { $eq: [{ $type: `${part}.${key}` }, 'object'] },
++                pick(`${part}.${key}`, [
++                  'url',
++                  'detail',
++                  'data',
++                  'format',
++                  'file_id',
++                  'filename',
++                  'filepath',
++                  'width',
++                  'height',
++                  'prompt',
++                ]),
++                `${part}.${key}`,
++              ],
++            }),
++          ),
++          {
++            $cond: [
++              { $eq: [`${part}.type`, 'summary'] },
++              {
++                $mergeObjects: [
++                  optional('content', {
++                    $map: {
++                      input: array(`${part}.content`),
++                      as: 's',
++                      in: pick('$$s', ['type', 'text']),
++                    },
++                  }),
++                  optional('boundary', pick(`${part}.boundary`, ['messageId', 'contentIndex'])),
++                ],
++              },
++              {},
++            ],
++          },
++        ],
++      },
++      {},
++    ],
++  };
++}
+diff --git a/packages/data-schemas/src/schema/message.ts b/packages/data-schemas/src/schema/message.ts
+index fe6c19de075336c3b5f9022e2a74d6c1810ca0d3..416d90f06e41998b3082703f1dc1b60828a7be81 100644
+--- a/packages/data-schemas/src/schema/message.ts
++++ b/packages/data-schemas/src/schema/message.ts
+@@ -364,6 +364,8 @@ messageSchema.index({
+  * the sort back into memory for them.
+  */
+ messageSchema.index({ conversationId: 1, user: 1, createdAt: 1, _id: 1 });
++messageSchema.index({ conversationId: 1, user: 1, createdAt: 1, messageId: 1 });
++messageSchema.index({ conversationId: 1, user: 1, updatedAt: 1, messageId: 1 });
+ 
+ /**
+  * Serves the cursor-paginated message read when sorted by `updatedAt`, the
+diff --git a/packages/data-schemas/src/types/app.ts b/packages/data-schemas/src/types/app.ts
+index 8a6b6fdb9ab7c98e0e48f4dfcfdc83e2abb6b64a..7f2a63417126f4cf6dc4fd9b216c29e6286d4041 100644
+--- a/packages/data-schemas/src/types/app.ts
++++ b/packages/data-schemas/src/types/app.ts
+@@ -139,6 +139,7 @@ export interface AppConfig {
+   conversationList?: TConversationListConfig;
+   /** Bounds for the tool-call previews sent on conversation loads */
+   toolCallPreviews?: TToolCallPreviewsConfig;
++  messageReads?: TCustomConfig['messageReads'];
+   /** Processed model specifications */
+   modelSpecs?: TCustomConfig['modelSpecs'];
+   /** Available tools */

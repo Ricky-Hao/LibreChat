@@ -1,0 +1,2706 @@
+diff --git a/api/server/controllers/agents/__tests__/callbacks.spec.js b/api/server/controllers/agents/__tests__/callbacks.spec.js
+index 18f6101f04c814e0438c389533e256628c938692..b8cc2377cc6bb9957111b4b5dd227aba4871d854 100644
+--- a/api/server/controllers/agents/__tests__/callbacks.spec.js
++++ b/api/server/controllers/agents/__tests__/callbacks.spec.js
+@@ -40,6 +40,7 @@ jest.mock('@librechat/api', () => ({
+   isCodeArtifactToolOutput: jest.requireActual('@librechat/api').isCodeArtifactToolOutput,
+   isCodeSessionToolName: jest.requireActual('@librechat/api').isCodeSessionToolName,
+   collectToolCallIds: jest.requireActual('@librechat/api').collectToolCallIds,
++  collectSubagentContent: jest.requireActual('@librechat/api').collectSubagentContent,
+   captureSubagentIdentity: jest.requireActual('@librechat/api').captureSubagentIdentity,
+   feedSubagentAggregator: jest.requireActual('@librechat/api').feedSubagentAggregator,
+   createToolTimingAdapter: jest.requireActual('@librechat/api').createToolTimingAdapter,
+@@ -505,7 +506,7 @@ describe('resumable event generation fencing', () => {
+       });
+     }
+     expect(jest.requireMock('@librechat/data-schemas').logger.warn).not.toHaveBeenCalled();
+-    expect(aggregators.get('parent-call')?.contentParts[0]?.tool_call).toMatchObject({
++    expect([...aggregators.values()][0]?.contentParts[0]?.tool_call).toMatchObject({
+       id: 'child-call',
+       toolPreparationStartedAt: 100,
+       toolPreparationDurationMs: 400,
+@@ -577,7 +578,7 @@ describe('resumable event generation fencing', () => {
+         ...update,
+       });
+     }
+-    const aggregator = aggregators.get(base.parentToolCallId);
++    const aggregator = [...aggregators.values()][0];
+     expect(aggregator.contentParts).toHaveLength(4);
+     expect(aggregator.contentParts[0].tool_call).toMatchObject({
+       id: 'query-1',
+@@ -607,7 +608,7 @@ describe('resumable event generation fencing', () => {
+       phase: 'steer_applied',
+       data: { index, part: { type: 'steer', steer: 'guidance' } },
+     });
+-    expect(aggregators.get('parent-call').contentParts).toEqual([]);
++    expect([...aggregators.values()][0].contentParts).toEqual([]);
+   });
+ 
+   it('forwards the originating job epoch with deferred attachments', () => {
+diff --git a/api/server/controllers/agents/callbacks.js b/api/server/controllers/agents/callbacks.js
+index 4145f43b1b4ef66f2a86967df938f90bedebb962..47eb4c090792680ed0c869f64f82cdd44490bf8b 100644
+--- a/api/server/controllers/agents/callbacks.js
++++ b/api/server/controllers/agents/callbacks.js
+@@ -11,12 +11,7 @@ const {
+   getRunStepDurationMs,
+   getRunStepCloseMetadata,
+ } = require('librechat-data-provider');
+-const {
+-  GraphEvents,
+-  GraphNodeKeys,
+-  createContentAggregator,
+-  summarizeEvent,
+-} = require('@librechat/agents');
++const { GraphEvents, GraphNodeKeys, summarizeEvent } = require('@librechat/agents');
+ const {
+   sendEvent,
+   getModelEndUsage,
+@@ -33,8 +28,7 @@ const {
+   getModelRefusalInfo,
+   shouldSignalSandboxStart,
+   getToolInputValidationDetails,
+-  captureSubagentIdentity,
+-  feedSubagentAggregator,
++  collectSubagentContent,
+   getAttachmentOwnership,
+   collectToolCallIds,
+   createToolTimingAdapter,
+@@ -714,22 +708,7 @@ function getDefaultHandlers({
+           toolCall.mcpServerName = serverName;
+         }
+       }
+-      if (subagentAggregatorsByToolCallId && data?.parentToolCallId) {
+-        const key = data.parentToolCallId;
+-        let aggregator = subagentAggregatorsByToolCallId.get(key);
+-        if (!aggregator) {
+-          aggregator = createContentAggregator();
+-          subagentAggregatorsByToolCallId.set(key, aggregator);
+-        }
+-        try {
+-          captureSubagentIdentity(aggregator, data);
+-          feedSubagentAggregator(aggregator, data, toolTiming.child);
+-        } catch (err) {
+-          logger.warn(
+-            `[ON_SUBAGENT_UPDATE] Failed to aggregate phase "${data?.phase}" for tool_call ${key}: ${err?.message ?? err}`,
+-          );
+-        }
+-      }
++      collectSubagentContent(subagentAggregatorsByToolCallId, contentParts, data, stepMap);
+       await emitForJob({ event, data });
+     },
+   };
+diff --git a/api/server/controllers/agents/client.js b/api/server/controllers/agents/client.js
+index dbe87d33e0c0bb55e37b7d4f96e5c24e6fb933f7..4cd9b444e2dbffa01bab19a7f7836f65b23acf71 100644
+--- a/api/server/controllers/agents/client.js
++++ b/api/server/controllers/agents/client.js
+@@ -212,6 +212,8 @@ const {
+   markCompactionOutcome,
+   resolvePersistableCodeEnvironmentDecision,
+   getChatProjectContextKey,
++  snapshotSubagentContent,
++  finalizeSubagentContent,
+   isTemporaryTurn,
+   hasEntityEmbeddings,
+ } = require('@librechat/api');
+@@ -792,7 +794,7 @@ class AgentClient extends BaseClient {
+    * Returns the aggregated content parts for the current run.
+    * @returns {MessageContentComplex[]} */
+   getContentParts() {
+-    return this.contentParts;
++    return snapshotSubagentContent(this.contentParts, this.subagentAggregatorsByToolCallId);
+   }
+ 
+   /**
+@@ -805,37 +807,7 @@ class AgentClient extends BaseClient {
+    * appeared in `contentParts` are discarded (no home to attach to).
+    */
+   finalizeSubagentContent() {
+-    const buffer = this.subagentAggregatorsByToolCallId;
+-    if (!buffer || buffer.size === 0 || !Array.isArray(this.contentParts)) {
+-      return;
+-    }
+-    for (const part of this.contentParts) {
+-      if (part?.type !== ContentTypes.TOOL_CALL) continue;
+-      const toolCall = part[ContentTypes.TOOL_CALL];
+-      if (!toolCall || toolCall.name !== Constants.SUBAGENT || !toolCall.id) continue;
+-      const aggregator = buffer.get(toolCall.id);
+-      if (!aggregator) continue;
+-      try {
+-        if (aggregator.subagentIdentity != null) {
+-          toolCall.subagentIdentity = aggregator.subagentIdentity;
+-        }
+-        /** `createContentAggregator` returns a sparse array (undefined
+-         *  slots for indices that never received content). Strip those
+-         *  so the persisted shape is a clean `TMessageContentParts[]`. */
+-        const parts = Array.isArray(aggregator.contentParts)
+-          ? aggregator.contentParts.filter((p) => p != null)
+-          : [];
+-        if (parts.length > 0) {
+-          toolCall.subagent_content = parts;
+-        }
+-      } catch (err) {
+-        logger.warn(
+-          `[AgentClient] Failed to attach subagent content for tool_call ${toolCall.id}`,
+-          getSafeErrorMetadata(err),
+-        );
+-      }
+-    }
+-    buffer.clear();
++    finalizeSubagentContent(this.contentParts, this.subagentAggregatorsByToolCallId);
+   }
+ 
+   /** Stamps host-resolved MCP identities onto persisted calls so future replay
+@@ -5955,7 +5927,12 @@ class AgentClient extends BaseClient {
+       // introspection fall back to the durable chunk reconstruction, which is complete.
+       // `setContentParts` still points the in-memory store at the seeded client content.
+       if (streamId && this.contentParts) {
+-        GenerationJobManager.setContentParts(streamId, this.contentParts, this.jobCreatedAt);
++        GenerationJobManager.setContentParts(
++          streamId,
++          this.contentParts,
++          this.jobCreatedAt,
++          this.subagentAggregatorsByToolCallId,
++        );
+       }
+ 
+       // Carry the user's MCP auth into the rebuilt run so an approved MCP tool executes
+diff --git a/api/server/controllers/agents/client.test.js b/api/server/controllers/agents/client.test.js
+index 0589b0a400b8b9ed105ed173d3609a76f43e2da4..c8a69b2d3d4fc32e28a60ca81523b04579043778 100644
+--- a/api/server/controllers/agents/client.test.js
++++ b/api/server/controllers/agents/client.test.js
+@@ -9922,9 +9922,9 @@ describe('AgentClient - finalizeSubagentContent', () => {
+     client.finalizeSubagentContent();
+     const attached = client.contentParts[0].tool_call.subagent_content;
+     expect(attached).toEqual([
+-      { type: 'text', text: 'before' },
+-      part,
+-      { type: 'text', text: 'after' },
++      expect.objectContaining({ type: 'text', text: 'before' }),
++      expect.objectContaining(part),
++      expect.objectContaining({ type: 'text', text: 'after' }),
+     ]);
+     expect(buffer.size).toBe(0);
+     client.finalizeSubagentContent();
+diff --git a/api/server/controllers/agents/request.js b/api/server/controllers/agents/request.js
+index c36df29b59817ad343f9789a44374e320dd353da..6491a002098045b38552d2f2953aa30f6a5bbd7a 100644
+--- a/api/server/controllers/agents/request.js
++++ b/api/server/controllers/agents/request.js
+@@ -2200,7 +2200,12 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
+ 
+     // Store reference to client's contentParts - graph will be set when run is created
+     if (client?.contentParts) {
+-      GenerationJobManager.setContentParts(streamId, client.contentParts, jobCreatedAt);
++      GenerationJobManager.setContentParts(
++        streamId,
++        client.contentParts,
++        jobCreatedAt,
++        client.subagentAggregatorsByToolCallId,
++      );
+     }
+ 
+     let userMessage;
+diff --git a/client/src/components/Chat/Subagents/Recovery.test.tsx b/client/src/components/Chat/Subagents/Recovery.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..1142158ae21676755ffbb5974c41d54ba6478c3e
+--- /dev/null
++++ b/client/src/components/Chat/Subagents/Recovery.test.tsx
+@@ -0,0 +1,276 @@
++import React from 'react';
++import axios from 'axios';
++import { RecoilRoot } from 'recoil';
++import { useAtomValue, useStore } from 'jotai';
++import { MemoryRouter } from 'react-router-dom';
++import { ContentTypes } from 'librechat-data-provider';
++import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
++import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
++import {
++  activeSubagentPanel,
++  recoverSubagentProgress,
++  reduceSubagentProgress,
++  subagentProgressByToolCallId,
++  subagentProgressKey,
++} from '@librechat/chat/react';
++import type { TMessageContentParts, ToolCallPartResponse } from 'librechat-data-provider';
++import ContentParts from '~/components/Chat/Messages/Content/ContentParts';
++import SubagentThreadPanel from './SubagentThreadPanel';
++import { ChatSurfaceHarness } from 'test/harness';
++
++jest.mock('~/hooks', () => ({
++  ...jest.requireActual('~/hooks/Messages/useCopyToClipboard'),
++  useLocalize: () => (key: string) => key,
++  useFocusTrap: jest.requireActual('~/hooks/useFocusTrap').default,
++  useNavigateToConvo: () => ({ navigateToConvo: jest.fn() }),
++  useExpandCollapse: () => ({ style: {}, ref: { current: null } }),
++  useLazyCollapseBody: jest.requireActual('~/hooks/Messages/useLazyCollapseBody').default,
++  useProgress: (initial: number) => initial,
++  scheduleMessageContentLayoutReconcile: jest.fn(() => jest.fn()),
++}));
++jest.mock('~/hooks/MCP', () => ({
++  useMCPIconMap: () => new Map(),
++  useMCPServerNames: () => [],
++}));
++jest.mock('~/Providers', () => ({
++  ...jest.requireActual('~/Providers'),
++  useAgentsMapContext: () => ({}),
++}));
++jest.mock('~/data-provider', () => ({
++  ...jest.requireActual('~/data-provider'),
++  useGetStartupConfig: () => ({ data: undefined }),
++  useSubagentThreadQuery: () => ({ data: undefined }),
++  useForkConvoMutation: () => ({ mutate: jest.fn() }),
++  useSubagentControlMutation: () => ({ mutate: jest.fn() }),
++}));
++jest.mock('./ParentSubagentsProvider', () => ({
++  useParentSubagents: () => ({ byMessageId: new Map(), byThreadId: new Map() }),
++}));
++jest.mock('@librechat/chat/react', () => ({
++  ...jest.requireActual('@librechat/chat/react'),
++  useSubagentActivityStream: () => ({ isReady: false }),
++}));
++jest.mock('@librechat/client', () => ({
++  ...jest.requireActual('@librechat/client'),
++  useToastContext: () => ({ showToast: jest.fn() }),
++  useMediaQuery: () => false,
++}));
++jest.mock('~/components/Chat/Messages/Content/MarkdownLite', () => ({
++  __esModule: true,
++  default: ({ content }: { content: string }) => <div>{content}</div>,
++}));
++
++const content = [
++  ...Array.from({ length: 26 }, (_, index) => ({
++    type: ContentTypes.TOOL_CALL,
++    tool_call: {
++      id: `child-${index}`,
++      name: 'fixture_tool',
++      args: '{}',
++      output: 'ok',
++      progress: 1,
++    },
++  })),
++  ...Array.from({ length: 5 }, (_, index) => ({
++    type: ContentTypes.TEXT,
++    text: `Recovered child text ${index}`,
++    phase: index === 4 ? 'final_answer' : 'commentary',
++  })),
++] as TMessageContentParts[];
++const tool_call = {
++  id: 'parent-call',
++  type: 'tool_call' as const,
++  name: 'subagent',
++  args: '{"task":"Review"}',
++  output: 'Done.',
++  progress: 1,
++  runStepStatus: 'completed' as const,
++  stepId: 'parent-step',
++};
++const preview = [
++  {
++    type: ContentTypes.TOOL_CALL,
++    tool_call: {
++      ...tool_call,
++      subagentContentOmitted: true,
++      subagentContentParts: 31,
++      previewRevision: 'revision-1',
++    },
++  },
++] as TMessageContentParts[];
++const response: ToolCallPartResponse = {
++  conversationId: 'parent',
++  messageId: 'message',
++  partIndex: 0,
++  tool_call: { ...tool_call, subagent_content: content },
++};
++
++function PanelHost() {
++  const selection = useAtomValue(activeSubagentPanel);
++  return selection == null ? null : <SubagentThreadPanel selection={selection} />;
++}
++
++function mount() {
++  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
++  const frame = (parts: TMessageContentParts[]) => (
++    <QueryClientProvider client={client}>
++      <MemoryRouter>
++        <RecoilRoot>
++          <ChatSurfaceHarness>
++            <ContentParts
++              content={parts}
++              messageId="message"
++              conversationId="parent"
++              isSubmitting={false}
++              isCreatedByUser={false}
++              showThinking={true}
++              isLast={true}
++            />
++            <PanelHost />
++          </ChatSurfaceHarness>
++        </RecoilRoot>
++      </MemoryRouter>
++    </QueryClientProvider>
++  );
++  return { ...render(frame(preview)), frame, client };
++}
++
++afterEach(() => jest.restoreAllMocks());
++
++it('recovers completed activity after a cold mount and keeps it through a parent preview refetch', async () => {
++  let resolve!: (part: ToolCallPartResponse) => void;
++  const request = jest.fn(
++    () =>
++      new Promise((done) => {
++        resolve = (data) => done({ data });
++      }),
++  );
++  jest
++    .spyOn(axios, 'get')
++    .mockImplementation((url) =>
++      url.includes('/parts/') ? request() : Promise.resolve({ data: [] }),
++    );
++  const view = mount();
++  fireEvent.click(screen.getByRole('button', { name: /com_ui_subagent_complete/ }));
++  await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
++  expect(screen.queryByText('Recovered child text 4')).not.toBeInTheDocument();
++  await act(async () => resolve(response));
++  expect(await screen.findByText('Recovered child text 4')).toBeVisible();
++  fireEvent.click(screen.getByRole('button', { name: /com_ui_ran_n_actions/ }));
++  await waitFor(() =>
++    expect(view.container.querySelectorAll('[data-tool-call-id^="child-"]')).toHaveLength(26),
++  );
++  for (let index = 0; index < 4; index++) {
++    expect(screen.getByText(`Recovered child text ${index}`)).toBeInTheDocument();
++  }
++  view.rerender(view.frame(JSON.parse(JSON.stringify(preview))));
++  expect(screen.getByText('Recovered child text 4')).toBeVisible();
++  fireEvent.click(screen.getByRole('button', { name: 'com_ui_close' }));
++  fireEvent.click(screen.getByRole('button', { name: /com_ui_subagent_complete/ }));
++  expect(screen.getByText('Recovered child text 4')).toBeVisible();
++  expect(request).toHaveBeenCalledTimes(1);
++});
++
++it('offers visible retry after detail loading fails', async () => {
++  const request = jest
++    .fn()
++    .mockRejectedValueOnce(new Error('offline'))
++    .mockRejectedValueOnce(new Error('offline'))
++    .mockResolvedValue({ data: response });
++  jest
++    .spyOn(axios, 'get')
++    .mockImplementation((url) =>
++      url.includes('/parts/') ? request() : Promise.resolve({ data: [] }),
++    );
++  mount();
++  fireEvent.click(screen.getByRole('button', { name: /com_ui_subagent_complete/ }));
++  const retry = await screen.findByRole('button', { name: 'com_ui_retry' }, { timeout: 5000 });
++  fireEvent.click(retry);
++  expect(await screen.findByText('Recovered child text 4')).toBeVisible();
++});
++
++it('renders recovered running activity and subsequent deltas in the same open panel', async () => {
++  jest.spyOn(axios, 'get').mockResolvedValue({ data: [] });
++  const recovered = [
++    {
++      type: ContentTypes.TEXT,
++      text: 'Before',
++      phase: 'commentary',
++      stepId: 'child-text',
++      subagentRunId: 'child',
++      subagentSequence: 2,
++    },
++  ] as TMessageContentParts[];
++  function Continue() {
++    const store = useStore();
++    return (
++      <button
++        type="button"
++        onClick={() => {
++          const atom = subagentProgressByToolCallId(
++            subagentProgressKey('message', 'parent-call', 0),
++          );
++          store.set(
++            atom,
++            reduceSubagentProgress(recoverSubagentProgress(null, recovered), [
++              {
++                runId: 'message',
++                parentToolCallId: 'parent-call',
++                subagentRunId: 'child',
++                subagentAgentId: 'agent',
++                subagentType: 'self',
++                phase: 'message_delta',
++                timestamp: '',
++                activitySequence: 3,
++                data: { id: 'child-text', delta: { content: [{ type: 'text', text: ' after' }] } },
++              },
++            ]),
++          );
++        }}
++      >
++        {'Continue fixture'}
++      </button>
++    );
++  }
++  render(
++    <QueryClientProvider client={new QueryClient()}>
++      <MemoryRouter>
++        <RecoilRoot>
++          <ChatSurfaceHarness>
++            <ContentParts
++              content={[
++                {
++                  type: ContentTypes.TOOL_CALL,
++                  tool_call: {
++                    ...tool_call,
++                    progress: 0.5,
++                    runStepStatus: undefined,
++                    output: '',
++                    subagent_content: recovered,
++                  },
++                } as TMessageContentParts,
++              ]}
++              messageId="message"
++              conversationId="parent"
++              isSubmitting={true}
++              isLatestMessage={true}
++              isCreatedByUser={false}
++              showThinking={true}
++              isLast={true}
++            />
++            <Continue />
++            <PanelHost />
++          </ChatSurfaceHarness>
++        </RecoilRoot>
++      </MemoryRouter>
++    </QueryClientProvider>,
++  );
++  fireEvent.click(screen.getByRole('button', { name: /com_ui_subagent_running/ }));
++  expect(await screen.findByText('Before')).toBeVisible();
++  fireEvent.click(screen.getByRole('button', { name: 'Continue fixture' }));
++  await waitFor(() =>
++    expect(screen.getByRole('region', { name: 'com_ui_subagent_thread_panel' })).toHaveTextContent(
++      'Before after',
++    ),
++  );
++});
+diff --git a/client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx b/client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx
+index 85a803fff9f9bf2697419db09ed641b3d90a6649..e99c4a1a833b6556a9d04575a7fb418256729843 100644
+--- a/client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx
++++ b/client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx
+@@ -316,6 +316,7 @@ const mockComposerVerdict = (
+ };
+ 
+ jest.mock('@librechat/client', () => ({
++  OverlayBack: jest.requireActual('@librechat/client').OverlayBack,
+   Alert: ({ children, ...props }: React.ComponentProps<'div'>) => (
+     <div role="alert" {...props}>
+       {children}
+diff --git a/client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx b/client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx
+index d2041c4f199cb0f9fcb2d83acbec3b1ac7617bf7..781e1d06ef46d8278991f65c77655cc790a5545d 100644
+--- a/client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx
++++ b/client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx
+@@ -6,6 +6,7 @@ let mockConversation: Record<string, unknown> | null;
+ 
+ jest.mock('react-router-dom', () => ({
+   useParams: () => ({ conversationId: 'child-thread' }),
++  useLocation: () => ({ pathname: '/c/child-thread', search: '', hash: '' }),
+ }));
+ 
+ jest.mock('recoil', () => ({
+diff --git a/e2e/setup/fake-model.js b/e2e/setup/fake-model.js
+index 3c66603d3674b80fcddcf0520577ad93623c739d..df796c9a752b208ae11f22bb59b16851b199ba3b 100644
+--- a/e2e/setup/fake-model.js
++++ b/e2e/setup/fake-model.js
+@@ -131,6 +131,7 @@ const HANDOFF_MARKER = 'E2E_HANDOFF:';
+ const SUBAGENT_RESULT_MARKER = 'E2E_SUBAGENT_RESULT:';
+ const SUBAGENT_CHILD_MARKER = 'E2E_SUBAGENT_CHILD:';
+ const SUBAGENT_ACTIVITY_MARKER = 'E2E_SUBAGENT_ACTIVITY:';
++const SUBAGENT_ACTIVITY_FINAL_MARKER = 'E2E_SUBAGENT_ACTIVITY_FINAL:';
+ const SUBAGENT_ACTIVITY_CHILD_MARKER = 'E2E_SUBAGENT_ACTIVITY_CHILD:';
+ const RUN_FILES_MARKER = 'E2E_RUN_FILES:';
+ const RUN_FILES_CHILD_MARKER = 'E2E_RUN_FILES_CHILD:';
+@@ -2446,7 +2447,8 @@ function runFileVersionsResponses(text) {
+ }
+ 
+ function parseSubagentActivityMarker(text) {
+-  const value = getMarkerValue(text, SUBAGENT_ACTIVITY_MARKER);
++  const slowFinal = getMarkerValue(text, SUBAGENT_ACTIVITY_FINAL_MARKER);
++  const value = slowFinal || getMarkerValue(text, SUBAGENT_ACTIVITY_MARKER);
+   const separator = value.indexOf(':');
+   if (separator <= 0 || separator === value.length - 1) {
+     return null;
+@@ -2460,6 +2462,7 @@ function parseSubagentActivityMarker(text) {
+   return {
+     childIds,
+     label: value.slice(separator + 1),
++    slowFinal: Boolean(slowFinal),
+   };
+ }
+ 
+@@ -2498,7 +2501,9 @@ function subagentActivityResponses(text) {
+           message.tool_call_id.startsWith('call_e2e_subagent_activity_'),
+       );
+       if (backgroundTaskResults.length >= marker.childIds.length) {
+-        return { response: `E2E detached subagents dispatched ${marker.label}` };
++        /** Leave time to edit a child control draft before the first parent FINAL. */
++        const suffix = marker.slowFinal ? ` ${slowChunkPayload()}` : '';
++        return { response: `E2E detached subagents dispatched ${marker.label}${suffix}` };
+       }
+ 
+       return {
+diff --git a/e2e/specs/mock/subagent-recovery.spec.ts b/e2e/specs/mock/subagent-recovery.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..bc32be993581ab9d08918e76ccc0d74eedeed13f
+--- /dev/null
++++ b/e2e/specs/mock/subagent-recovery.spec.ts
+@@ -0,0 +1,104 @@
++import { expect, test } from '@playwright/test';
++import type { HistoryPage } from 'librechat-data-provider';
++import {
++  seedConversations,
++  seedMessages,
++  deleteMessagesByConversation,
++  deleteConversations,
++} from './db';
++import { getE2EUser } from '../../setup/user';
++
++test('a completed foreground child survives a hard reload with preview-only history', async ({
++  page,
++}) => {
++  const conversationId = '16390000-0000-4000-8000-000000000011';
++  const email = getE2EUser().email;
++  await seedConversations(email, [
++    { conversationId, title: 'Subagent recovery fixture', updatedAt: new Date() },
++  ]);
++  await seedMessages(email, conversationId, [
++    {
++      messageId: 'recovery-user',
++      parentMessageId: '00000000-0000-0000-0000-000000000000',
++      text: 'Review the fixture.',
++      isCreatedByUser: true,
++      sender: 'User',
++    },
++    {
++      messageId: 'recovery-parent',
++      parentMessageId: 'recovery-user',
++      text: '',
++      isCreatedByUser: false,
++      sender: 'Assistant',
++      content: [
++        {
++          type: 'tool_call',
++          tool_call: {
++            id: 'recovery-call',
++            type: 'tool_call',
++            name: 'subagent',
++            args: '{"task":"Review the fixture."}',
++            output: 'Done.',
++            progress: 1,
++            runStepStatus: 'completed',
++            stepId: 'recovery-step',
++            subagent_content: [
++              ...Array.from({ length: 26 }, (_, index) => ({
++                type: 'tool_call',
++                tool_call: {
++                  id: `child-${index}`,
++                  name: 'fixture_tool',
++                  args: '{}',
++                  output: 'ok',
++                  progress: 1,
++                },
++              })),
++              ...Array.from({ length: 5 }, (_, index) => ({
++                type: 'text',
++                text: `Recovered browser child ${index}`,
++                phase: index === 4 ? 'final_answer' : 'commentary',
++              })),
++            ],
++          },
++        },
++      ],
++    },
++  ]);
++  try {
++    for (const coldReload of [false, true]) {
++      const history = page.waitForResponse(
++        (response) =>
++          response.url().includes(`/api/messages/${conversationId}`) &&
++          response.request().method() === 'GET',
++      );
++      if (coldReload) await page.reload();
++      else await page.goto(`/c/${conversationId}`);
++      const response = await history;
++      expect(response.ok()).toBe(true);
++      expect(new URL(response.url()).searchParams.get('history')).toBe('recent');
++      const window: HistoryPage = await response.json();
++      const stored = window.messages.find((message) => message.messageId === 'recovery-parent');
++      expect(stored).toBeDefined();
++      expect(stored!.content![0].tool_call).toMatchObject({
++        subagentContentOmitted: true,
++        subagentContentParts: 31,
++        output: 'Done.',
++      });
++      expect(stored!.content![0].tool_call.subagent_content).toBeUndefined();
++      const detail = page.waitForResponse(
++        (response) =>
++          response.url().includes('/parts/') && response.url().includes('recovery-parent'),
++      );
++      await page.locator('[data-subagent-tool-call="recovery-call"]').click();
++      expect((await detail).ok()).toBe(true);
++      const panel = page.getByRole('region', { name: 'Child agent activity' });
++      await expect(panel.getByText('Recovered browser child 4')).toBeVisible();
++      await expect(panel.getByText('Recovered browser child 0')).toBeVisible();
++      await panel.getByRole('button', { name: /Ran 26 actions/ }).click();
++      await expect(panel.locator('[data-tool-call-id^="child-"]')).toHaveCount(26);
++    }
++  } finally {
++    await deleteMessagesByConversation([conversationId]);
++    await deleteConversations([conversationId]);
++  }
++});
+diff --git a/packages/api/src/agents/aggregation.ts b/packages/api/src/agents/aggregation.ts
+index d85a8c1c25d17d38e84cae3453c16080e61067b6..537638f76c22a163f5a3f03689c5080586c002a0 100644
+--- a/packages/api/src/agents/aggregation.ts
++++ b/packages/api/src/agents/aggregation.ts
+@@ -1,14 +1,13 @@
+ import { GraphEvents } from '@librechat/agents';
+ import { ContentTypes } from 'librechat-data-provider';
+-import type { Agents, TSteerAppliedEvent } from 'librechat-data-provider';
++import type { Agents, TSteerAppliedEvent, SubagentUpdateEvent } from 'librechat-data-provider';
+ import type { createContentAggregator } from '@librechat/agents';
+-import type { SubagentActivityUpdateEvent } from './subagentActivity';
+ import type { ToolTimingAdapter } from './toolTiming';
+ 
+ type SubagentAggregator = ReturnType<typeof createContentAggregator>;
+ type AggregateInput = Parameters<SubagentAggregator['aggregateContent']>[0];
+ 
+-function subagentPhaseToGraphEvent(event: SubagentActivityUpdateEvent): GraphEvents | null {
++function subagentPhaseToGraphEvent(event: SubagentUpdateEvent): GraphEvents | null {
+   switch (event?.phase) {
+     case 'run_step':
+       // Tool-execute batch requests share this phase but are not run steps.
+@@ -31,7 +30,7 @@ function subagentPhaseToGraphEvent(event: SubagentActivityUpdateEvent): GraphEve
+ /** Consume already-public child updates; host indices already include steering offsets. */
+ export function feedSubagentAggregator(
+   aggregator: SubagentAggregator,
+-  event: SubagentActivityUpdateEvent,
++  event: SubagentUpdateEvent,
+   applyChildTiming: ToolTimingAdapter['child'],
+ ): void {
+   if (event.phase === 'steer_applied') {
+diff --git a/packages/api/src/agents/index.ts b/packages/api/src/agents/index.ts
+index 1fb91a53f7494983518e133a1397b4d35434d714..ce19ed170cc961b64664157ec16adf29816afd7f 100644
+--- a/packages/api/src/agents/index.ts
++++ b/packages/api/src/agents/index.ts
+@@ -62,8 +62,9 @@ export * from './startup';
+ export * from './subagentThreads';
+ export * from './subagentActivity';
+ export * from './aggregation';
+-export * from './subagentContent';
++export * from './retainedSubagentContent';
+ export * from './subagentIdentity';
++export * from './subagentContent';
+ export * from './subagentCompletionWakeup';
+ export * from './subagentTaskRouting';
+ export * from './skillConfigurable';
+diff --git a/packages/api/src/agents/occurrence.ts b/packages/api/src/agents/occurrence.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..41d8d7d6fce189b8a46ed3821d95ab67ff094113
+--- /dev/null
++++ b/packages/api/src/agents/occurrence.ts
+@@ -0,0 +1,88 @@
++import { createContentAggregator, GraphEvents } from '@librechat/agents';
++import type { RunStep, RunStepDeltaEvent, ToolEndEvent } from '@librechat/agents';
++
++/** The SDK indexes tool calls by provider ID. Reconstruction spans multiple runs,
++ * where those IDs can repeat, so use step-scoped IDs internally and restore the wire IDs. */
++export function createOccurrenceAggregator(): ReturnType<typeof createContentAggregator> {
++  const aggregator = createContentAggregator();
++  const originalIds = new Map<string, string>();
++  const indicesByStep = new Map<string, Set<number>>();
++  const scoped = (step: string, id: string) => {
++    const key = JSON.stringify([step, id]);
++    originalIds.set(key, id);
++    return key;
++  };
++  return {
++    ...aggregator,
++    aggregateContent(input) {
++      let data = input.data;
++      if (input.event === GraphEvents.ON_RUN_STEP) {
++        const step = data as RunStep;
++        if (step.stepDetails.type === 'tool_calls') {
++          data = {
++            ...step,
++            stepDetails: {
++              ...step.stepDetails,
++              tool_calls: step.stepDetails.tool_calls?.map((call) =>
++                call.id ? { ...call, id: scoped(step.id, call.id) } : call,
++              ),
++            },
++          };
++        }
++      } else if (input.event === GraphEvents.ON_RUN_STEP_DELTA) {
++        const delta = data as RunStepDeltaEvent;
++        if (delta.delta.type === 'tool_calls') {
++          data = {
++            ...delta,
++            delta: {
++              ...delta.delta,
++              tool_calls: delta.delta.tool_calls?.map((call) => ({
++                ...call,
++                id: call.id ? scoped(delta.id, call.id) : call.id,
++              })),
++            },
++          };
++        }
++      } else if (input.event === GraphEvents.ON_RUN_STEP_COMPLETED) {
++        const completed = data as { result: ToolEndEvent };
++        const call = completed.result?.tool_call;
++        if (call?.id) {
++          data = {
++            ...completed,
++            result: {
++              ...completed.result,
++              tool_call: { ...call, id: scoped(completed.result.id, call.id) },
++            },
++          };
++        }
++      }
++      // Restore only the updated step's slots, not the whole parent transcript per token.
++      const previousLength = aggregator.contentParts.length;
++      aggregator.aggregateContent({ ...input, data });
++      const id =
++        (data as { id?: string; result?: { id?: string } }).id ??
++        (data as { result?: { id?: string } }).result?.id;
++      const step = id == null ? undefined : aggregator.stepMap.get(id);
++      if (step?.stepDetails.type !== 'tool_calls') return;
++      const indices = indicesByStep.get(step.id) ?? new Set<number>([step.index]);
++      for (let index = previousLength; index < aggregator.contentParts.length; index++) {
++        indices.add(index);
++      }
++      indicesByStep.set(step.id, indices);
++      for (const index of indices) {
++        const part = aggregator.contentParts[index];
++        if (part?.type !== 'tool_call') continue;
++        const original = originalIds.get(part.tool_call.id ?? '');
++        if (original != null) part.tool_call.id = original;
++        part.tool_call.stepId = step.id;
++      }
++      // Expose parent steps using the same IDs as the host content for child correlation.
++      step.stepDetails = {
++        ...step.stepDetails,
++        tool_calls: step.stepDetails.tool_calls?.map((call) =>
++          call.id ? { ...call, id: originalIds.get(call.id) ?? call.id } : call,
++        ),
++      };
++    },
++  };
++}
+diff --git a/packages/api/src/agents/retainedSubagentContent.spec.ts b/packages/api/src/agents/retainedSubagentContent.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..6e58e48a03c605293526744015b95637f30dcbf0
+--- /dev/null
++++ b/packages/api/src/agents/retainedSubagentContent.spec.ts
+@@ -0,0 +1,355 @@
++import { ContentTypes } from 'librechat-data-provider';
++import { createContentAggregator, GraphEvents, StepTypes } from '@librechat/agents';
++import type { Agents, SubagentUpdateEvent } from 'librechat-data-provider';
++import type { SubagentContentBuffer } from './retainedSubagentContent';
++import {
++  collectSubagentContent,
++  snapshotSubagentContent,
++  finalizeSubagentContent,
++} from './retainedSubagentContent';
++
++const parent = (): Agents.MessageContentComplex => ({
++  type: ContentTypes.TOOL_CALL,
++  tool_call: { id: 'call', name: 'subagent', args: '{}', stepId: 'parent-step' },
++});
++const update = (
++  phase: SubagentUpdateEvent['phase'],
++  data?: object,
++  run = 'child',
++): SubagentUpdateEvent => ({
++  runId: 'parent',
++  parentToolCallId: 'call',
++  subagentRunId: run,
++  subagentType: 'self',
++  subagentAgentId: 'agent',
++  phase,
++  data,
++  timestamp: '',
++});
++function start(
++  buffer: SubagentContentBuffer,
++  parts: Array<Agents.MessageContentComplex | undefined>,
++  run = 'child',
++) {
++  collectSubagentContent(
++    buffer,
++    parts,
++    update(
++      'run_step',
++      {
++        id: 'text',
++        index: 0,
++        stepDetails: {
++          type: 'message_creation',
++          message_creation: { message_id: 'text', phase: 'commentary' },
++        },
++      },
++      run,
++    ),
++  );
++}
++function delta(
++  buffer: SubagentContentBuffer,
++  parts: Array<Agents.MessageContentComplex | undefined>,
++  text: string,
++  run = 'child',
++) {
++  collectSubagentContent(
++    buffer,
++    parts,
++    update('message_delta', { id: 'text', delta: { content: [{ type: 'text', text }] } }, run),
++  );
++}
++
++it('snapshots without draining or mutating a previously captured view', () => {
++  const parts = [parent()];
++  const buffer: SubagentContentBuffer = new Map();
++  start(buffer, parts);
++  delta(buffer, parts, 'Before');
++  const first = snapshotSubagentContent(parts, buffer);
++  delta(buffer, parts, ' after');
++  expect(buffer.size).toBe(1);
++  expect(first[0]).toMatchObject({ tool_call: { subagent_content: [{ text: 'Before' }] } });
++  expect(snapshotSubagentContent(parts, buffer)[0]).toMatchObject({
++    tool_call: { subagent_content: [{ text: 'Before after' }] },
++  });
++  finalizeSubagentContent(parts, buffer);
++  expect(buffer.size).toBe(0);
++  expect(parts[0]).toMatchObject({ tool_call: { subagent_content: [{ text: 'Before after' }] } });
++});
++
++it('restores steering boundaries in order when a child resumes from a parent snapshot', () => {
++  const parts = [parent()];
++  const buffer: SubagentContentBuffer = new Map();
++  start(buffer, parts);
++  delta(buffer, parts, 'Before');
++  collectSubagentContent(
++    buffer,
++    parts,
++    update('steer_applied', {
++      index: 1,
++      part: { type: ContentTypes.STEER, steer: 'Use revised sources', steerId: 'guidance' },
++    }),
++  );
++  collectSubagentContent(
++    buffer,
++    parts,
++    update('run_step', {
++      id: 'after',
++      index: 2,
++      stepDetails: { type: 'message_creation', message_creation: { message_id: 'after' } },
++    }),
++  );
++  collectSubagentContent(
++    buffer,
++    parts,
++    update('message_delta', { id: 'after', delta: { content: [{ type: 'text', text: 'After' }] } }),
++  );
++  const restored = snapshotSubagentContent(parts, buffer);
++  const resumedBuffer: SubagentContentBuffer = new Map();
++  collectSubagentContent(
++    resumedBuffer,
++    restored,
++    update('message_delta', {
++      id: 'after',
++      delta: { content: [{ type: 'text', text: ' continued' }] },
++    }),
++  );
++  expect(snapshotSubagentContent(restored, resumedBuffer)[0]).toMatchObject({
++    tool_call: {
++      subagent_content: [
++        { type: ContentTypes.TEXT, text: 'Before' },
++        { type: ContentTypes.STEER, steerId: 'guidance' },
++        { type: ContentTypes.TEXT, text: 'After continued' },
++      ],
++    },
++  });
++});
++
++it.each(['snapshot', 'finalize'] as const)(
++  '%s preserves SDK sparse parent indices and child activity',
++  (operation) => {
++    const aggregator = createContentAggregator();
++    aggregator.aggregateContent({
++      event: GraphEvents.ON_RUN_STEP,
++      data: {
++        type: StepTypes.TOOL_CALLS,
++        id: 'parent-step',
++        runId: 'parent',
++        index: 2,
++        stepDetails: {
++          type: StepTypes.TOOL_CALLS,
++          tool_calls: [{ id: 'call', name: 'subagent', args: {} }],
++        },
++      },
++    });
++    const parts = aggregator.contentParts;
++    // The SDK reserves global step indices even when preceding steps have no content.
++    expect(parts).toHaveLength(3);
++    expect(0 in parts).toBe(false);
++    const owner = parts[2];
++    const buffer: SubagentContentBuffer = new Map();
++    start(buffer, parts);
++    delta(buffer, parts, 'Child answer');
++    // Preserve a separate parent answer after another unfilled slot.
++    parts[4] = { type: ContentTypes.TEXT, text: 'Parent answer' };
++    let result = parts;
++    if (operation === 'snapshot') {
++      result = snapshotSubagentContent(parts, buffer);
++    } else {
++      finalizeSubagentContent(parts, buffer);
++    }
++    expect(result).toHaveLength(5);
++    expect(result[0]).toBeUndefined();
++    expect(result[1]).toBeUndefined();
++    expect(result[3]).toBeUndefined();
++    expect(result[2]).toMatchObject({
++      tool_call: {
++        id: 'call',
++        subagent_content: [{ text: 'Child answer', subagentRunId: 'child' }],
++      },
++    });
++    expect(result[4]).toEqual({ type: ContentTypes.TEXT, text: 'Parent answer' });
++    expect(owner).not.toHaveProperty('tool_call.subagent_content');
++    expect(buffer.size).toBe(operation === 'snapshot' ? 1 : 0);
++    if (operation === 'snapshot') {
++      expect(parts[2]).toBe(owner);
++      delta(buffer, parts, ' continued');
++      expect(snapshotSubagentContent(parts, buffer)[2]).toMatchObject({
++        tool_call: { subagent_content: [{ text: 'Child answer continued' }] },
++      });
++      expect(result[2]).toMatchObject({
++        tool_call: { subagent_content: [{ text: 'Child answer' }] },
++      });
++    }
++  },
++);
++
++it('does not guess a parent occurrence from an ambiguous legacy call ID', () => {
++  const parts = [parent(), parent()];
++  const buffer: SubagentContentBuffer = new Map();
++  start(buffer, parts);
++  delta(buffer, parts, 'Unassigned');
++  expect(snapshotSubagentContent(parts, buffer)).toEqual(parts);
++});
++
++it('keeps legitimate repeated tokens while deduplicating identified receipts', () => {
++  const parts = [parent()];
++  const buffer: SubagentContentBuffer = new Map();
++  start(buffer, parts);
++  delta(buffer, parts, 'ha');
++  delta(buffer, parts, 'ha');
++  const receipt = {
++    ...update('message_delta', { id: 'text', delta: { content: [{ type: 'text', text: '!' }] } }),
++    activityEventId: 'receipt',
++  };
++  collectSubagentContent(buffer, parts, receipt);
++  collectSubagentContent(buffer, parts, receipt);
++  expect(snapshotSubagentContent(parts, buffer)[0]).toMatchObject({
++    tool_call: { subagent_content: [{ text: 'haha!' }] },
++  });
++});
++
++it('retains a HITL prefix, resumes the same child step, and rejects overlapping sequence receipts', () => {
++  const parts = [parent()];
++  const buffer: SubagentContentBuffer = new Map();
++  start(buffer, parts);
++  delta(buffer, parts, 'Before');
++  const paused = JSON.parse(JSON.stringify(snapshotSubagentContent(parts, buffer)));
++  const resumed: SubagentContentBuffer = new Map();
++  const duplicate = {
++    ...update('message_delta', {
++      id: 'text',
++      delta: { content: [{ type: 'text', text: 'Before' }] },
++    }),
++    activitySequence: 1,
++  };
++  collectSubagentContent(resumed, paused, duplicate);
++  start(resumed, paused);
++  delta(resumed, paused, ' after');
++  expect(snapshotSubagentContent(paused, resumed)[0]).toMatchObject({
++    tool_call: { subagent_content: [{ text: 'Before after' }] },
++  });
++  expect(
++    (snapshotSubagentContent(paused, resumed)[0] as { tool_call: { subagent_content: object[] } })
++      .tool_call.subagent_content,
++  ).toHaveLength(1);
++});
++
++it('retains prior child runs and handles parent index shifts and object replacement by step identity', () => {
++  const parts = [parent()];
++  const buffer: SubagentContentBuffer = new Map();
++  start(buffer, parts);
++  delta(buffer, parts, 'First');
++  finalizeSubagentContent(parts, buffer);
++  parts.unshift({ type: ContentTypes.TEXT, text: 'Parent answer' });
++  start(buffer, parts, 'second-child');
++  delta(buffer, parts, 'Second', 'second-child');
++  parts[1] = { ...parts[1] };
++  const snapshot = snapshotSubagentContent(parts, buffer);
++  expect(snapshot[0]).toEqual({ type: ContentTypes.TEXT, text: 'Parent answer' });
++  expect(snapshot[1]).toMatchObject({
++    tool_call: { subagent_content: [{ text: 'First' }, { text: 'Second' }] },
++  });
++});
++
++it('keeps successive child runs on one occurrence without waiting for a final save', () => {
++  const parts = [parent()];
++  const buffer: SubagentContentBuffer = new Map();
++  start(buffer, parts);
++  delta(buffer, parts, 'First');
++  start(buffer, parts, 'second-child');
++  delta(buffer, parts, 'Second', 'second-child');
++  expect(snapshotSubagentContent(parts, buffer)[0]).toMatchObject({
++    tool_call: { subagent_content: [{ text: 'First' }, { text: 'Second' }] },
++  });
++  collectSubagentContent(buffer, parts, update('start', undefined, 'empty-child'));
++  expect(snapshotSubagentContent(parts, buffer)[0]).toMatchObject({
++    tool_call: { subagent_content: [{ text: 'First' }, { text: 'Second' }] },
++  });
++});
++
++it('keeps reused child tool IDs scoped to their step across a resumed snapshot', () => {
++  const parts = [parent()];
++  const buffer: SubagentContentBuffer = new Map();
++  for (const [id, index] of [
++    ['first', 0],
++    ['second', 1],
++  ] as const) {
++    collectSubagentContent(
++      buffer,
++      parts,
++      update('run_step', {
++        id,
++        index,
++        stepDetails: {
++          type: 'tool_calls',
++          tool_calls: [{ id: 'reused', name: 'lookup', args: '{}' }],
++        },
++      }),
++    );
++  }
++  const paused = JSON.parse(JSON.stringify(snapshotSubagentContent(parts, buffer)));
++  const resumed: SubagentContentBuffer = new Map();
++  collectSubagentContent(
++    resumed,
++    paused,
++    update('run_step_completed', {
++      result: {
++        id: 'second',
++        index: 1,
++        type: 'tool_call',
++        tool_call: {
++          id: 'reused',
++          name: 'lookup',
++          args: '{}',
++          output: 'Second result',
++          progress: 1,
++        },
++      },
++    }),
++  );
++  expect(snapshotSubagentContent(paused, resumed)[0]).toMatchObject({
++    tool_call: {
++      subagent_content: [
++        { stepId: 'first', tool_call: { id: 'reused' } },
++        { stepId: 'second', tool_call: { id: 'reused', output: 'Second result' } },
++      ],
++    },
++  });
++});
++
++it('restores wire IDs for tool calls discovered incrementally within a batch', () => {
++  const parts = [parent()];
++  const buffer: SubagentContentBuffer = new Map();
++  collectSubagentContent(
++    buffer,
++    parts,
++    update('run_step', {
++      id: 'batch',
++      index: 0,
++      stepDetails: { type: 'tool_calls', tool_calls: [] },
++    }),
++  );
++  for (const index of [0, 1]) {
++    collectSubagentContent(
++      buffer,
++      parts,
++      update('run_step_delta', {
++        id: 'batch',
++        delta: {
++          type: 'tool_calls',
++          tool_calls: [{ index, id: `tool-${index}`, name: 'lookup', args: '{}' }],
++        },
++      }),
++    );
++  }
++  expect(snapshotSubagentContent(parts, buffer)[0]).toMatchObject({
++    tool_call: {
++      subagent_content: [
++        { stepId: 'batch', tool_call: { id: 'tool-0', args: '{}' } },
++        { stepId: 'batch', tool_call: { id: 'tool-1', args: '{}' } },
++      ],
++    },
++  });
++});
+diff --git a/packages/api/src/agents/retainedSubagentContent.ts b/packages/api/src/agents/retainedSubagentContent.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e57f6cb8e7e6c135ae637ee02f29d4bf19af8047
+--- /dev/null
++++ b/packages/api/src/agents/retainedSubagentContent.ts
+@@ -0,0 +1,309 @@
++import { Constants, ContentTypes } from 'librechat-data-provider';
++import { createContentAggregator, GraphEvents } from '@librechat/agents';
++import type {
++  Agents,
++  SubagentIdentity,
++  SubagentUpdateEvent,
++  SubagentContentMetadata,
++} from 'librechat-data-provider';
++import type { RunStep } from '@librechat/agents';
++import type { ToolTimingAdapter } from './toolTiming';
++import { captureSubagentIdentity } from './subagentIdentity';
++import { createOccurrenceAggregator } from './occurrence';
++import { createToolTimingAdapter } from './toolTiming';
++import { feedSubagentAggregator } from './aggregation';
++
++type Part = Agents.MessageContentComplex & SubagentContentMetadata;
++type Parts = Array<Part | undefined>;
++type Aggregator = ReturnType<typeof createContentAggregator>;
++type Child = Aggregator & {
++  subagentIdentity?: SubagentIdentity;
++  owner?: Part;
++  parentToolCallId?: string;
++  parentStepId?: string;
++  subagentRunId?: string;
++  sequence?: number;
++  status?: SubagentUpdateEvent['phase'];
++  eventIds?: Set<string>;
++  timing?: ToolTimingAdapter;
++};
++export type SubagentContentBuffer = Map<string, Child>;
++
++/** Matches the client's existing receipt horizon; this bounds dedup metadata, not activity. */
++const RECENT_RECEIPTS = 256;
++
++function graphEvent(update: SubagentUpdateEvent): GraphEvents | undefined {
++  switch (update.phase) {
++    case 'run_step':
++      return (update.data as Agents.RunStep | undefined)?.stepDetails
++        ? GraphEvents.ON_RUN_STEP
++        : undefined;
++    case 'run_step_delta':
++      return GraphEvents.ON_RUN_STEP_DELTA;
++    case 'run_step_completed':
++      return GraphEvents.ON_RUN_STEP_COMPLETED;
++    case 'message_delta':
++      return GraphEvents.ON_MESSAGE_DELTA;
++    case 'reasoning_delta':
++      return GraphEvents.ON_REASONING_DELTA;
++    default:
++      return undefined;
++  }
++}
++
++function findOwner(parts: Parts, child: Child): Part | undefined {
++  if (child.owner != null && parts.includes(child.owner)) return child.owner;
++  let owner: Part | undefined;
++  for (let index = parts.length - 1; index >= 0; index--) {
++    const part = parts[index];
++    if (part?.type !== ContentTypes.TOOL_CALL || part.tool_call.name !== Constants.SUBAGENT)
++      continue;
++    if (part.tool_call.id !== child.parentToolCallId) continue;
++    if (child.parentStepId != null && part.tool_call.stepId !== child.parentStepId) continue;
++    if (owner != null) return undefined;
++    owner = part;
++  }
++  return owner;
++}
++
++function seedChild(child: Child, prefix: Part[]): void {
++  const groups = new Map<string, Part[]>();
++  for (const [index, part] of prefix.entries()) {
++    if (part.subagentRunId !== child.subagentRunId) continue;
++    const key = part.type === ContentTypes.STEER ? `steer:${index}` : part.stepId;
++    if (!key) continue;
++    const members = groups.get(key) ?? [];
++    members.push(part);
++    groups.set(key, members);
++  }
++  for (const [stepId, members] of groups) {
++    const part = members[0];
++    child.sequence = Math.max(child.sequence ?? -1, part.subagentSequence ?? -1);
++    if (part.type === ContentTypes.STEER) {
++      child.contentParts.push(structuredClone(part));
++      continue;
++    }
++    const index = child.contentParts.length;
++    const step = {
++      id: stepId,
++      index,
++      stepDetails:
++        part.type === ContentTypes.TOOL_CALL
++          ? {
++              type: 'tool_calls',
++              tool_calls: members.flatMap((entry) =>
++                entry.type === ContentTypes.TOOL_CALL ? [{ ...entry.tool_call, args: '' }] : [],
++              ),
++            }
++          : {
++              type: 'message_creation',
++              message_creation: {
++                message_id: stepId,
++                phase: 'phase' in part ? part.phase : undefined,
++              },
++            },
++    } as RunStep;
++    child.aggregateContent({ event: GraphEvents.ON_RUN_STEP, data: step });
++    for (let offset = 0; offset < members.length; offset++) {
++      child.contentParts[index + offset] = structuredClone(members[offset]);
++    }
++  }
++}
++
++/** Retain foreground child envelopes for parent snapshots alongside the durable task journal. */
++export function collectSubagentContent(
++  buffer: SubagentContentBuffer | undefined,
++  parts: Parts | undefined,
++  update: SubagentUpdateEvent,
++  parentSteps?: Aggregator['stepMap'],
++): void {
++  if (!buffer || !update.parentToolCallId) return;
++  const key = JSON.stringify([
++    update.parentRunId ?? update.runId,
++    update.parentToolCallId,
++    update.subagentRunId,
++  ]);
++  let child = buffer.get(key);
++  if (!child) {
++    child = Object.assign(createOccurrenceAggregator(), {
++      parentToolCallId: update.parentToolCallId,
++      subagentRunId: update.subagentRunId,
++    });
++    // Resolve against the current parent run-step before binding. The same provider
++    // call ID may occur in a later step or another parallel agent's run.
++    for (const step of parentSteps?.values() ?? []) {
++      if (step?.stepDetails.type !== 'tool_calls') continue;
++      if (step.runId && step.runId !== (update.parentRunId ?? update.runId)) continue;
++      const callIndex =
++        step.stepDetails.tool_calls?.findIndex((call) => call.id === update.parentToolCallId) ?? -1;
++      if (callIndex < 0) continue;
++      const owner = parts?.[step.index + callIndex];
++      if (owner?.type !== ContentTypes.TOOL_CALL || owner.tool_call.id !== update.parentToolCallId)
++        continue;
++      owner.tool_call.stepId = step.id;
++      child.parentStepId = step.id;
++    }
++    child.owner = parts == null ? undefined : findOwner(parts, child);
++    if (child.owner?.type === ContentTypes.TOOL_CALL) {
++      child.parentStepId = child.owner.tool_call.stepId;
++      seedChild(child, (child.owner.tool_call.subagent_content as Part[]) ?? []);
++    }
++    buffer.set(key, child);
++  }
++  // Sequences are authoritative where supplied. The fallback retains only a bounded
++  // duplicate horizon; identical unlabelled deltas are legitimate repeated tokens.
++  if (update.activityEventId) {
++    child.eventIds ??= new Set();
++    if (child.eventIds.has(update.activityEventId)) return;
++    child.eventIds.add(update.activityEventId);
++    if (child.eventIds.size > RECENT_RECEIPTS)
++      child.eventIds.delete(child.eventIds.values().next().value!);
++  }
++  update.activitySequence ??= (child.sequence ?? -1) + 1;
++  if (child.sequence != null && update.activitySequence <= child.sequence) return;
++  child.sequence = update.activitySequence;
++  child.status = update.phase;
++  update.activityEventId ??= `${update.subagentRunId}:${update.activitySequence}`;
++  captureSubagentIdentity(child, update);
++  if (update.phase === 'steer_applied') {
++    child.timing ??= createToolTimingAdapter({ emit: () => undefined });
++    feedSubagentAggregator(child, update, child.timing.child);
++    return;
++  }
++  const event = graphEvent(update);
++  const stepId = (update.data as { id?: string } | undefined)?.id;
++  if (event && !(update.phase === 'run_step' && stepId && child.stepMap.has(stepId))) {
++    let data = update.data as Parameters<Aggregator['aggregateContent']>[0]['data'];
++    if (event === GraphEvents.ON_RUN_STEP) {
++      const step = data as RunStep;
++      if (
++        step.stepDetails.type === 'message_creation' &&
++        step.stepDetails.message_creation == null
++      ) {
++        data = {
++          ...step,
++          stepDetails: { ...step.stepDetails, message_creation: { message_id: step.id } },
++        };
++      }
++    }
++    child.aggregateContent({ event, data });
++  }
++  child.timing ??= createToolTimingAdapter({ emit: () => undefined });
++  child.timing.child(child, update);
++  const data = update.data as Agents.RunStep | undefined;
++  const step = data?.id == null ? undefined : child.stepMap.get(data.id);
++  const calls = data?.stepDetails?.type === 'tool_calls' ? data.stepDetails.tool_calls : undefined;
++  for (let index = 0; index < (calls?.length ?? 0); index++) {
++    const source = calls?.[index];
++    const target = step == null ? undefined : child.contentParts[step.index + index];
++    if (
++      target?.type === ContentTypes.TOOL_CALL &&
++      target.tool_call.id === source?.id &&
++      source &&
++      'mcpServerName' in source &&
++      typeof source.mcpServerName === 'string'
++    ) {
++      target.tool_call.mcpServerName = source.mcpServerName;
++    }
++  }
++}
++
++/** Snapshot without draining live aggregators. Copies parent calls so future deltas cannot
++ * mutate an already captured reconnect snapshot. Existing resumed activity is retained. */
++export function snapshotSubagentContent(parts: Part[], buffer?: SubagentContentBuffer): Part[];
++export function snapshotSubagentContent(parts: Parts, buffer?: SubagentContentBuffer): Parts;
++export function snapshotSubagentContent(parts: Parts, buffer?: SubagentContentBuffer): Parts {
++  if (!buffer?.size) return parts;
++  const result = parts.slice();
++  const indices = new Map<Part, number>();
++  const owners = new Map<string, Part | undefined>();
++  // SDK content is sparse. Index only present owners without compacting stream positions.
++  for (let index = 0; index < parts.length; index++) {
++    const part = parts[index];
++    if (part?.type !== ContentTypes.TOOL_CALL || part.tool_call.name !== Constants.SUBAGENT)
++      continue;
++    indices.set(part, index);
++    owners.set(JSON.stringify([part.tool_call.id, part.tool_call.stepId]), part);
++    const callKey = JSON.stringify([part.tool_call.id]);
++    // Without a retained object or step identity, a reused raw ID is ambiguous.
++    owners.set(callKey, owners.has(callKey) ? undefined : part);
++  }
++  for (const [key, child] of buffer) {
++    // Compatibility with already-created legacy buffers keyed by the parent tool ID.
++    child.parentToolCallId ??= key;
++    const owner =
++      child.owner != null && indices.has(child.owner)
++        ? child.owner
++        : owners.get(
++            JSON.stringify(
++              child.parentStepId == null
++                ? [child.parentToolCallId]
++                : [child.parentToolCallId, child.parentStepId],
++            ),
++          );
++    if (owner?.type !== ContentTypes.TOOL_CALL) continue;
++    const index = indices.get(owner)!;
++    const stepByIndex = new Map<number, string>();
++    const stepByTool = new Map<string, string>();
++    for (const step of child.stepMap?.values() ?? []) {
++      if (!step) continue;
++      stepByIndex.set(step.index, step.id);
++      if (step.stepDetails.type === 'tool_calls') {
++        for (const call of step.stepDetails.tool_calls ?? []) {
++          if (call.id) stepByTool.set(call.id, step.id);
++        }
++      }
++    }
++    const content = child.contentParts.flatMap((part, index) =>
++      part == null
++        ? []
++        : [
++            {
++              ...part,
++              ...(part.type === ContentTypes.TOOL_CALL
++                ? {
++                    tool_call: {
++                      ...part.tool_call,
++                      stepId: part.tool_call.stepId ?? stepByTool.get(part.tool_call.id ?? ''),
++                    },
++                  }
++                : {}),
++              ...(child.subagentRunId == null ? {} : { subagentRunId: child.subagentRunId }),
++              stepId:
++                part.type === ContentTypes.TOOL_CALL
++                  ? (part.tool_call.stepId ?? stepByTool.get(part.tool_call.id ?? ''))
++                  : stepByIndex.get(index),
++              ...(child.sequence == null ? {} : { subagentSequence: child.sequence }),
++              ...(child.status == null ? {} : { subagentStatus: child.status }),
++            },
++          ],
++    );
++    const projected = result[index]!;
++    const existing =
++      projected.type === ContentTypes.TOOL_CALL
++        ? (projected.tool_call.subagent_content as Part[] | undefined)
++        : undefined;
++    const prefix = (existing ?? []).filter(
++      (part) =>
++        child.subagentRunId == null ||
++        part.subagentRunId !== child.subagentRunId ||
++        (part.stepId == null && part.type !== ContentTypes.STEER),
++    );
++    result[index] = {
++      ...owner,
++      tool_call: {
++        ...(projected.type === ContentTypes.TOOL_CALL ? projected.tool_call : owner.tool_call),
++        ...(child.subagentIdentity == null ? {} : { subagentIdentity: child.subagentIdentity }),
++        ...(content.length === 0 ? {} : { subagent_content: [...(prefix ?? []), ...content] }),
++      },
++    };
++  }
++  return result;
++}
++
++/** Final save has the same projection as reconnect, then releases the completed run. */
++export function finalizeSubagentContent(parts: Parts, buffer: SubagentContentBuffer): void {
++  const snapshot = snapshotSubagentContent(parts, buffer);
++  if (snapshot !== parts) parts.splice(0, parts.length, ...snapshot);
++  buffer.clear();
++}
+diff --git a/packages/api/src/stream/GenerationJobManager.ts b/packages/api/src/stream/GenerationJobManager.ts
+index 6415b059286a403bfa3dd116a697337e9ce0601c..f768e9e0e7eb4479eb9670fbf7a5ae7610f69fba 100644
+--- a/packages/api/src/stream/GenerationJobManager.ts
++++ b/packages/api/src/stream/GenerationJobManager.ts
+@@ -39,6 +39,7 @@ import type {
+   EarlyBufferRecoveryFailureReason,
+   EarlyBufferRecoveryOutcome,
+ } from '../types/earlyBufferRecovery';
++import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
+ import type { AgentStartupTelemetry } from '~/agents/startup';
+ import type { RecoveredSteerPayload } from './SteerRecovery';
+ import type { SteerContentView } from './SteeringLifecycle';
+@@ -8572,12 +8573,13 @@ class GenerationJobManagerClass {
+     streamId: string,
+     contentParts: Agents.MessageContentComplex[],
+     expectedCreatedAt?: number,
++    subagentContent?: SubagentContentBuffer,
+   ): void {
+     const runtime = this.runtimeState.get(streamId);
+     if (!runtime || (expectedCreatedAt != null && runtime.createdAt !== expectedCreatedAt)) {
+       return;
+     }
+-    this.jobStore.setContentParts(streamId, contentParts, runtime.createdAt);
++    this.jobStore.setContentParts(streamId, contentParts, runtime.createdAt, subagentContent);
+   }
+ 
+   /**
+diff --git a/packages/api/src/stream/__tests__/GenerationJobManager.resumeReplay.spec.ts b/packages/api/src/stream/__tests__/GenerationJobManager.resumeReplay.spec.ts
+index 6775cd704a8c7574aac4a651b4e035c7de924a6d..4d47c1dca6b1be8acb840032dc6d2f5b55700987 100644
+--- a/packages/api/src/stream/__tests__/GenerationJobManager.resumeReplay.spec.ts
++++ b/packages/api/src/stream/__tests__/GenerationJobManager.resumeReplay.spec.ts
+@@ -1,10 +1,16 @@
+-import { StepEvents } from 'librechat-data-provider';
++import { StepEvents, ContentTypes } from 'librechat-data-provider';
+ import type { StandardGraph } from '@librechat/agents';
+ import type { Agents } from 'librechat-data-provider';
++import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
++import type { AbortResult } from '../interfaces/IJobStore';
+ import type { ServerSentEvent } from '~/types';
++import {
++  GenerationJobManagerClass,
++  TERMINAL_PUBLICATION_RECONNECT_ERROR,
++} from '~/stream/GenerationJobManager';
+ import { InMemoryEventTransport } from '~/stream/implementations/InMemoryEventTransport';
+ import { InMemoryJobStore } from '~/stream/implementations/InMemoryJobStore';
+-import { GenerationJobManagerClass } from '~/stream/GenerationJobManager';
++import { collectSubagentContent } from '~/agents/retainedSubagentContent';
+ import { createToolTimingTracker } from '~/agents/toolTiming';
+ 
+ jest.spyOn(console, 'log').mockImplementation();
+@@ -69,6 +75,40 @@ describe('GenerationJobManager resume replay events', () => {
+     manager = undefined;
+   });
+ 
++  test('same-instance reconnect includes a finished child before parent finalization', async () => {
++    manager = createInMemoryManager();
++    const job = await manager.createJob('child-reconnect', 'user-1', 'child-reconnect');
++    const content: Agents.MessageContentComplex[] = [
++      { type: ContentTypes.TOOL_CALL, tool_call: { id: 'call', name: 'subagent', args: '{}' } },
++    ];
++    const buffer: SubagentContentBuffer = new Map();
++    manager.setContentParts('child-reconnect', content, job.createdAt, buffer);
++    const base = {
++      runId: 'parent',
++      subagentRunId: 'child',
++      parentToolCallId: 'call',
++      subagentType: 'self',
++      subagentAgentId: 'child-agent',
++      timestamp: '',
++    };
++    collectSubagentContent(buffer, content, {
++      ...base,
++      phase: 'run_step',
++      data: { id: 'child-text', index: 0, stepDetails: { type: 'message_creation' } },
++    });
++    collectSubagentContent(buffer, content, {
++      ...base,
++      phase: 'message_delta',
++      data: { id: 'child-text', delta: { content: [{ type: 'text', text: 'Recovered work' }] } },
++    });
++    collectSubagentContent(buffer, content, { ...base, phase: 'stop' });
++    const state = await manager.getResumeState('child-reconnect', job.createdAt);
++    expect(state?.aggregatedContent).toMatchObject([
++      { tool_call: { subagent_content: [{ text: 'Recovered work', subagentStatus: 'stop' }] } },
++    ]);
++    expect(buffer.size).toBe(1);
++  });
++
+   test('projects regeneration ownership into resume state', async () => {
+     manager = createInMemoryManager();
+     const streamId = `regenerate-resume-${Date.now()}`;
+@@ -125,6 +165,167 @@ describe('GenerationJobManager resume replay events', () => {
+     });
+   });
+ 
++  test('withholds an edited generation snapshot until its retained content is captured', async () => {
++    manager = createInMemoryManager();
++    const streamId = `pending-retained-content-${Date.now()}`;
++    const job = await manager.createJob(streamId, 'user-1', streamId, {
++      initialMetadata: {
++        responseMessageId: 'edited-response',
++        isRegenerate: true,
++        retainedContentPending: true,
++      },
++    });
++
++    await expect(manager.getResumeState(streamId, job.createdAt)).resolves.toBeNull();
++  });
++
++  test('reconnects an early resume instead of activating it without a retained snapshot', async () => {
++    manager = createInMemoryManager();
++    const streamId = 'early-retained-subscription';
++    const job = await manager.createJob(streamId, 'user-1', streamId, {
++      initialMetadata: { retainedContentPending: true, responseMessageId: 'edited-response' },
++    });
++    const onChunk = jest.fn();
++    const onError = jest.fn();
++    const early = await manager.subscribeWithResume(streamId, onChunk, undefined, onError, {
++      expectedCreatedAt: job.createdAt,
++    });
++    expect(early.subscription).toBeNull();
++    expect(onError).toHaveBeenCalledWith(TERMINAL_PUBLICATION_RECONNECT_ERROR);
++
++    const retained = [{ type: 'text', text: 'Retained' }];
++    await manager.captureRetainedContent(streamId, retained, ContentTypes.TEXT, job.createdAt);
++    retained[0].text = 'Mutated source';
++    const resumed = await manager.subscribeWithResume(streamId, onChunk, undefined, onError, {
++      expectedCreatedAt: job.createdAt,
++    });
++    expect(resumed.resumeState?.retainedContent?.parts).toEqual([
++      { type: 'text', text: 'Retained' },
++    ]);
++    expect(resumed.subscription).not.toBeNull();
++    resumed.subscription?.activate();
++    await manager.emitChunk(streamId, { event: 'test-live', data: { value: 'suffix' } });
++    expect(onChunk).toHaveBeenCalledWith({ event: 'test-live', data: { value: 'suffix' } });
++    resumed.subscription?.unsubscribe();
++  });
++
++  test('does not capture an old generation prefix into its replacement', async () => {
++    manager = createInMemoryManager();
++    const streamId = 'replaced-retained-capture';
++    const first = await manager.createJob(streamId, 'user-1', streamId);
++    const replacement = await manager.createJob(streamId, 'user-1', streamId, {
++      initialMetadata: { retainedContentPending: true },
++    });
++    await manager.captureRetainedContent(
++      streamId,
++      [{ type: 'text', text: 'Old prefix' }],
++      ContentTypes.TEXT,
++      first.createdAt,
++    );
++    expect(await manager.getJobStore().getJob(streamId)).toMatchObject({
++      createdAt: replacement.createdAt,
++      retainedContentPending: true,
++    });
++    expect((await manager.getJobStore().getJob(streamId))?.retainedContent).toBeUndefined();
++  });
++
++  test('returns captured retained content beside completion-local generation content', async () => {
++    manager = createInMemoryManager();
++    const streamId = `retained-content-${Date.now()}`;
++    const job = await manager.createJob(streamId, 'user-1', streamId, {
++      initialMetadata: {
++        responseMessageId: 'edited-response',
++        isRegenerate: true,
++        retainedContentPending: true,
++      },
++    });
++    const retainedContent = [{ type: 'text', text: 'Edited prefix' }];
++    const generatedContent = [{ type: 'text', text: ' generated suffix' }];
++
++    manager.setContentParts(streamId, generatedContent, job.createdAt);
++    await manager.captureRetainedContent(
++      streamId,
++      retainedContent,
++      ContentTypes.TEXT,
++      job.createdAt,
++    );
++
++    await expect(manager.getResumeState(streamId, job.createdAt)).resolves.toMatchObject({
++      aggregatedContent: generatedContent,
++      retainedContent: {
++        parts: retainedContent,
++        type: 'text',
++      },
++    });
++  });
++
++  test.each([false, true])(
++    'persists the complete edited abort before its replayable FINAL (save failure=%s)',
++    async (saveFails) => {
++      manager = new GenerationJobManagerClass({
++        jobStore: new InMemoryJobStore({ ttlAfterComplete: 60_000 }),
++        eventTransport: new InMemoryEventTransport(),
++        cleanupOnComplete: false,
++      });
++      manager.initialize();
++      const streamId = `retained-abort-${saveFails}`;
++      const job = await manager.createJob(streamId, 'user-1', streamId, {
++        initialMetadata: {
++          responseMessageId: 'edited-response',
++          userMessage: { messageId: 'user-message', text: 'Question' },
++          retainedContentPending: true,
++        },
++      });
++      await manager.captureRetainedContent(
++        streamId,
++        [{ type: 'text', text: 'Prefix' }],
++        ContentTypes.TEXT,
++        job.createdAt,
++        {
++          userSubmittedPaths: ['/content/0/text'],
++        },
++      );
++      const generated = [{ type: 'text', text: ' suffix' }];
++      manager.setContentParts(streamId, generated, job.createdAt);
++      const beforePublish = jest.fn(async (result: AbortResult) => {
++        expect(result.content).toEqual([{ type: 'text', text: 'Prefix suffix' }]);
++        expect(result.userSubmittedPaths).toEqual(['/content/0/text']);
++        expect(result.finalEvent).toMatchObject({ responseMessage: { content: result.content } });
++        if (saveFails) {
++          throw new Error('Database unavailable');
++        }
++      });
++      const result = await manager.abortJob(streamId, {
++        expectedCreatedAt: job.createdAt,
++        beforePublish,
++      });
++      expect(beforePublish).toHaveBeenCalledTimes(1);
++      expect(generated).toEqual([{ type: 'text', text: ' suffix' }]);
++      expect(await manager.getJobStore().getJob(streamId)).toMatchObject({
++        status: 'aborted',
++        finalEvent: JSON.stringify(result.finalEvent),
++      });
++      const onDone = jest.fn();
++      const onError = jest.fn();
++      const resumed = await manager.subscribeWithResume(streamId, jest.fn(), onDone, onError, {
++        expectedCreatedAt: job.createdAt,
++      });
++      expect(resumed.subscription).not.toBeNull();
++      resumed.subscription?.activate();
++      await new Promise<void>((resolve) => setImmediate(resolve));
++      expect(onError).not.toHaveBeenCalled();
++      expect(onDone).toHaveBeenCalledWith(result.finalEvent);
++      if (saveFails) {
++        expect(result.finalEvent).toMatchObject({ final: true, reconcile: true });
++      } else {
++        expect(result.finalEvent).toMatchObject({
++          responseMessage: { content: [{ type: 'text', text: 'Prefix suffix' }] },
++        });
++      }
++      resumed.subscription?.unsubscribe();
++    },
++  );
++
+   test('includes OAuth run step and delta replay events in resume state', async () => {
+     manager = createInMemoryManager();
+     const streamId = `oauth-delta-resume-${Date.now()}`;
+diff --git a/packages/api/src/stream/__tests__/RedisJobStore.subagents.spec.ts b/packages/api/src/stream/__tests__/RedisJobStore.subagents.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fbcb9435854560f4ad1f5295c03e5b2fbb410d13
+--- /dev/null
++++ b/packages/api/src/stream/__tests__/RedisJobStore.subagents.spec.ts
+@@ -0,0 +1,122 @@
++import type { Agents, SubagentUpdateEvent } from 'librechat-data-provider';
++import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
++import { collectSubagentContent } from '~/agents/retainedSubagentContent';
++import { RedisJobStore } from '../implementations/RedisJobStore';
++
++const parent = (id = 'parent-step', index = 0) => ({
++  event: 'on_run_step',
++  data: {
++    id,
++    index,
++    runId: 'parent',
++    stepDetails: { type: 'tool_calls', tool_calls: [{ id: 'call', name: 'subagent', args: '{}' }] },
++  },
++});
++const child = (phase: string, data?: object, subagentRunId = 'child') => ({
++  event: 'on_subagent_update',
++  data: {
++    runId: 'parent',
++    parentToolCallId: 'call',
++    subagentRunId,
++    subagentType: 'self',
++    subagentKind: 'agent',
++    subagentAgentId: 'agent',
++    phase,
++    data,
++    timestamp: '2026-06-01T00:00:00Z',
++  },
++});
++const text = (id: string, index: number, run = 'child') =>
++  child(
++    'run_step',
++    {
++      id,
++      index,
++      stepDetails: {
++        type: 'message_creation',
++        message_creation: { message_id: id, phase: 'commentary' },
++      },
++    },
++    run,
++  );
++const delta = (id: string, value: string, run = 'child') =>
++  child('message_delta', { id, delta: { content: [{ type: 'text', text: value }] } }, run);
++
++async function reconstruct(chunks: object[]) {
++  const store = Object.create(RedisJobStore.prototype) as RedisJobStore;
++  Object.defineProperty(store, 'getChunkSnapshot', {
++    value: async () => ({ chunks, durableEventCount: chunks.length }),
++  });
++  return (await store.getContentParts('parent', undefined, { durableOnly: true }))?.content;
++}
++
++it('projects the local host buffer without Redis reads and fences it by generation', async () => {
++  const store = Object.create(RedisJobStore.prototype) as RedisJobStore;
++  Object.defineProperty(store, 'localContentParts', { value: new Map() });
++  Object.defineProperty(store, 'localGraphCache', { value: new Map() });
++  const read = jest.fn(async () => ({ chunks: [], durableEventCount: 0 }));
++  Object.defineProperty(store, 'getChunkSnapshot', { value: read });
++  const content = [
++    { type: 'tool_call', tool_call: { id: 'call', name: 'subagent', args: '{}' } },
++  ] as Agents.MessageContentComplex[];
++  const buffer: SubagentContentBuffer = new Map();
++  store.setContentParts('parent', content, 100, buffer);
++  collectSubagentContent(buffer, content, text('text', 0).data as SubagentUpdateEvent);
++  collectSubagentContent(
++    buffer,
++    content,
++    delta('text', 'Live snapshot').data as SubagentUpdateEvent,
++  );
++  expect((await store.getContentParts('parent', 100))?.content).toMatchObject([
++    { tool_call: { subagent_content: [{ text: 'Live snapshot' }] } },
++  ]);
++  expect(read).not.toHaveBeenCalled();
++  expect(await store.getContentParts('parent', 101)).toBeNull();
++  expect(buffer.size).toBe(1);
++});
++
++it('recovers child activity while the parent is still running, including a finished child', async () => {
++  const content = await reconstruct([
++    parent(),
++    text('child-text', 0),
++    delta('child-text', 'Child work'),
++    child('stop'),
++  ]);
++  expect(content).toHaveLength(1);
++  expect(content?.[0]).toMatchObject({
++    type: 'tool_call',
++    tool_call: {
++      id: 'call',
++      subagent_content: [{ type: 'text', text: 'Child work', phase: 'commentary' }],
++    },
++  });
++});
++
++it('does not conflate repeated parent tool IDs or duplicate identified child events', async () => {
++  const repeated = delta('second-text', 'Second', 'child-2');
++  Object.assign(repeated.data, { activityEventId: 'event-1', activitySequence: 1 });
++  const content = await reconstruct([
++    parent(),
++    text('first-text', 0),
++    delta('first-text', 'First'),
++    child('stop'),
++    parent('second-parent-step', 1),
++    text('second-text', 0, 'child-2'),
++    repeated,
++    repeated,
++  ]);
++  expect(content).toHaveLength(2);
++  expect(content?.[0]).toMatchObject({ tool_call: { subagent_content: [{ text: 'First' }] } });
++  expect(content?.[1]).toMatchObject({ tool_call: { subagent_content: [{ text: 'Second' }] } });
++});
++
++it('correlates delayed child starts with their parent run when parallel calls reuse an ID', async () => {
++  const first = parent('first', 0);
++  const second = parent('second', 1);
++  second.data.runId = 'parallel-parent';
++  const content = await reconstruct([first, second, text('text', 0), delta('text', 'First child')]);
++  expect(content?.[0]).toMatchObject({
++    tool_call: { subagent_content: [{ text: 'First child' }] },
++  });
++  expect(content?.[1]).not.toHaveProperty('tool_call.subagent_content');
++});
+diff --git a/packages/api/src/stream/__tests__/RedisJobStore.toolTiming.spec.ts b/packages/api/src/stream/__tests__/RedisJobStore.toolTiming.spec.ts
+index d867c190fca3fee5a3d4371da75651a9f8ef46e6..d4ec9a69e360b2218a1f6d38ecb34ceefa0da6c4 100644
+--- a/packages/api/src/stream/__tests__/RedisJobStore.toolTiming.spec.ts
++++ b/packages/api/src/stream/__tests__/RedisJobStore.toolTiming.spec.ts
+@@ -2,6 +2,51 @@ import { RedisJobStore } from '../implementations/RedisJobStore';
+ 
+ /** Exercise the actual reconstruction method against a durable chunk snapshot, not a live host cache. */
+ describe('RedisJobStore tool timing reconstruction', () => {
++  it('recovers provider phases and failed summary status from durable events', async () => {
++    const chunks = [
++      {
++        event: 'on_run_step',
++        data: {
++          id: 'text',
++          index: 0,
++          stepDetails: {
++            type: 'message_creation',
++            message_creation: { message_id: 'text', phase: 'final_answer' },
++          },
++        },
++      },
++      {
++        event: 'on_message_delta',
++        data: { id: 'text', delta: { content: [{ type: 'text', text: 'answer' }] } },
++      },
++      {
++        event: 'on_run_step',
++        data: {
++          id: 'summary',
++          index: 1,
++          stepDetails: { type: 'message_creation', message_creation: { message_id: 'summary' } },
++          summary: { type: 'summary', content: [] },
++        },
++      },
++      {
++        event: 'on_summarize_delta',
++        data: {
++          id: 'summary',
++          delta: { summary: { type: 'summary', content: [{ type: 'text', text: 'partial' }] } },
++        },
++      },
++      { event: 'on_summarize_complete', data: { id: 'summary', error: 'failed' } },
++    ];
++    const store = Object.create(RedisJobStore.prototype) as RedisJobStore;
++    Object.defineProperty(store, 'getChunkSnapshot', {
++      value: async () => ({ chunks, durableEventCount: chunks.length }),
++    });
++    const result = await store.getContentParts('phase-run', undefined, { durableOnly: true });
++    expect(result?.content).toEqual([
++      expect.objectContaining({ type: 'text', text: 'answer', phase: 'final_answer' }),
++      expect.objectContaining({ type: 'summary', outcome: 'failed', failed: true, content: [] }),
++    ]);
++  });
+   it('restores preparation, SDK handoff, result time, and the upstream close stamp', async () => {
+     const chunks = [
+       {
+diff --git a/packages/api/src/stream/implementations/InMemoryJobStore.ts b/packages/api/src/stream/implementations/InMemoryJobStore.ts
+index 8045c8e3d28ed61cff1ff9f21f7538b83a449ab0..544d58fb3030362169fc087041c5be09d3cd8576 100644
+--- a/packages/api/src/stream/implementations/InMemoryJobStore.ts
++++ b/packages/api/src/stream/implementations/InMemoryJobStore.ts
+@@ -26,6 +26,7 @@ import type {
+   ScheduleProviderOwner,
+ } from '~/stream/interfaces/IJobStore';
+ import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
++import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
+ import type { RecoveredSteerPayload } from '~/stream/SteerRecovery';
+ import {
+   JobStatusTransitionDeadlineError,
+@@ -46,6 +47,7 @@ import {
+   RecoveredSteerPayloadMismatchError,
+ } from '~/stream/SteerRecovery';
+ import { retainedScheduleReceipt } from '~/stream/internal/scheduleReceipts';
++import { snapshotSubagentContent } from '~/agents/retainedSubagentContent';
+ import { createCheckpointNamespace } from '~/stream/checkpoints';
+ import { retainScheduleMCPFailure } from '../scheduleFailure';
+ import { toPendingSteer } from '~/stream/SteeringLifecycle';
+@@ -135,6 +137,7 @@ function isValidGenerationProtocolMarker(value: unknown): boolean {
+  */
+ interface ContentState {
+   contentParts: Agents.MessageContentComplex[];
++  subagentContent?: SubagentContentBuffer;
+   graphRef: WeakRef<StandardGraph> | null;
+   collectedUsage: UsageMetadata[];
+ }
+@@ -1571,6 +1574,7 @@ export class InMemoryJobStore implements IJobStoreV2 {
+     streamId: string,
+     contentParts: Agents.MessageContentComplex[],
+     expectedCreatedAt?: number,
++    subagentContent?: SubagentContentBuffer,
+   ): void {
+     if (expectedCreatedAt != null && this.jobs.get(streamId)?.createdAt !== expectedCreatedAt) {
+       return;
+@@ -1578,9 +1582,11 @@ export class InMemoryJobStore implements IJobStoreV2 {
+     const existing = this.contentState.get(streamId);
+     if (existing) {
+       existing.contentParts = contentParts;
++      existing.subagentContent = subagentContent;
+     } else {
+       this.contentState.set(streamId, {
+         contentParts,
++        subagentContent,
+         graphRef: null,
+         collectedUsage: [],
+       });
+@@ -1642,7 +1648,7 @@ export class InMemoryJobStore implements IJobStoreV2 {
+       return null;
+     }
+     return {
+-      content: state.contentParts,
++      content: snapshotSubagentContent(state.contentParts, state.subagentContent),
+       ...(_options?.durableOnly === true && {
+         reconstructedEventCount: state.contentParts.length,
+         durableEventCount: state.contentParts.length,
+diff --git a/packages/api/src/stream/implementations/RedisJobStore.ts b/packages/api/src/stream/implementations/RedisJobStore.ts
+index 0f5c56c97e6363708ff7bca99f8785371f6e152b..e06738d372651da8b4dbb00660b082a02ac038c9 100644
+--- a/packages/api/src/stream/implementations/RedisJobStore.ts
++++ b/packages/api/src/stream/implementations/RedisJobStore.ts
+@@ -1,5 +1,4 @@
+ import { logger } from '@librechat/data-schemas';
+-import { createContentAggregator } from '@librechat/agents';
+ import {
+   ContentTypes,
+   scheduleMCPOutcomeSchema,
+@@ -8,6 +7,7 @@ import {
+   getRunStepDurationMs,
+   getRunStepCloseMetadata,
+ } from 'librechat-data-provider';
++import type { SubagentUpdateEvent } from 'librechat-data-provider';
+ import type { StandardGraph } from '@librechat/agents';
+ import type { Agents } from 'librechat-data-provider';
+ import type { Redis, Cluster } from 'ioredis';
+@@ -36,6 +36,7 @@ import type {
+   ScheduleProviderOwner,
+ } from '~/stream/interfaces/IJobStore';
+ import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
++import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
+ import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
+ import type { RecoveredSteerPayload } from '~/stream/SteerRecovery';
+ import {
+@@ -59,10 +60,12 @@ import {
+   SCHEDULE_MCP_RECEIPT_LUA,
+   SCHEDULE_RETENTION_LUA,
+ } from '~/stream/internal/scheduleReceipts';
++import { collectSubagentContent, snapshotSubagentContent } from '~/agents/retainedSubagentContent';
+ import { parseScheduleMCPCompletion } from '~/schedules/authorization/continuation';
+ import { instrumentIORedisClient, RedisUseCases } from '~/cache/redisTelemetry';
+ import { RecoveredSteerPayloadMismatchError } from '~/stream/SteerRecovery';
+ import { SCHEDULE_MCP_FAILURE_PATCH_LUA } from '../scheduleFailure';
++import { createOccurrenceAggregator } from '~/agents/occurrence';
+ import { createCheckpointNamespace } from '~/stream/checkpoints';
+ import { createToolTimingTracker } from '~/agents/toolTiming';
+ import { evalScript } from '~/cache/redisScript';
+@@ -1940,7 +1943,10 @@ export class RedisJobStore implements IJobStoreV2 {
+    *  on local reads; cross-instance reads reconstruct from chunks. */
+   private localContentParts = new Map<
+     string,
+-    LocalCacheEntry<WeakRef<Agents.MessageContentComplex[]>>
++    LocalCacheEntry<{
++      parts: WeakRef<Agents.MessageContentComplex[]>;
++      subagents?: WeakRef<SubagentContentBuffer>;
++    }>
+   >();
+ 
+   /** Cleanup interval in ms (1 minute) */
+@@ -4289,10 +4295,14 @@ export class RedisJobStore implements IJobStoreV2 {
+     streamId: string,
+     contentParts: Agents.MessageContentComplex[],
+     expectedCreatedAt?: number,
++    subagentContent?: SubagentContentBuffer,
+   ): void {
+     this.setLocalEntry(this.localContentParts, streamId, {
+       createdAt: expectedCreatedAt,
+-      value: new WeakRef(contentParts),
++      value: {
++        parts: new WeakRef(contentParts),
++        subagents: subagentContent == null ? undefined : new WeakRef(subagentContent),
++      },
+     });
+   }
+ 
+@@ -4377,9 +4387,9 @@ export class RedisJobStore implements IJobStoreV2 {
+       ? undefined
+       : this.getLocalEntry(this.localContentParts, streamId, expectedCreatedAt);
+     if (hostEntry) {
+-      const hostParts = hostEntry.value.deref();
++      const hostParts = hostEntry.value.parts.deref();
+       if (hostParts && hostParts.length > 0) {
+-        return { content: hostParts };
++        return { content: snapshotSubagentContent(hostParts, hostEntry.value.subagents?.deref()) };
+       }
+       if (!hostParts) {
+         this.deleteLocalEntry(this.localContentParts, streamId, undefined, hostEntry);
+@@ -4422,7 +4432,8 @@ export class RedisJobStore implements IJobStoreV2 {
+     }
+ 
+     // Use the same content aggregator as live streaming
+-    const { contentParts, aggregateContent } = createContentAggregator();
++    const { contentParts, aggregateContent, stepMap } = createOccurrenceAggregator();
++    const subagents: SubagentContentBuffer = new Map();
+     const toolTiming = createToolTimingTracker();
+ 
+     // Step ID -> content index, rebuilt from the replayed `on_run_step`
+@@ -4444,6 +4455,8 @@ export class RedisJobStore implements IJobStoreV2 {
+       'on_reasoning_delta',
+       'on_run_step_delta',
+       'on_run_step_completed',
++      'on_summarize_delta',
++      'on_summarize_complete',
+       'on_agent_update',
+     ]);
+ 
+@@ -4453,6 +4466,11 @@ export class RedisJobStore implements IJobStoreV2 {
+         continue;
+       }
+ 
++      if (event.event === 'on_subagent_update') {
++        collectSubagentContent(subagents, contentParts, event.data as SubagentUpdateEvent, stepMap);
++        continue;
++      }
++
+       // Steer parts are host-authored (the SDK aggregator doesn't know the
+       // event), so splice them at their recorded index — SDK events after the
+       // injection were emitted with already-shifted indices, so both sources
+@@ -4665,7 +4683,7 @@ export class RedisJobStore implements IJobStoreV2 {
+     }
+ 
+     return {
+-      content: filtered,
++      content: snapshotSubagentContent(filtered, subagents),
+       ...(options?.durableOnly === true && {
+         reconstructedEventCount: chunks.length,
+         durableEventCount: chunkSnapshot.durableEventCount,
+diff --git a/packages/api/src/stream/interfaces/IJobStore.ts b/packages/api/src/stream/interfaces/IJobStore.ts
+index dfca3bb1585da82075a42e087c0ec8bdf97a8730..580a138cf48e7b50fb6e5f3b6f5dedcf27e00e12 100644
+--- a/packages/api/src/stream/interfaces/IJobStore.ts
++++ b/packages/api/src/stream/interfaces/IJobStore.ts
+@@ -12,6 +12,7 @@ import type { ScheduleMCPOutcome, ScheduledMCPIdentity } from 'librechat-data-pr
+ import type { RunStep, StandardGraph } from '@librechat/agents';
+ import type { AgentEventDetachedTerminalEvidence } from '~/agents/triggers/types';
+ import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
++import type { SubagentContentBuffer } from '~/agents/retainedSubagentContent';
+ import type { ActivityPhaseSnapshot } from '~/agents/activityPhases/runtime';
+ import type { ReplayLimits, ReplayPublication } from '../internal/replay';
+ import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
+@@ -1064,6 +1065,7 @@ export interface IJobStore {
+     streamId: string,
+     contentParts: Agents.MessageContentComplex[],
+     expectedCreatedAt?: number,
++    subagentContent?: SubagentContentBuffer,
+   ): void;
+   getContentParts(
+     streamId: string,
+@@ -1379,6 +1381,7 @@ export interface IJobStoreV2 extends IJobStore {
+     streamId: string,
+     contentParts: Agents.MessageContentComplex[],
+     expectedCreatedAt?: number,
++    subagentContent?: SubagentContentBuffer,
+   ): void;
+ 
+   /**
+diff --git a/packages/chat/src/core/subagents/content.ts b/packages/chat/src/core/subagents/content.ts
+index 8f66d580b16f61838fcf5ceb4111593fabea0f9d..99890ba9b135b49d781fbd5b1f10f731217b438b 100644
+--- a/packages/chat/src/core/subagents/content.ts
++++ b/packages/chat/src/core/subagents/content.ts
+@@ -1,5 +1,6 @@
+ import { ContentTypes, ToolCallTypes, getToolTimingDurations } from 'librechat-data-provider';
+ import type {
++  SubagentContentMetadata,
+   SubagentUpdateEvent,
+   ToolTimingStamps,
+   TSteerAppliedEvent,
+@@ -118,7 +119,13 @@ type ToolCallPart = {
+ 
+ /** Single content-part-shaped entry produced by the aggregator. The union
+  *  matches the subset of `TMessageContentParts` a subagent run emits. */
+-export type SubagentContentPart = TextPart | ThinkPart | ToolCallPart | TSteerAppliedEvent['part'];
++export type SubagentContentPart = (
++  | TextPart
++  | ThinkPart
++  | ToolCallPart
++  | TSteerAppliedEvent['part']
++) &
++  SubagentContentMetadata;
+ 
+ const extractTextChunk = (
+   data: MessageDeltaData | undefined,
+@@ -200,6 +207,34 @@ export function initSubagentAggregatorState(): SubagentAggregatorState {
+   };
+ }
+ 
++/** The fast raw-ID index covers ordinary calls; reused IDs require the step occurrence. */
++function toolPartIndex(
++  parts: SubagentContentPart[],
++  state: SubagentAggregatorState,
++  id: string,
++  runId: string,
++  stepId?: string,
++): number | undefined {
++  const index = state.toolCallIndexById[id];
++  if (index == null) return undefined;
++  const part = parts[index];
++  if (
++    part?.type === ContentTypes.TOOL_CALL &&
++    (part.subagentRunId == null || part.subagentRunId === runId) &&
++    (stepId == null || part.tool_call.stepId == null || part.tool_call.stepId === stepId)
++  )
++    return index;
++  if (stepId == null) return undefined;
++  const matched = parts.findIndex(
++    (entry) =>
++      entry.type === ContentTypes.TOOL_CALL &&
++      (entry.subagentRunId == null || entry.subagentRunId === runId) &&
++      entry.tool_call.id === id &&
++      entry.tool_call.stepId === stepId,
++  );
++  return matched < 0 ? undefined : matched;
++}
++
+ /**
+  * Incrementally fold a single {@link SubagentUpdateEvent} into an existing
+  * `contentParts` array, returning a new array + updated cursor state.
+@@ -285,7 +320,7 @@ export function foldSubagentEvent(
+       const idx = afterTextClose.openThinkIdx;
+       const existing = parts[idx] as ThinkPart;
+       const next = parts.slice();
+-      next[idx] = { type: ContentTypes.THINK, think: existing.think + chunk };
++      next[idx] = { ...existing, think: existing.think + chunk };
+       return { parts: next, state: afterTextClose };
+     }
+     const next = parts.slice();
+@@ -322,7 +357,18 @@ export function foldSubagentEvent(
+     let next = parts;
+     const toolCallIndexById = { ...state.toolCallIndexById };
+     for (const tc of toolCalls) {
+-      if (typeof tc?.id !== 'string' || !tc.id || tc.id in toolCallIndexById) continue;
++      if (
++        typeof tc?.id !== 'string' ||
++        !tc.id ||
++        toolPartIndex(
++          next,
++          { ...state, toolCallIndexById },
++          tc.id,
++          event.subagentRunId,
++          data?.id,
++        ) != null
++      )
++        continue;
+       if (next === parts) next = parts.slice();
+       toolCallIndexById[tc.id] = next.length;
+       next.push({
+@@ -357,8 +403,9 @@ export function foldSubagentEvent(
+     const id = data?.toolCallId;
+     const at = data?.observed_at;
+     if (!id || typeof at !== 'number' || !Number.isFinite(at) || at < 0) return { parts, state };
+-    const idx = state.toolCallIndexById[id];
+-    const part = idx == null ? undefined : parts[idx];
++    const idx = toolPartIndex(parts, state, id, event.subagentRunId, data.id);
++    if (idx == null) return { parts, state };
++    const part = parts[idx];
+     if (
+       part?.type !== ContentTypes.TOOL_CALL ||
+       part.tool_call.stepId !== data.id ||
+@@ -383,8 +430,9 @@ export function foldSubagentEvent(
+     let next = parts;
+     for (const call of data?.toolCalls ?? []) {
+       if (!call.id || !call.stepId) continue;
+-      const idx = state.toolCallIndexById[call.id];
+-      const part = idx == null ? undefined : next[idx];
++      const idx = toolPartIndex(next, state, call.id, event.subagentRunId, call.stepId);
++      if (idx == null) continue;
++      const part = next[idx];
+       if (
+         part?.type !== ContentTypes.TOOL_CALL ||
+         part.tool_call.stepId !== call.stepId ||
+@@ -407,7 +455,7 @@ export function foldSubagentEvent(
+     const data = event.data as RunStepCompletedData | undefined;
+     const tc = data?.result?.tool_call;
+     if (typeof tc?.id !== 'string' || !tc.id) return { parts, state };
+-    const existingIdx = state.toolCallIndexById[tc.id];
++    const existingIdx = toolPartIndex(parts, state, tc.id, event.subagentRunId, data?.result?.id);
+     if (existingIdx != null) {
+       const existing = parts[existingIdx] as ToolCallPart;
+       const completedAt = data?.result?.completed_at;
+@@ -428,7 +476,7 @@ export function foldSubagentEvent(
+             })
+           : {};
+       const merged: ToolCallPart = {
+-        type: ContentTypes.TOOL_CALL,
++        ...existing,
+         tool_call: {
+           ...existing.tool_call,
+           ...completion,
+diff --git a/packages/chat/src/react/stream/step.ts b/packages/chat/src/react/stream/step.ts
+index af6b3e4bbfb62fcc4620ae7557f1aeb283aa5025..548660607a4730110c785982da8ed7f10db16fbc 100644
+--- a/packages/chat/src/react/stream/step.ts
++++ b/packages/chat/src/react/stream/step.ts
+@@ -1,6 +1,8 @@
+ import { useCallback, useRef } from 'react';
+ import { useStore } from 'jotai';
++import { Constants, ContentTypes } from 'librechat-data-provider';
+ import type {
++  FullToolCall,
+   TMessage,
+   EventSubmission,
+   SubagentUpdateEvent,
+@@ -12,6 +14,7 @@ import {
+   closeParentSubagentProgress,
+   listRegisteredSubagentProgressKeys,
+   reduceSubagentProgress,
++  recoverSubagentProgress,
+   registerSubagentProgressKey,
+   removeSubagentProgressAtoms,
+   subagentParentStreamOpenByToolCallId,
+@@ -409,13 +412,31 @@ export function useStepHandler({
+    */
+   const syncStepMessage = useCallback(
+     (message: TMessage) => {
++      for (const [index, part] of (message?.content ?? []).entries()) {
++        if (
++          part?.type !== ContentTypes.TOOL_CALL ||
++          !('name' in part.tool_call) ||
++          part.tool_call.name !== Constants.SUBAGENT
++        )
++          continue;
++        const key = subagentProgressKey(message.messageId, part.tool_call.id ?? '', index);
++        const recovered = recoverSubagentProgress(
++          subagentStore.get(subagentProgressByToolCallId(key)),
++          (part.tool_call as FullToolCall).subagent_content,
++        );
++        if (recovered == null) continue;
++        registerSubagentProgressKey(key);
++        subagentStore.set(subagentProgressByToolCallId(key), recovered);
++        stream.current.subagentInvocations.set(recovered.subagentRunId, key);
++        stream.current.claimedInvocations.add(key);
++      }
+       for (const effect of syncStreamMessage(stream.current, message)) {
+         if (effect.type === 'subagent') {
+           applySubagentProgress(effect.invocationKey, effect.events);
+         }
+       }
+     },
+-    [applySubagentProgress],
++    [applySubagentProgress, subagentStore],
+   );
+ 
+   return {
+diff --git a/packages/chat/src/react/subagents/__tests__/adapters.spec.ts b/packages/chat/src/react/subagents/__tests__/adapters.spec.ts
+index bd7eb5e758283b1f214aefcd1c48dbe03a8e9975..42d202a32204f4ad93421b8c36b462def5790c22 100644
+--- a/packages/chat/src/react/subagents/__tests__/adapters.spec.ts
++++ b/packages/chat/src/react/subagents/__tests__/adapters.spec.ts
+@@ -16,8 +16,154 @@ import {
+ } from '../adapters';
+ import { initSubagentAggregatorState, initSubagentTickerState } from '../../../core';
+ import { aggregateSubagentContent } from '../../../core/__fixtures__/subagents';
++import { recoverSubagentProgress, reduceSubagentProgress } from '../state';
+ 
+ describe('child activity adapters', () => {
++  it('keeps a resumed child run separate when it reuses the prior message step ID', () => {
++    const persisted: TMessageContentParts[] = [
++      {
++        type: ContentTypes.TEXT,
++        text: 'First',
++        stepId: 'text',
++        subagentRunId: 'first-run',
++        subagentSequence: 4,
++      },
++    ];
++    const progress = reduceSubagentProgress(recoverSubagentProgress(null, persisted), [
++      {
++        runId: 'parent',
++        subagentRunId: 'second-run',
++        subagentType: 'self',
++        subagentAgentId: 'agent',
++        timestamp: '',
++        phase: 'message_delta',
++        activitySequence: 0,
++        data: { id: 'text', delta: { content: [{ type: 'text', text: 'Second' }] } },
++      },
++    ]);
++    const activity = adaptLivePersistedActivity({
++      title: 'Child',
++      persistedContent: persisted,
++      progress,
++      initialProgress: 0.5,
++      isSubmitting: true,
++    });
++    expect(activity.items).toEqual([
++      { type: 'writing', text: 'First' },
++      { type: 'writing', text: 'Second' },
++    ]);
++  });
++  it('continues recovered reasoning in place and keeps reused tool IDs on their own steps', () => {
++    const persisted: TMessageContentParts[] = [
++      {
++        type: ContentTypes.TOOL_CALL,
++        tool_call: { id: 'reused', name: 'lookup', args: '{}', stepId: 'first', progress: 0.1 },
++        subagentRunId: 'child',
++        stepId: 'first',
++        subagentSequence: 4,
++      },
++      {
++        type: ContentTypes.TOOL_CALL,
++        tool_call: { id: 'reused', name: 'lookup', args: '{}', stepId: 'second', progress: 0.1 },
++        subagentRunId: 'child',
++        stepId: 'second',
++        subagentSequence: 4,
++      },
++      {
++        type: ContentTypes.THINK,
++        think: 'Before',
++        stepId: 'reason',
++        subagentRunId: 'child',
++        subagentSequence: 4,
++      },
++    ];
++    const progress = reduceSubagentProgress(recoverSubagentProgress(null, persisted), [
++      {
++        runId: 'parent',
++        subagentRunId: 'child',
++        subagentType: 'self',
++        timestamp: '',
++        phase: 'reasoning_delta',
++        subagentAgentId: 'agent',
++        activitySequence: 5,
++        data: { id: 'reason', delta: { content: [{ type: 'think', think: ' after' }] } },
++      },
++      {
++        runId: 'parent',
++        subagentRunId: 'child',
++        subagentType: 'self',
++        timestamp: '',
++        phase: 'run_step_completed',
++        subagentAgentId: 'agent',
++        activitySequence: 6,
++        data: {
++          result: { id: 'first', tool_call: { id: 'reused', output: 'First result', progress: 1 } },
++        },
++      },
++    ]);
++    const activity = adaptLivePersistedActivity({
++      title: 'Child',
++      persistedContent: persisted,
++      progress,
++      initialProgress: 0.5,
++      isSubmitting: true,
++    });
++    expect(activity.items).toHaveLength(3);
++    expect(activity.items[0]).toMatchObject({
++      type: 'tool',
++      output: 'First result',
++      status: 'completed',
++    });
++    expect(activity.items[1]).toMatchObject({ type: 'tool', status: 'running' });
++    expect(activity.items[2]).toMatchObject({ type: 'reasoning', text: 'Before after' });
++  });
++  it('keeps a recovered prefix longer than the bounded live atom when new deltas arrive', () => {
++    const persisted: TMessageContentParts[] = Array.from({ length: 110 }, (_, index) => ({
++      type: ContentTypes.TEXT,
++      text: `Part ${index}`,
++      stepId: `step-${index}`,
++      subagentRunId: 'child',
++      subagentSequence: 220,
++    }));
++    const progress = reduceSubagentProgress(recoverSubagentProgress(null, persisted), [
++      {
++        runId: 'parent',
++        subagentRunId: 'child',
++        subagentType: 'self',
++        subagentAgentId: 'agent',
++        timestamp: '',
++        phase: 'message_delta',
++        activitySequence: 221,
++        data: { id: 'step-109', delta: { content: [{ type: 'text', text: ' continued' }] } },
++      },
++    ]);
++    expect(progress?.contentParts).toHaveLength(100);
++    const activity = adaptLivePersistedActivity({
++      title: 'Child',
++      persistedContent: persisted,
++      progress,
++      initialProgress: 0.5,
++      isSubmitting: true,
++    });
++    expect(activity.items).toHaveLength(110);
++    expect(activity.items[0]).toMatchObject({ text: 'Part 0' });
++    expect(activity.items[109]).toMatchObject({ text: 'Part 109 continued' });
++    expect(activity.content).toHaveLength(110);
++    expect(activity.content?.[109]).toMatchObject({ text: 'Part 109 continued' });
++    const final = adaptLivePersistedActivity({
++      title: 'Child',
++      progress,
++      initialProgress: 1,
++      isSubmitting: false,
++      persistedContent: persisted.map((part, index) => ({
++        ...part,
++        subagentSequence: 222,
++        ...(index === 109 ? { text: 'Authoritative final text' } : {}),
++      })),
++    });
++    expect(final.items[109]).toMatchObject({ text: 'Authoritative final text' });
++    expect(final.content?.[109]).toMatchObject({ text: 'Authoritative final text' });
++  });
+   it('passes child dispatch and completed durations to the generic tool card', () => {
+     const progress = {
+       subagentRunId: 'child',
+diff --git a/packages/chat/src/react/subagents/__tests__/state.spec.ts b/packages/chat/src/react/subagents/__tests__/state.spec.ts
+index 20fd5526b2de6338c3d9e21005555a76aadc6507..267b88603dcef254d1446034981a44a7aaeb5228 100644
+--- a/packages/chat/src/react/subagents/__tests__/state.spec.ts
++++ b/packages/chat/src/react/subagents/__tests__/state.spec.ts
+@@ -1108,8 +1108,13 @@ describe('measured tool timing replay provenance', () => {
+         lifecycle,
+         false,
+       );
+-      expect(progress?.contentParts[0]).not.toHaveProperty('tool_call.toolPreparationDurationMs');
+-      expect(progress?.contentParts[0]).not.toHaveProperty('tool_call.toolExecutionDurationMs');
++      expect(progress?.contentParts).toHaveLength(2);
++      const completed = progress?.contentParts.find(
++        (part) => part.type === ContentTypes.TOOL_CALL && part.tool_call.stepId === 'other-step',
++      );
++      expect(completed).toMatchObject({ tool_call: { progress: 1, output: 'found' } });
++      expect(completed).not.toHaveProperty('tool_call.toolPreparationDurationMs');
++      expect(completed).not.toHaveProperty('tool_call.toolExecutionDurationMs');
+     },
+   );
+   it.each([NaN, Infinity, -1, 2_000])(
+diff --git a/packages/chat/src/react/subagents/adapters.ts b/packages/chat/src/react/subagents/adapters.ts
+index d73d95dfac3e000587c92c866ee601a0e4d3ede5..41d6e8bf451a0c4246bd654c672bf5d1fa59f971 100644
+--- a/packages/chat/src/react/subagents/adapters.ts
++++ b/packages/chat/src/react/subagents/adapters.ts
+@@ -310,6 +310,42 @@ const liveStatus = ({
+   return isSubmitting ? 'running' : 'cancelled';
+ };
+ 
++/** Overlay the bounded live tail without dropping the snapshot's older prefix. */
++function mergeRecoveredContent(
++  persisted: TMessageContentParts[],
++  live: TMessageContentParts[],
++  runId: string,
++  sequence?: number,
++): TMessageContentParts[] {
++  const identity = (part: TMessageContentParts): string | undefined => {
++    const tool = part.type === ContentTypes.TOOL_CALL ? part.tool_call : undefined;
++    const stepId = part.stepId ?? (tool != null && 'stepId' in tool ? tool.stepId : undefined);
++    if (stepId == null) return undefined;
++    return JSON.stringify([part.subagentRunId ?? runId, stepId, part.type, tool?.id]);
++  };
++  const indices = new Map<string, number>();
++  const references = new Set(persisted);
++  const merged = persisted.slice();
++  for (const [index, part] of persisted.entries()) {
++    const key = identity(part);
++    if (key != null) indices.set(key, index);
++  }
++  for (const part of live) {
++    const key = identity(part);
++    const index = key == null ? undefined : indices.get(key);
++    if (index != null) {
++      const liveSequence =
++        part.subagentRunId != null && part.subagentRunId !== runId
++          ? part.subagentSequence
++          : sequence;
++      const storedSequence = merged[index].subagentSequence;
++      if (storedSequence != null && liveSequence != null && storedSequence >= liveSequence)
++        continue;
++      merged[index] = part;
++    } else if (!references.has(part)) merged.push(part);
++  }
++  return merged;
++}
+ /** Keep standard metadata and sharing; public nested transcripts must not expose approvals. */
+ export const standardContent = (
+   content: TMessageContentParts[],
+@@ -382,10 +418,19 @@ export function adaptLivePersistedActivity(input: {
+   const persisted = input.persistedContent ?? [];
+   const live = (input.progress?.contentParts ?? []) as TMessageContentParts[];
+   const approvalVisibility = input.approvalVisibility ?? 'visible';
+-  const persistedItems = contentPartsToActivity(persisted, approvalVisibility);
+-  const liveItems = contentPartsToActivity(live, approvalVisibility);
++  const recovered = input.progress?.recoveredFromSnapshot === true && live.length > 0;
++  const recoveredContent = recovered
++    ? mergeRecoveredContent(
++        persisted,
++        live,
++        input.progress!.subagentRunId,
++        input.progress!.lastActivitySequence,
++      )
++    : persisted;
++  const persistedItems = contentPartsToActivity(recoveredContent, approvalVisibility);
++  const liveItems = recovered ? [] : contentPartsToActivity(live, approvalVisibility);
+   let items = persistedItems.length > 0 ? persistedItems : liveItems;
+-  let content = persisted.length > 0 ? persisted : live;
++  let content = recoveredContent.length > 0 ? recoveredContent : live;
+   if (input.isDetached === true && input.progress?.coverage === 'suffix') {
+     items = mergePersistedAndLiveActivity(persistedItems, liveItems);
+     // A suffix without sequence-aligned standard recovery still needs the legacy bridge.
+diff --git a/packages/chat/src/react/subagents/state.ts b/packages/chat/src/react/subagents/state.ts
+index 1b338c011d0278be3558234a7765c69f37e80235..c03a1955c90cfaa5a162eaf100b75c355559d097 100644
+--- a/packages/chat/src/react/subagents/state.ts
++++ b/packages/chat/src/react/subagents/state.ts
+@@ -11,6 +11,7 @@ import type {
+   TMessageContentParts,
+   TAttachment,
+   SubagentUpdateEvent,
++  SubagentContentMetadata,
+ } from 'librechat-data-provider';
+ import type { Getter, PrimitiveAtom, WritableAtom } from 'jotai';
+ import type { SetStateAction } from 'react';
+@@ -38,6 +39,8 @@ import {
+  * capped by item count and encoded size to match the durable public view.
+  */
+ export interface SubagentProgress {
++  /** Live deltas extend a reconnect snapshot, so this projection supersedes that snapshot. */
++  recoveredFromSnapshot?: boolean;
+   /** Child run id from the SDK — unique per spawn; one tool_call may only have one. */
+   subagentRunId: string;
+   /** `type` identifier from the SubagentConfig (e.g. 'self', 'researcher'). */
+@@ -799,7 +802,8 @@ const foldAcceptedSubagentEvents = (
+   )
+     return foldLegacyInvocations(previous, events, pendingSequencedEvents);
+   const firstSequence = events[0].activitySequence;
+-  const priorSequence = previous?.lastActivitySequence;
++  const sameRun = previous?.subagentRunId === events[0].subagentRunId;
++  const priorSequence = sameRun ? previous?.lastActivitySequence : undefined;
+   const hasGap =
+     validActivitySequence(firstSequence) &&
+     validActivitySequence(priorSequence) &&
+@@ -820,7 +824,8 @@ const foldAcceptedSubagentEvents = (
+   }
+   const boundedEventKeys = recentEventKeys.slice(-MAX_RECENT_EVENT_KEYS);
+   let contentParts = previous?.contentParts ?? [];
+-  let aggregatorState = previous?.aggregatorState ?? initSubagentAggregatorState();
++  let aggregatorState =
++    (sameRun ? previous?.aggregatorState : undefined) ?? initSubagentAggregatorState();
+   let tickerState = previous?.tickerState ?? initSubagentTickerState();
+   let subagentKind = previous?.subagentKind;
+   const omissions = acceptedOmissions(previous, events);
+@@ -851,6 +856,11 @@ const foldAcceptedSubagentEvents = (
+     aggregatorState,
+     events[events.length - 1].subagentAgentId ?? previous?.subagentAgentId,
+   ));
++  if (previous?.recoveredFromSnapshot === true) {
++    contentParts = contentParts.map((part: SubagentContentPart & SubagentContentMetadata) =>
++      part.subagentRunId == null ? { ...part, subagentRunId: events[0].subagentRunId } : part,
++    );
++  }
+   tickerState = boundTickerState(tickerState);
+   const last = events[events.length - 1];
+   const lastActivitySequence = [...events]
+@@ -861,6 +871,7 @@ const foldAcceptedSubagentEvents = (
+   const acceptedRunStart = events.some((event) => event.activitySequence === 0);
+   return {
+     subagentRunId: last.subagentRunId,
++    recoveredFromSnapshot: previous?.recoveredFromSnapshot,
+     subagentType: last.subagentType,
+     subagentAgentId: last.subagentAgentId ?? previous?.subagentAgentId,
+     subagentKind,
+@@ -1033,6 +1044,50 @@ export function reduceSubagentProgress(
+   });
+ }
+ 
++/** Restore the compact snapshot before folding post-reconnect deltas. No raw replay log is kept. */
++export function recoverSubagentProgress(
++  previous: SubagentProgress | null,
++  content: TMessageContentParts[] | undefined,
++): SubagentProgress | null {
++  const parts = (content ?? []).filter(
++    (part) =>
++      (part.type === ContentTypes.TEXT && typeof part.text === 'string') ||
++      (part.type === ContentTypes.THINK && typeof part.think === 'string') ||
++      part.type === ContentTypes.TOOL_CALL,
++  ) as Array<SubagentContentPart & SubagentContentMetadata>;
++  const last = parts[parts.length - 1];
++  if (!last?.subagentRunId || last.subagentSequence == null) return previous;
++  if (
++    previous?.subagentRunId === last.subagentRunId &&
++    (previous.lastActivitySequence ?? -1) >= last.subagentSequence
++  )
++    return previous;
++  const bounded = boundContentParts(parts, initSubagentAggregatorState());
++  const state = bounded.state;
++  for (let index = 0; index < bounded.parts.length; index++) {
++    const part = bounded.parts[index] as SubagentContentPart & SubagentContentMetadata;
++    if (part.subagentRunId !== last.subagentRunId) continue;
++    if (part.type === ContentTypes.TOOL_CALL) {
++      state.toolCallIndexById[part.tool_call.id] = index;
++    } else if (part.type === ContentTypes.TEXT && part.stepId && part.phase) {
++      state.messagePhaseByStepId[part.stepId] = part.phase;
++    }
++  }
++  if (last.type === ContentTypes.TEXT) state.openTextIdx = bounded.parts.length - 1;
++  if (last.type === ContentTypes.THINK) state.openThinkIdx = bounded.parts.length - 1;
++  return {
++    subagentRunId: last.subagentRunId,
++    subagentType: previous?.subagentType ?? '',
++    contentParts: bounded.parts,
++    aggregatorState: bounded.state,
++    tickerState: initSubagentTickerState(),
++    status: last.subagentStatus ?? 'message_delta',
++    lastActivitySequence: last.subagentSequence,
++    coverage: 'complete',
++    recoveredFromSnapshot: true,
++  };
++}
++
+ /** Prefix events are new coverage, not a replacement for newer foreground parts.
+  * Reconcile bounded projections instead of retaining another raw event history. */
+ function prependSubagentReplay(
+diff --git a/packages/data-provider/src/types/content.ts b/packages/data-provider/src/types/content.ts
+index 40a66b8cf935770ebb87eb35f9d092d52dfe0f44..dd696109f0b59ad0c05d79643cb04a8d2d4f5672 100644
+--- a/packages/data-provider/src/types/content.ts
++++ b/packages/data-provider/src/types/content.ts
+@@ -1,4 +1,4 @@
+-import type { SubagentIdentity, ContentTypes } from './runs';
++import type { SubagentIdentity, SubagentContentMetadata, ContentTypes } from './runs';
+ import type { Agents } from './agents';
+ import type { TFile } from './files';
+ 
+@@ -199,7 +199,8 @@ export type PartMetadata = {
+ };
+ 
+ /** Metadata for parallel content rendering - subset of PartMetadata */
+-export type ContentMetadata = Pick<PartMetadata, 'agentId' | 'groupId' | 'streamedIndex'>;
++export type ContentMetadata = Pick<PartMetadata, 'agentId' | 'groupId' | 'streamedIndex'> &
++  SubagentContentMetadata;
+ 
+ export type ContentPart = (
+   | CodeToolCall
+diff --git a/packages/data-provider/src/types/runs.ts b/packages/data-provider/src/types/runs.ts
+index 8ee3a83c8f627f4199951c6dee83aed08bf18c56..bcfd4d0a7fb01464da6923ec1bfea1d908c79269 100644
+--- a/packages/data-provider/src/types/runs.ts
++++ b/packages/data-provider/src/types/runs.ts
+@@ -569,6 +569,14 @@ export interface SubagentAncestryEntry {
+ 
+ export type SubagentIdentity = Pick<SubagentAncestryEntry, 'subagentKind' | 'subagentAgentId'>;
+ 
++/** Correlation and replay frontier carried by persisted foreground child parts. */
++export interface SubagentContentMetadata {
++  subagentRunId?: string;
++  subagentSequence?: number;
++  subagentStatus?: SubagentUpdatePhase;
++  stepId?: string;
++}
++
+ /** Single streamed subagent update forwarded by the SDK's SubagentExecutor. */
+ export interface SubagentUpdateEvent {
+   runId: string;

@@ -1,0 +1,1260 @@
+diff --git a/api/server/routes/__tests__/config.spec.js b/api/server/routes/__tests__/config.spec.js
+index a6feec5d20d77962fadefb552d8644c11114696b..ee5439baf9bf22175f3f6d2b598d82fcbbfed7aa 100644
+--- a/api/server/routes/__tests__/config.spec.js
++++ b/api/server/routes/__tests__/config.spec.js
+@@ -126,6 +126,19 @@ afterEach(() => {
+ 
+ describe('GET /api/config', () => {
+   describe('unauthenticated (no req.user)', () => {
++    it('does not expose resumable streams config to anonymous callers', async () => {
++      mockGetAppConfig.mockResolvedValue({
++        ...baseAppConfig,
++        config: { resumableStreams: { terminalRecoveryMaxRetries: 8 } },
++      });
++      const app = createApp(null);
++
++      const response = await request(app).get('/api/config');
++
++      expect(response.statusCode).toBe(200);
++      expect(response.body).not.toHaveProperty('resumableStreams');
++    });
++
+     it('should resolve the __base__ overrides without runtime augmentation when no tenant context', async () => {
+       mockGetAppConfig.mockResolvedValue(baseAppConfig);
+       mockGetTenantId.mockReturnValue(undefined);
+@@ -466,6 +479,26 @@ describe('GET /api/config', () => {
+       expect(anonymous.body).not.toHaveProperty('ragEnabled');
+     });
+ 
++    it('exposes the default terminal recovery retry limit', async () => {
++      mockGetAppConfig.mockResolvedValue(baseAppConfig);
++      const app = createApp(mockUser);
++
++      const response = await request(app).get('/api/config');
++
++      expect(response.statusCode).toBe(200);
++      expect(response.body.resumableStreams).toEqual({ terminalRecoveryMaxRetries: 5 });
++    });
++
++    it.each([0, 2, 8])('exposes the effective terminal recovery retry limit %s', async (limit) => {
++      mockGetAppConfig.mockResolvedValue({
++        ...baseAppConfig,
++        config: { resumableStreams: { terminalRecoveryMaxRetries: limit } },
++      });
++      const response = await request(createApp(mockUser)).get('/api/config');
++      expect(response.statusCode).toBe(200);
++      expect(response.body.resumableStreams).toEqual({ terminalRecoveryMaxRetries: limit });
++    });
++
+     it('drops a policy link that would run script and keeps the rest of the interface', async () => {
+       mockGetAppConfig.mockResolvedValue({
+         ...baseAppConfig,
+diff --git a/api/server/routes/config.js b/api/server/routes/config.js
+index 3827b06599f785be303244826c4efb092fe977a9..d9884103201ce16995e67c7e718589f2b19025e8 100644
+--- a/api/server/routes/config.js
++++ b/api/server/routes/config.js
+@@ -8,6 +8,7 @@ const {
+   isLangfuseFanoutEnabled,
+   getBalanceConfig,
+   getCloudFrontConfig,
++  getResumableStreamsConfig,
+   getAppConfigOptionsFromUser,
+   resolveBuildInfo,
+   resolveTitleTiming,
+@@ -322,6 +323,7 @@ router.get('/', async function (req, res) {
+       socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
+       projects: appConfig?.projects,
+       interface: withSafePolicyLinks(appConfig?.interfaceConfig),
++      resumableStreams: getResumableStreamsConfig(appConfig),
+       titleGenerationTiming: resolveTitleTiming({
+         appConfig,
+         endpoint: EModelEndpoint.agents,
+diff --git a/client/src/Providers/ChatHostContext.tsx b/client/src/Providers/ChatHostContext.tsx
+index becf077e124544fa07013abf020b48c90ac2c9f4..9e5193ce620e4c0930c1e48b2920e10e27cea58e 100644
+--- a/client/src/Providers/ChatHostContext.tsx
++++ b/client/src/Providers/ChatHostContext.tsx
+@@ -101,6 +101,8 @@ function useMessages(
+     {
+       enabled: !!conversationId && conversationId !== Constants.SEARCH,
+       refetchOnMount: true,
++      refetchOnWindowFocus: !isStreaming,
++      refetchOnReconnect: !isStreaming,
+     },
+     { isStreaming },
+   );
+diff --git a/client/src/Providers/__tests__/ChatHostContext.spec.tsx b/client/src/Providers/__tests__/ChatHostContext.spec.tsx
+index a500852c1190e8ece5812c7340147aec47907584..e114c5d1d932fa55cd329f596db61bfecfec9a02 100644
+--- a/client/src/Providers/__tests__/ChatHostContext.spec.tsx
++++ b/client/src/Providers/__tests__/ChatHostContext.spec.tsx
+@@ -1,8 +1,13 @@
+ import React from 'react';
+ import { MemoryRouter } from 'react-router-dom';
+ import { renderHook, waitFor } from '@testing-library/react';
+-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+ import { Constants, QueryKeys, dataService } from 'librechat-data-provider';
++import {
++  QueryClient,
++  focusManager,
++  onlineManager,
++  QueryClientProvider,
++} from '@tanstack/react-query';
+ import type { TMessage } from 'librechat-data-provider';
+ import { appChatHost } from '../ChatHostContext';
+ 
+@@ -20,13 +25,17 @@ const getMessages = dataService.getMessagesByConvoId as jest.MockedFunction<
+ 
+ const messages = [{ messageId: 'm-1', conversationId: 'convo-1' }] as TMessage[];
+ 
+-function renderMessages(queryClient: QueryClient, conversationId: string | undefined) {
++function renderMessages(
++  queryClient: QueryClient,
++  conversationId: string | undefined,
++  isStreaming = false,
++) {
+   const wrapper = ({ children }: { children: React.ReactNode }) => (
+     <MemoryRouter>
+       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+     </MemoryRouter>
+   );
+-  return renderHook(() => appChatHost.useMessages(conversationId, { isStreaming: false }), {
++  return renderHook(() => appChatHost.useMessages(conversationId, { isStreaming }), {
+     wrapper,
+   });
+ }
+@@ -44,9 +53,35 @@ describe('appChatHost.useMessages', () => {
+     await waitFor(() =>
+       expect(result.current).toEqual({ messages, isLoading: false, isFetching: false }),
+     );
+-    expect(getMessages).toHaveBeenCalledWith('convo-1', { toolPreviews: true });
++    expect(getMessages).toHaveBeenCalledWith('convo-1', {
++      toolPreviews: true,
++      lazyAttachments: true,
++    });
+   });
+ 
++  it.each([false, true])(
++    'refreshes history on focus and reconnect only while not streaming (%s)',
++    async (isStreaming) => {
++      const queryClient = new QueryClient();
++      const { result, unmount } = renderMessages(queryClient, 'convo-1', isStreaming);
++      await waitFor(() => expect(result.current.isFetching).toBe(false));
++      const query = queryClient.getQueryCache().find([QueryKeys.messages, 'convo-1']);
++      expect(query?.options).toMatchObject({
++        refetchOnWindowFocus: !isStreaming,
++        refetchOnReconnect: !isStreaming,
++      });
++      focusManager.setFocused(false);
++      focusManager.setFocused(true);
++      await waitFor(() => expect(getMessages).toHaveBeenCalledTimes(isStreaming ? 1 : 2));
++      onlineManager.setOnline(false);
++      onlineManager.setOnline(true);
++      await waitFor(() => expect(getMessages).toHaveBeenCalledTimes(isStreaming ? 1 : 3));
++      unmount();
++      focusManager.setFocused(undefined);
++      queryClient.clear();
++    },
++  );
++
+   it('serves a warm cache at once while it revalidates in the background', async () => {
+     const queryClient = new QueryClient();
+     queryClient.setQueryData([QueryKeys.messages, 'convo-1'], messages);
+diff --git a/client/src/hooks/Chat/contract.ts b/client/src/hooks/Chat/contract.ts
+index 90d07dd30873a54317fda1d110d71c9292eb42bd..2dd5e0df3fa6fdf8de8672290d344dfed05d8b73 100644
+--- a/client/src/hooks/Chat/contract.ts
++++ b/client/src/hooks/Chat/contract.ts
+@@ -72,6 +72,7 @@ export type ChatConfig = {
+   loaded?: boolean;
+   /** Whether the deployment tracks token balances, refreshed after each turn. */
+   balanceEnabled?: boolean;
++  terminalRecoveryMaxRetries?: number;
+ };
+ 
+ /** The signed-in account, as far as the chat reads it. */
+diff --git a/client/src/hooks/SSE/resumable.ts b/client/src/hooks/SSE/resumable.ts
+index 230b032d3650834499f94555310749baa4f498a8..6d0d1747396d24e5cdc7786946f82a8b2c146e96 100644
+--- a/client/src/hooks/SSE/resumable.ts
++++ b/client/src/hooks/SSE/resumable.ts
+@@ -1,5 +1,6 @@
+-import { useCallback } from 'react';
++import { useCallback, useRef, useLayoutEffect } from 'react';
+ import { documentVisibility } from '@librechat/chat';
++import { DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES } from 'librechat-data-provider';
+ import type { ResumableServices, ResumableStreamParams } from '@librechat/chat/react';
+ import type { ResumableParts } from '@librechat/chat';
+ import {
+@@ -47,6 +48,10 @@ export function useResumableServices({
+   setStreamId,
+ }: ResumableStreamParams): () => ResumableServices {
+   const { auth, config } = useChatSettings();
++  const retryLimit = useRef(DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES);
++  useLayoutEffect(() => {
++    retryLimit.current = config.terminalRecoveryMaxRetries ?? DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES;
++  }, [config.terminalRecoveryMaxRetries]);
+   const { token, isAuthenticated = false } = auth;
+   const transport = useChatTransport();
+   const { setMessages, getMessages, setConversation, setIsSubmitting, newConversation } = chat;
+@@ -82,6 +87,7 @@ export function useResumableServices({
+     (): ResumableServices => ({
+       logger,
+       visibility: documentVisibility,
++      terminalRecoveryMaxRetries: () => retryLimit.current,
+       fetchStatus: fetchStreamStatus,
+       cache,
+       queue,
+diff --git a/client/src/routes/ChatSettings.tsx b/client/src/routes/ChatSettings.tsx
+index 9553e7a702b27b7f21e784b0c7c0bef58be4621f..998f53ae50735799714072a8b292eb128d3f0054 100644
+--- a/client/src/routes/ChatSettings.tsx
++++ b/client/src/routes/ChatSettings.tsx
+@@ -64,6 +64,7 @@ export default function ChatSettingsProvider({ children }: { children: ReactNode
+       retentionMode: ui?.retentionMode,
+       feedbackEnabled: startupConfig != null && ui?.feedback !== false,
+       canRenameRunningChat: supportsConversationTitleOwnership(startupConfig),
++      terminalRecoveryMaxRetries: startupConfig?.resumableStreams?.terminalRecoveryMaxRetries,
+       modelSpecs: startupConfig?.modelSpecs?.list,
+       queuedSendLockTimeoutMs: ui?.queuedSendLockTimeoutMs,
+       queuedTurnReconciliationTimeoutMs: ui?.queuedTurnReconciliationTimeoutMs,
+diff --git a/librechat.example.yaml b/librechat.example.yaml
+index e325df6adc0c44a0b2ba080d02de318cd8112e9a..df1975dd1139c2c13196761aa86c5c26bedc70ef 100644
+--- a/librechat.example.yaml
++++ b/librechat.example.yaml
+@@ -51,6 +51,11 @@ projects:
+ #   outputChars: 512   # characters of each output kept, half from the start and half from the end
+ #   argsChars: 512     # characters of serialized arguments kept; JSON stays valid JSON
+ 
++# Automatic terminal history recovery retries, separate from transport reconnects.
++# Non-negative safe integer; 0 disables automatic terminal history recovery retries.
++# resumableStreams:
++#   terminalRecoveryMaxRetries: 5
++
+ # Stored user credentials (tool and web search keys, MCP custom user variables) are
+ # written with a random IV per value ("v3", the default). Both formats are always read.
+ # During a rolling upgrade of a multi-replica deployment, set "legacy" until every
+diff --git a/packages/api/src/app/config.test.ts b/packages/api/src/app/config.test.ts
+index b26c533e33da158567d2a40ae363fd0dd62c466a..26c3eff1495b980d8b865adbb327f09405a7b545 100644
+--- a/packages/api/src/app/config.test.ts
++++ b/packages/api/src/app/config.test.ts
+@@ -13,6 +13,7 @@ import {
+   getCustomEndpointConfig,
+   getTransactionsConfig,
+   getEndpointsDropParamsMap,
++  getResumableStreamsConfig,
+ } from './config';
+ 
+ // Helper function to create a minimal AppConfig for testing
+@@ -86,6 +87,32 @@ jest.mock('~/utils', () => ({
+   isEnabled: jest.fn((value) => value === 'true'),
+ }));
+ 
++describe('getResumableStreamsConfig', () => {
++  it('defaults terminal recovery retries when app config is absent', () => {
++    expect(getResumableStreamsConfig()).toEqual({ terminalRecoveryMaxRetries: 5 });
++  });
++
++  it.each([{}, { resumableStreams: {} }])('resolves defaults from raw config %j', (config) => {
++    const appConfig = createTestAppConfig({ config });
++    expect(getResumableStreamsConfig(appConfig)).toEqual({ terminalRecoveryMaxRetries: 5 });
++    expect(appConfig.config).not.toHaveProperty('resumableStreams.terminalRecoveryMaxRetries');
++  });
++
++  it.each([0, 2, 8])('uses the supplied effective retry limit %s', (terminalRecoveryMaxRetries) => {
++    const appConfig = createTestAppConfig({
++      config: { resumableStreams: { terminalRecoveryMaxRetries } },
++    });
++    expect(getResumableStreamsConfig(appConfig)).toEqual({ terminalRecoveryMaxRetries });
++  });
++
++  it('rejects an invalid raw retry limit', () => {
++    const appConfig = createTestAppConfig({
++      config: { resumableStreams: { terminalRecoveryMaxRetries: -1 } },
++    });
++    expect(() => getResumableStreamsConfig(appConfig)).toThrow();
++  });
++});
++
+ describe('getTransactionsConfig', () => {
+   beforeEach(() => {
+     jest.clearAllMocks();
+diff --git a/packages/api/src/app/config.ts b/packages/api/src/app/config.ts
+index c9e68b617bc0ac84959667278991fef4185b865e..5c768b7a0daabdb348f71e662e80b20020b2a1ae 100644
+--- a/packages/api/src/app/config.ts
++++ b/packages/api/src/app/config.ts
+@@ -3,10 +3,12 @@ import {
+   EModelEndpoint,
+   removeNullishValues,
+   normalizeEndpointName,
++  resumableStreamsSchema,
+ } from 'librechat-data-provider';
+ import type {
+   TEndpoint,
+   TCustomConfig,
++  TStartupConfig,
+   EndpointsDropParamsMap,
+   TTransactionsConfig,
+ } from 'librechat-data-provider';
+@@ -14,6 +16,12 @@ import type { AppConfig } from '@librechat/data-schemas';
+ import { resolveCustomEndpointSecrets } from '~/admin/secrets';
+ import { isEnabled } from '~/utils';
+ 
++export function getResumableStreamsConfig(
++  appConfig?: AppConfig,
++): NonNullable<TStartupConfig['resumableStreams']> {
++  return resumableStreamsSchema.parse(appConfig?.config?.resumableStreams);
++}
++
+ /**
+  * Retrieves the balance configuration object
+  * */
+diff --git a/packages/chat/src/core/__fixtures__/resumable.ts b/packages/chat/src/core/__fixtures__/resumable.ts
+index 1c6bd0d85b1e54bebdd78125b90fd735ee33387f..b35cc1408af845887c1ae9c8b615da0ee3ac85d7 100644
+--- a/packages/chat/src/core/__fixtures__/resumable.ts
++++ b/packages/chat/src/core/__fixtures__/resumable.ts
+@@ -159,7 +159,6 @@ export const createHost = (
+       findSteerTarget: jest.fn(() => -1),
+       applyActivityLabel: jest.fn((message) => message),
+       findActivityLabelTarget: jest.fn(() => -1),
+-      offsetActivityPhaseBoundary: jest.fn((index, prefix) => index + prefix),
+       applyReasoningLabel: jest.fn((message) => message),
+       findReasoningLabelTarget: jest.fn(() => -1),
+     },
+diff --git a/packages/chat/src/core/__tests__/subscription.spec.ts b/packages/chat/src/core/__tests__/subscription.spec.ts
+index 578e0045e2d2a7eba10666f944b5504861c42b15..2465f4ca538fc068b49d0343a148f13fe9541c96 100644
+--- a/packages/chat/src/core/__tests__/subscription.spec.ts
++++ b/packages/chat/src/core/__tests__/subscription.spec.ts
+@@ -12,18 +12,24 @@ import { createScheduler } from '../__fixtures__/resumable';
+ const createVisibility = () => {
+   let visible = true;
+   const listeners = new Set<() => void>();
++  const onlineListeners = new Set<() => void>();
+   const visibility: PageVisibility = {
+     isVisible: () => visible,
+     subscribe: (listener) => {
+       listeners.add(listener);
+       return () => listeners.delete(listener);
+     },
++    subscribeOnline: (listener) => {
++      onlineListeners.add(listener);
++      return () => onlineListeners.delete(listener);
++    },
+   };
+   const show = () => {
+     visible = true;
+     listeners.forEach((listener) => listener());
+   };
+-  return { visibility, show, listeners };
++  const online = () => onlineListeners.forEach((listener) => listener());
++  return { visibility, show, online, listeners, onlineListeners };
+ };
+ 
+ const submission = {
+@@ -148,20 +154,27 @@ describe('ResumableSubscription', () => {
+     expect(subscribe).toHaveBeenCalledWith(expect.objectContaining({ isResume: true }));
+   });
+ 
+-  it('re-attaches on foreground when the status proves an open connection terminal', async () => {
++  it('re-attaches an apparently open connection on foreground without a status preflight', () => {
+     const { sub, page, fetchStatus, subscribe } = setup();
+     sub.claim();
+     sub.connection = { closed: false };
+     sub.watchForeground();
+-    fetchStatus.mockResolvedValueOnce({ active: true, createdAt: 2000 });
+     page.show();
+-    await new Promise((resolve) => setImmediate(resolve));
+-    expect(subscribe).not.toHaveBeenCalled();
++    expect(fetchStatus).not.toHaveBeenCalled();
++    expect(subscribe).toHaveBeenCalledTimes(1);
++  });
+ 
+-    fetchStatus.mockResolvedValueOnce({ active: false, createdAt: 2000 });
+-    page.show();
+-    await new Promise((resolve) => setImmediate(resolve));
+-    expect(fetchStatus).toHaveBeenLastCalledWith('c-1');
++  it('retries paused terminal recovery when connectivity returns and resets its budget', () => {
++    const { sub, run, page, subscribe } = setup();
++    sub.claim();
++    sub.finalReceived = true;
++    sub.watchForeground();
++    page.online();
++    expect(subscribe).not.toHaveBeenCalled();
++    sub.terminalRecoveryPaused = true;
++    run.terminalRecoveryAttempt = 4;
++    page.online();
++    expect(run.terminalRecoveryAttempt).toBe(0);
+     expect(subscribe).toHaveBeenCalledTimes(1);
+   });
+ 
+@@ -176,6 +189,7 @@ describe('ResumableSubscription', () => {
+     });
+     second.watchForeground();
+     expect(page.listeners.size).toBe(1);
++    expect(page.onlineListeners.size).toBe(1);
+   });
+ });
+ 
+diff --git a/packages/chat/src/core/__tests__/terminal.spec.ts b/packages/chat/src/core/__tests__/terminal.spec.ts
+index 6f71332f50311578c42bbe37a3165d8f17d5c435..7ee25759e26fdb870bed671a0eabc35ade59c4f7 100644
+--- a/packages/chat/src/core/__tests__/terminal.spec.ts
++++ b/packages/chat/src/core/__tests__/terminal.spec.ts
+@@ -8,6 +8,7 @@ import {
+   reconcileGenerationLifecycle,
+ } from '../resumable';
+ import { createHost, createScheduler } from '../__fixtures__/resumable';
++import { getReconnectDelay } from '../resumable/start';
+ 
+ const submission = {
+   userMessage: { messageId: 'u-1', conversationId: 'c-1', isCreatedByUser: true } as TMessage,
+@@ -53,7 +54,7 @@ describe('authorizeTerminalTeardown', () => {
+     fetchStatus.mockResolvedValue({ active: true, createdAt: 2000, generationProtocolVersion: 2 });
+     await expect(authorizeTerminalTeardown(ctx, 'c-1', 'error')).resolves.toBe(false);
+     expect(ctx.sub.controller.signal.aborted).toBe(true);
+-    clock.advance(249);
++    clock.advance(getReconnectDelay(1) - 1);
+     expect(host.subscribe).not.toHaveBeenCalled();
+     clock.advance(1);
+     expect(host.subscribe).toHaveBeenCalledWith(
+@@ -129,15 +130,39 @@ describe('reconcileGenerationLifecycle', () => {
+     expect(run.reconnectAttempt).toBe(0);
+   });
+ 
+-  it('reports an error when history could not be read for a completed run', async () => {
+-    const { ctx, fetchStatus, host } = setup();
++  it('preserves the run until terminal history can be read', async () => {
++    const { ctx, fetchStatus, host, clock } = setup();
+     (host.cache.fetchMessages as jest.Mock).mockRejectedValue(new Error('offline'));
+     fetchStatus.mockResolvedValue({ active: false, generationProtocolVersion: 2 });
+     await reconcileGenerationLifecycle(ctx, { terminalStatus: 'complete' });
+     expect(host.steers.convertLocalToQueued).not.toHaveBeenCalled();
+-    expect(host.pane.publishRunEnd).toHaveBeenCalledWith(
+-      expect.objectContaining({ outcome: 'error' }),
+-    );
++    expect(host.pane.publishRunEnd).not.toHaveBeenCalled();
++    expect(host.pane.setIsSubmitting).not.toHaveBeenCalledWith(false);
++    clock.advance(getReconnectDelay(1));
++    expect(host.subscribe).toHaveBeenCalledTimes(1);
++  });
++
++  it('pauses terminal retries at the configured budget without clearing accepted work', async () => {
++    const { ctx, fetchStatus, host, run, clock } = setup();
++    host.terminalRecoveryMaxRetries = () => 1;
++    fetchStatus.mockRejectedValue(new Error('offline'));
++    await authorizeTerminalTeardown(ctx, 'c-1', 'FINAL');
++    clock.advance(getReconnectDelay(1));
++    expect(host.subscribe).toHaveBeenCalledTimes(1);
++    await authorizeTerminalTeardown(ctx, 'c-1', 'FINAL');
++    expect(run.terminalRecoveryAttempt).toBe(2);
++    expect(ctx.sub.terminalRecoveryPaused).toBe(true);
++    expect(clock.pending()).toBe(0);
++    expect(host.pane.publishRunEnd).not.toHaveBeenCalled();
++    expect(host.steers.convertLocalToQueued).not.toHaveBeenCalled();
++  });
++
++  it('reads persisted history only after status confirms terminal persistence', async () => {
++    const { ctx, fetchStatus, host } = setup();
++    fetchStatus.mockResolvedValue({ active: true, createdAt: 2000, generationProtocolVersion: 2 });
++    await reconcileGenerationLifecycle(ctx, { terminalStatus: 'complete' });
++    expect(host.cache.fetchMessages).not.toHaveBeenCalled();
++    expect(host.pane.publishRunEnd).not.toHaveBeenCalled();
+   });
+ 
+   it('ignores a frame for a different epoch', async () => {
+diff --git a/packages/chat/src/core/__tests__/transport.spec.ts b/packages/chat/src/core/__tests__/transport.spec.ts
+index 28ea0cffeab17b778782b4cde675eb42b5a726a9..76d5aefc7a718b33fd6d023efd505724ec5b5265 100644
+--- a/packages/chat/src/core/__tests__/transport.spec.ts
++++ b/packages/chat/src/core/__tests__/transport.spec.ts
+@@ -11,6 +11,8 @@ import { SSE } from 'sse.js';
+ type XHRListener = (event: { currentTarget: FakeXHR }) => void;
+ 
+ class FakeXHR {
++  static readonly HEADERS_RECEIVED = 2;
++  readyState = 0;
+   status = 200;
+   responseText = '';
+   withCredentials = false;
+@@ -24,6 +26,9 @@ class FakeXHR {
+   open() {}
+   setRequestHeader() {}
+   send() {}
++  getAllResponseHeaders() {
++    return 'Content-Type: text/plain';
++  }
+ 
+   abort() {
+     this.aborted = true;
+@@ -43,7 +48,12 @@ describe('sse.js transport contract', () => {
+ 
+   beforeEach(() => {
+     xhr = new FakeXHR();
+-    global.XMLHttpRequest = jest.fn(() => xhr) as unknown as typeof XMLHttpRequest;
++    global.XMLHttpRequest = Object.assign(
++      jest.fn(() => xhr),
++      {
++        HEADERS_RECEIVED: FakeXHR.HEADERS_RECEIVED,
++      },
++    ) as unknown as typeof XMLHttpRequest;
+   });
+ 
+   afterEach(() => {
+@@ -80,4 +90,20 @@ describe('sse.js transport contract', () => {
+     expect(onAbort).toHaveBeenCalledTimes(1);
+     expect(sse.readyState).toBe(SSE.CLOSED);
+   });
++
++  it('emits open before error even for unsuccessful HTTP responses', () => {
++    const sse = new SSE('/api/agents/chat/stream/convo-1', { method: 'GET' });
++    const events: string[] = [];
++    sse.addEventListener('open', (event: Event & { responseCode?: number }) => {
++      events.push(`open:${event.responseCode}`);
++    });
++    sse.addEventListener('error', (event: Event & { responseCode?: number }) => {
++      events.push(`error:${event.responseCode}`);
++    });
++    xhr.status = 503;
++    xhr.readyState = FakeXHR.HEADERS_RECEIVED;
++    xhr.emit('readystatechange');
++    xhr.emit('progress');
++    expect(events).toEqual(['open:503', 'error:503']);
++  });
+ });
+diff --git a/packages/chat/src/core/resumable/attach.ts b/packages/chat/src/core/resumable/attach.ts
+index 622b19c817a21a0fc3509d2709f152020cf8288d..157b4cd420ca933251f76effde4a110c55b10e9c 100644
+--- a/packages/chat/src/core/resumable/attach.ts
++++ b/packages/chat/src/core/resumable/attach.ts
+@@ -75,6 +75,7 @@ export function attachResumableStream(
+    */
+   const generationId =
+     sub.submission.clientRequestId ??
++    (generationCreatedAt != null ? `${streamId}:${generationCreatedAt}` : undefined) ??
+     (sub.submission.initialResponse as TMessage | undefined)?.messageId ??
+     streamId;
+   run.bindPrefixState(generationId);
+diff --git a/packages/chat/src/core/resumable/ceiling.ts b/packages/chat/src/core/resumable/ceiling.ts
+index 94cbde19d71574ba22445797198a8cedd399a48a..4b993fe5af96bf88dd899265a11efacab416485a 100644
+--- a/packages/chat/src/core/resumable/ceiling.ts
++++ b/packages/chat/src/core/resumable/ceiling.ts
+@@ -4,12 +4,14 @@ import type { TerminalContext } from './terminal';
+ import {
+   restoreLiveStatus,
+   handoffToReplacement,
++  clearAttachedDrainAfterAbort,
++  retryFencedTerminalAttachment,
+   clearPendingApprovalForTerminal,
+   clearAttachedGenerationCreatedAt,
+ } from './terminal';
+ import { GENERATION_PROTOCOL_VERSION, supportsGenerationProtocolV2 } from '../protocol';
++import { getRecoverySteerId, toStartGenerationError } from './start';
+ import { completedResponseMessageId } from './messages';
+-import { getRecoverySteerId } from './start';
+ 
+ /**
+  * The connection failed past the last retry. The transport gave up, not necessarily the
+@@ -106,6 +108,8 @@ export async function settleAfterRetryCeiling(ctx: TerminalContext): Promise<voi
+     }
+     if (Array.isArray(fetched)) {
+       persistedMessages = fetched;
++      host.messages.set(fetched);
++      run.terminalRecoveryAttempt = 0;
+     }
+   } catch (error) {
+     if (!sub.isCurrent()) {
+@@ -115,6 +119,10 @@ export async function settleAfterRetryCeiling(ctx: TerminalContext): Promise<voi
+       conversationId: recoveryConvoId,
+       error,
+     });
++    if (toStartGenerationError(error)?.response?.status !== 404 || status.active !== false) {
++      retryFencedTerminalAttachment(ctx, 'disconnected terminal history unavailable');
++      return;
++    }
+   }
+ 
+   const authoritativeValues = [
+@@ -174,6 +182,9 @@ export async function settleAfterRetryCeiling(ctx: TerminalContext): Promise<voi
+           status?.resumeState?.responseMessageId ?? sub.submission.initialResponse?.messageId,
+         )
+       : undefined;
++  if (persistedMessages == null) {
++    clearAttachedDrainAfterAbort(ctx, recoveryConvoId);
++  }
+   host.pane.publishRunEnd({
+     conversationId: recoveryConvoId,
+     outcome: recoveryOutcome,
+diff --git a/packages/chat/src/core/resumable/failure.ts b/packages/chat/src/core/resumable/failure.ts
+index c423df933d2cbac74a3ddb6300bc0274384bc528..9478ccdb41e8b9045b13c7dc8124a76682262023 100644
+--- a/packages/chat/src/core/resumable/failure.ts
++++ b/packages/chat/src/core/resumable/failure.ts
+@@ -2,13 +2,13 @@ import { ErrorTypes, ViolationTypes } from 'librechat-data-provider';
+ import type { ChatEvent, ChatErrorData } from 'librechat-data-provider';
+ import type { TerminalContext } from './terminal';
+ import {
+-  handoffToReplacement,
+   authorizeTerminalTeardown,
+   clearPendingApprovalForTerminal,
+   clearAttachedGenerationCreatedAt,
+ } from './terminal';
+ import { GENERATION_PROTOCOL_VERSION, supportsGenerationProtocolV2 } from '../protocol';
+ import { MAX_RETRIES, getReconnectDelay, getRecoverySteerId } from './start';
++import { reconcileGenerationLifecycle } from './reconcile';
+ import { settleAfterRetryCeiling } from './ceiling';
+ import { recoverMissingStream } from './missing';
+ 
+@@ -153,14 +153,9 @@ export async function handleTransportFailure(
+ 
+   host.pane.refreshBalance();
+ 
+-  if (responseCode === 409) {
+-    const handedOff = await handoffToReplacement(ctx, sub.conversationId());
+-    if (!sub.isCurrent()) {
+-      return;
+-    }
+-    if (handedOff) {
+-      return;
+-    }
++  if (responseCode === 409 && sub.generationProtocolVersion === GENERATION_PROTOCOL_VERSION) {
++    await reconcileGenerationLifecycle(ctx, { reconcileReason: 'generation_replaced' });
++    return;
+   }
+ 
+   // 404 → job completed & was cleaned up; messages are persisted in DB.
+diff --git a/packages/chat/src/core/resumable/frames.ts b/packages/chat/src/core/resumable/frames.ts
+index d6796e224edeca26b5efba6f2a21b270be3a1cf0..07d63650b493f99f886f018224d9f27467d0337b 100644
+--- a/packages/chat/src/core/resumable/frames.ts
++++ b/packages/chat/src/core/resumable/frames.ts
+@@ -51,6 +51,7 @@ async function handleFinal(ctx: StreamContext, data: ChatFinalFrame): Promise<vo
+   run.cancelSteerRetryFrames();
+   run.clearReconnectTimeout();
+   run.reconnectAttempt = 0;
++  run.terminalRecoveryAttempt = 0;
+   host.logger.log('ResumableSSE', 'Received FINAL event', {
+     aborted: data.aborted,
+     conversationId: data.conversation?.conversationId,
+diff --git a/packages/chat/src/core/resumable/host.ts b/packages/chat/src/core/resumable/host.ts
+index 23a5902abf4874ea004668ed5928a872523d7c03..d4b80cb7ebf4d80eb08ed4a1fe21130ee3ae8d25 100644
+--- a/packages/chat/src/core/resumable/host.ts
++++ b/packages/chat/src/core/resumable/host.ts
+@@ -36,6 +36,8 @@ export interface PageVisibility {
+   isVisible: () => boolean;
+   /** Calls `listener` on every visibility change; returns the unsubscribe. */
+   subscribe: (listener: () => void) => () => void;
++  /** Restored connectivity can re-arm a paused terminal recovery. */
++  subscribeOnline?: (listener: () => void) => () => void;
+ }
+ 
+ /** The document's own visibility. */
+@@ -45,6 +47,10 @@ export const documentVisibility: PageVisibility = {
+     document.addEventListener('visibilitychange', listener);
+     return () => document.removeEventListener('visibilitychange', listener);
+   },
++  subscribeOnline: (listener) => {
++    window.addEventListener('online', listener);
++    return () => window.removeEventListener('online', listener);
++  },
+ };
+ 
+ /** The status route's answer for a conversation's generation. */
+@@ -97,6 +103,8 @@ export interface SubscriptionHost {
+   fetchStatus: FetchStreamStatus;
+   /** Attaches a fresh subscription to `target`; how a subscription re-attaches itself. */
+   subscribe: (target: SubscriptionTarget) => void;
++  /** Read at retry time so policy changes also apply to existing attachments. */
++  terminalRecoveryMaxRetries?: () => number;
+ }
+ 
+ /** How steers the run never injected are turned into queued follow-ups. */
+diff --git a/packages/chat/src/core/resumable/missing.ts b/packages/chat/src/core/resumable/missing.ts
+index a6ee87261a403b547e547b9306c072a63b064ae8..b07fc24a8c5c057f5b40878364b12035f6b5aa6c 100644
+--- a/packages/chat/src/core/resumable/missing.ts
++++ b/packages/chat/src/core/resumable/missing.ts
+@@ -4,6 +4,8 @@ import type { TerminalContext } from './terminal';
+ import {
+   restoreLiveStatus,
+   handoffToReplacement,
++  clearAttachedDrainAfterAbort,
++  retryFencedTerminalAttachment,
+   clearPendingApprovalForTerminal,
+   clearAttachedGenerationCreatedAt,
+ } from './terminal';
+@@ -40,36 +42,8 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void>
+   });
+   host.events.clearStepMaps();
+   let persistedMessages: TMessage[] | undefined;
+-  if (convoId) {
+-    try {
+-      await host.cache.invalidateMessages(convoId, 'none');
+-      if (!sub.isCurrent()) {
+-        return;
+-      }
+-      // The first stream can finish before CREATED mounts the saved-chat query.
+-      const fetched = await host.cache.fetchMessages(convoId, true);
+-      if (!sub.isCurrent()) {
+-        return;
+-      }
+-      if (Array.isArray(fetched)) {
+-        persistedMessages = fetched;
+-      }
+-    } catch (error) {
+-      if (!sub.isCurrent()) {
+-        return;
+-      }
+-      host.logger.warn('ResumableSSE', 'Could not reconcile persisted messages after 404', {
+-        conversationId: convoId,
+-        error,
+-      });
+-    }
+-    host.cache.removeStreamStatus(convoId);
+-  }
+   const recoveryConvoId = convoId ?? currentStreamId;
+-  const reconciledIds = new Set(persistedMessages ? host.steers.appliedIds(persistedMessages) : []);
+-  if (persistedMessages) {
+-    host.steers.settleApplied(recoveryConvoId, persistedMessages);
+-  }
++  const reconciledIds = new Set<string>();
+ 
+   // The status replay is owner-gated and non-destructive; creating a
+   // recovered follow-up consumes its exact source. Prefer these
+@@ -84,7 +58,7 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void>
+       generationProtocolVersion === GENERATION_PROTOCOL_VERSION &&
+       !supportsGenerationProtocolV2(status)
+     ) {
+-      sub.scheduleReattach(1_000);
++      retryFencedTerminalAttachment(ctx, 'expired stream status was unnegotiated');
+       return;
+     }
+     if (
+@@ -128,6 +102,42 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void>
+       sub.scheduleReattach(1_000, activeStreamId, status.createdAt);
+       return;
+     }
++    if (status.active !== false) {
++      retryFencedTerminalAttachment(ctx, 'expired stream status inconclusive');
++      return;
++    }
++    // Read history after terminal status proves the persistence barrier has passed.
++    if (convoId) {
++      try {
++        await host.cache.invalidateMessages(convoId, 'none');
++        if (!sub.isCurrent()) return;
++        const fetched = await host.cache.fetchMessages(convoId, true);
++        if (!sub.isCurrent()) return;
++        if (Array.isArray(fetched)) {
++          persistedMessages = fetched;
++        }
++      } catch (error) {
++        if (!sub.isCurrent()) return;
++        host.logger.warn('ResumableSSE', 'Could not reconcile persisted messages after 404', {
++          conversationId: convoId,
++          error,
++        });
++        // A first turn stopped before persistence has no history to recover.
++        if (toStartGenerationError(error)?.response?.status !== 404) {
++          retryFencedTerminalAttachment(ctx, 'expired stream history unavailable');
++          return;
++        }
++      }
++      host.cache.removeStreamStatus(convoId);
++    }
++    if (persistedMessages) {
++      host.messages.set(persistedMessages);
++      run.terminalRecoveryAttempt = 0;
++      host.steers.settleApplied(recoveryConvoId, persistedMessages);
++      for (const id of host.steers.appliedIds(persistedMessages)) {
++        reconciledIds.add(id);
++      }
++    }
+     confirmedV2Terminal =
+       generationProtocolVersion === GENERATION_PROTOCOL_VERSION &&
+       supportsGenerationProtocolV2(status);
+@@ -156,6 +166,8 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void>
+       conversationId: recoveryConvoId,
+       error,
+     });
++    retryFencedTerminalAttachment(ctx, 'expired stream status unavailable');
++    return;
+   }
+ 
+   host.cache.removeActiveJob(currentStreamId);
+@@ -194,9 +206,6 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void>
+     void host.cache.refreshConversationLists();
+     void host.cache.refreshPinnedConversations();
+   }
+-  if (persistedMessages) {
+-    host.messages.set(persistedMessages);
+-  }
+   sub.retired = true;
+   host.pane.setIsSubmitting(false);
+   host.pane.setShowStopButton(false);
+@@ -223,6 +232,9 @@ export async function recoverMissingStream(ctx: TerminalContext): Promise<void>
+   const detached = host.pane.resolveDetachedEnd(recoveryConvoId, persistedMessages);
+   const detachedResolvable = detached.resolvable;
+   const detachedEnd = detached.end;
++  if (persistedMessages == null) {
++    clearAttachedDrainAfterAbort(ctx, recoveryConvoId);
++  }
+   host.pane.publishRunEnd(
+     {
+       conversationId: recoveryConvoId,
+diff --git a/packages/chat/src/core/resumable/mount.ts b/packages/chat/src/core/resumable/mount.ts
+index 06b4f5736a44f8a1eab00ce4d5223b74af26c607..b9fecedba6574fb010270640948ef668e3c7d60d 100644
+--- a/packages/chat/src/core/resumable/mount.ts
++++ b/packages/chat/src/core/resumable/mount.ts
+@@ -15,6 +15,7 @@ import { settleStart } from './settled';
+  * (navigation must not abort the generation) and drop the pending re-attach.
+  */
+ export function releaseSubmission(run: ResumableRun, host: ResumableHost): void {
++  run.terminalRecoveryAttempt = 0;
+   host.logger.log('ResumableSSE', 'No submission, cleaning up');
+   // Clear reconnect timeout if submission is cleared
+   run.clearReconnectTimeout();
+diff --git a/packages/chat/src/core/resumable/reconcile.ts b/packages/chat/src/core/resumable/reconcile.ts
+index a0ff8003fdcb59e36ba673132be75a2d97dec47e..e549e28f54eee1eec3db1406e148cc196c3a5a61 100644
+--- a/packages/chat/src/core/resumable/reconcile.ts
++++ b/packages/chat/src/core/resumable/reconcile.ts
+@@ -4,12 +4,14 @@ import type { StreamStatusResponse } from './host';
+ import type { TerminalContext } from './terminal';
+ import {
+   handoffToReplacement,
++  clearAttachedDrainAfterAbort,
++  retryFencedTerminalAttachment,
+   clearAttachedGenerationCreatedAt,
+   clearPendingApprovalForTerminal,
+ } from './terminal';
+ import { completedResponseMessageId, isInitialNewConversation } from './messages';
++import { getRecoverySteerId, toStartGenerationError } from './start';
+ import { supportsGenerationProtocolV2 } from '../protocol';
+-import { getRecoverySteerId } from './start';
+ 
+ /** A synthesized lifecycle frame: the run ended without an ordinary final payload. */
+ export type LifecycleFrame = Pick<
+@@ -44,33 +46,34 @@ export async function reconcileGenerationLifecycle(
+     return;
+   }
+ 
+-  if (event.reconcileReason === 'generation_replaced') {
+-    const handedOff = await handoffToReplacement(ctx, reconciliationConvoId);
++  run.reconnectAttempt = Math.max(run.reconnectAttempt, 1);
++  sub.close();
++  // The terminal status is the persistence barrier; history read before it can be stale.
++  let status: StreamStatusResponse;
++  try {
++    status = await host.fetchStatus(reconciliationConvoId);
+     if (!sub.isCurrent()) {
+       return;
+     }
+-    if (handedOff) {
++    if (await handoffToReplacement(ctx, reconciliationConvoId, status)) {
++      return;
++    }
++    if (!supportsGenerationProtocolV2(status) || status.active !== false) {
++      retryFencedTerminalAttachment(ctx, 'synthesized status is not terminal');
+       return;
+     }
+-    // Replacement visibility can lag its notification by a round trip.
+-    // Retry the stale epoch; the fenced HTTP endpoint will return the
+-    // dedicated replacement response as soon as the new job is visible.
+-    run.reconnectAttempt = Math.max(run.reconnectAttempt, 1);
+-    sub.close();
+-    sub.scheduleReattach(250);
++  } catch {
++    retryFencedTerminalAttachment(ctx, 'synthesized terminal status unavailable');
++    return;
++  }
++  if (!sub.isCurrent()) {
+     return;
+   }
+ 
+-  run.reconnectAttempt = Math.max(run.reconnectAttempt, 1);
+-  sub.close();
+   host.events.clearStepMaps();
+   let persistedMessages: TMessage[] | undefined;
+   try {
+-    /** Force a fetch through the already-registered messages query and
+-     *  use its returned value. Merely awaiting invalidateQueries and
+-     *  reading the cache can mistake stale pre-run history for a
+-     *  successful reconciliation because React Query normally swallows
+-     *  refetch errors. */
++    // Fetch persistence directly; a cache-only query may have no fetching observer.
+     await host.cache.invalidateMessages(reconciliationConvoId, 'none');
+     if (!sub.isCurrent()) {
+       return;
+@@ -81,6 +84,8 @@ export async function reconcileGenerationLifecycle(
+     }
+     if (Array.isArray(fetched)) {
+       persistedMessages = fetched;
++      host.messages.set(fetched);
++      run.terminalRecoveryAttempt = 0;
+     }
+   } catch (error) {
+     if (!sub.isCurrent()) {
+@@ -90,6 +95,10 @@ export async function reconcileGenerationLifecycle(
+       conversationId: reconciliationConvoId,
+       error,
+     });
++    if (toStartGenerationError(error)?.response?.status !== 404) {
++      retryFencedTerminalAttachment(ctx, 'terminal history unavailable');
++      return;
++    }
+   }
+   try {
+     await host.cache.refreshConversation(reconciliationConvoId);
+@@ -114,51 +123,6 @@ export async function reconcileGenerationLifecycle(
+     });
+   }
+ 
+-  let status: StreamStatusResponse | undefined;
+-  try {
+-    status = await host.fetchStatus(reconciliationConvoId);
+-    if (!sub.isCurrent()) {
+-      return;
+-    }
+-  } catch (error) {
+-    if (!sub.isCurrent()) {
+-      return;
+-    }
+-    host.logger.warn('ResumableSSE', 'Could not inspect synthesized terminal status', {
+-      conversationId: reconciliationConvoId,
+-      error,
+-    });
+-  }
+-  if (status != null && !supportsGenerationProtocolV2(status)) {
+-    /** A v2 control frame cannot be reconciled with a legacy status
+-     * snapshot (for example during a rolling deploy). Preserve the
+-     * attachment and retry the exact fenced generation. */
+-    sub.scheduleReattach(250);
+-    return;
+-  }
+-  if (
+-    status?.active === true &&
+-    status.createdAt != null &&
+-    (generationCreatedAt == null || status.createdAt !== generationCreatedAt)
+-  ) {
+-    const handedOff = await handoffToReplacement(ctx, reconciliationConvoId, status);
+-    if (!sub.isCurrent()) {
+-      return;
+-    }
+-    if (handedOff) {
+-      return;
+-    }
+-  }
+-  if (
+-    status?.active === true &&
+-    (generationCreatedAt == null || status.createdAt === generationCreatedAt)
+-  ) {
+-    // Durable state still calls this exact epoch active. Prefer another
+-    // fenced resume over terminalizing on a racing synthesized frame.
+-    sub.scheduleReattach(250);
+-    return;
+-  }
+-
+   const authoritativeValues = [
+     ...(persistedMessages ?? []),
+     ...(status?.resumeState?.aggregatedContent ?? status?.aggregatedContent ?? []),
+@@ -200,15 +164,12 @@ export async function reconcileGenerationLifecycle(
+   });
+   host.pane.setIsSubmitting(false);
+   host.pane.setShowStopButton(false);
+-  if (event.reconcileReason === 'abort_persistence_failed') {
++  if (persistedMessages == null || event.reconcileReason === 'abort_persistence_failed') {
+     /** Interrupt & send arms an override that drains even an `aborted`
+      * run. This terminal frame explicitly says durable persistence is
+      * unknown, so consume that override before publishing runEnd; the
+      * queued words remain available for a deliberate retry. */
+-    host.pane.clearDrainAfterAbort(
+-      sub.submission.conversation?.conversationId || String(Constants.NEW_CONVO),
+-      generationCreatedAt,
+-    );
++    clearAttachedDrainAfterAbort(ctx, reconciliationConvoId);
+   }
+   let reconciliationOutcome: 'completed' | 'aborted' | 'error' = 'aborted';
+   if (event.terminalStatus === 'complete') {
+diff --git a/packages/chat/src/core/resumable/run.ts b/packages/chat/src/core/resumable/run.ts
+index cca3327408f47d2cb6841a153846132e0be56b74..416c81a59cdfdb432e87f5042e829d1bce396c49 100644
+--- a/packages/chat/src/core/resumable/run.ts
++++ b/packages/chat/src/core/resumable/run.ts
+@@ -37,6 +37,8 @@ export class ResumableRun {
+    *  is registered at a time. */
+   stopForegroundReattach: (() => void) | null = null;
+   reconnectAttempt = 0;
++  /** A successful HTTP attachment does not prove that terminal history was recovered. */
++  terminalRecoveryAttempt = 0;
+   reconnectTimeout: TimerHandle | null = null;
+   /** The submission this pane serves; a subscription whose submission is no longer this one is
+    *  stale. */
+diff --git a/packages/chat/src/core/resumable/subscription.ts b/packages/chat/src/core/resumable/subscription.ts
+index 85f71e9fdb7f67a6cd85c506410c8f2c6662440d..a22428d95a9e55a2e85a0063079b957bc72f020f 100644
+--- a/packages/chat/src/core/resumable/subscription.ts
++++ b/packages/chat/src/core/resumable/subscription.ts
+@@ -50,7 +50,7 @@ export class ResumableSubscription {
+   /** Step events that arrived before `created` named the turn, replayed once it does. */
+   readonly preCreatedStepEvents: StepEvent[] = [];
+   connection: ChatStreamConnection | null = null;
+-  private foregroundStatusCheckInFlight = false;
++  terminalRecoveryPaused = false;
+ 
+   constructor(
+     readonly run: ResumableRun,
+@@ -190,15 +190,12 @@ export class ResumableSubscription {
+      *  supersedes it rather than waiting the delay out; its callback finds a superseded
+      *  subscription and does nothing. */
+     this.run.clearReconnectTimeout();
++    this.run.terminalRecoveryAttempt = 0;
+     this.run.reconnectAttempt = Math.max(this.run.reconnectAttempt, 1);
+     this.close();
+     this.reattach();
+   }
+ 
+-  private isSettled(): boolean {
+-    return this.finalReceived || this.retired || this.run.replacementHandoff;
+-  }
+-
+   /**
+    * A suspended page can lose its stream without the transport ever reporting it. When a
+    * mobile browser freezes the tab, an intermediary closes the response body underneath it,
+@@ -207,69 +204,33 @@ export class ResumableSubscription {
+    * conversation while the pane stays mounted, which is why the response the run finished
+    * writing only appears after a reload.
+    *
+-   * Some mobile WebViews leave the XHR marked OPEN even after the suspended request stopped
+-   * delivering events. In that case the durable run status is the only authority that
+-   * distinguishes a healthy live attachment from a terminal one holding stale partial content.
+-   * A terminal status forces the same resume path as a closed transport; it returns the
+-   * synthesized terminal frame or 404 that reconciles persisted messages.
++   * Some mobile WebViews leave XHR marked OPEN after it stops delivering events. The fenced
++   * resume endpoint adjudicates live, terminal and replaced generations without a status preflight.
+    */
+-  private handleForegroundReattach(): void {
+-    const { visibility, fetchStatus, logger } = this.host;
+-    if (!visibility.isVisible() || this.isSettled() || !this.isCurrent() || !this.run.submission) {
+-      return;
+-    }
+-
+-    if (this.connection?.closed === true) {
+-      this.reattachOnForeground();
++  private handleForegroundReattach(online = false): void {
++    if (
++      !this.host.visibility.isVisible() ||
++      ((online || this.finalReceived) && !this.terminalRecoveryPaused) ||
++      this.retired ||
++      this.run.replacementHandoff ||
++      !this.isCurrent() ||
++      !this.run.submission
++    ) {
+       return;
+     }
+-
+-    if (this.foregroundStatusCheckInFlight) {
+-      return;
+-    }
+-    this.foregroundStatusCheckInFlight = true;
+-    const foregroundConvoId = this.conversationId();
+-    const { generationCreatedAt } = this;
+-    void fetchStatus(foregroundConvoId)
+-      .then((status) => {
+-        if (
+-          status.active !== false ||
+-          (status.createdAt != null &&
+-            generationCreatedAt != null &&
+-            status.createdAt !== generationCreatedAt) ||
+-          !this.isCurrent() ||
+-          this.isSettled() ||
+-          !visibility.isVisible()
+-        ) {
+-          return;
+-        }
+-        logger.log(
+-          'ResumableSSE',
+-          'Apparently open stream is terminal - reconciling on foreground',
+-          { conversationId: foregroundConvoId, generationCreatedAt },
+-        );
+-        this.reattachOnForeground();
+-      })
+-      .catch((error) => {
+-        if (!this.isCurrent()) {
+-          return;
+-        }
+-        logger.warn('ResumableSSE', 'Could not verify stream on foreground', {
+-          conversationId: foregroundConvoId,
+-          generationCreatedAt,
+-          error,
+-        });
+-      })
+-      .finally(() => {
+-        this.foregroundStatusCheckInFlight = false;
+-      });
++    this.reattachOnForeground();
+   }
+ 
+   /** Replaces the pane's foreground listener with this subscription's. */
+   watchForeground(): void {
+     this.run.stopForegroundReattach?.();
+-    this.run.stopForegroundReattach = this.host.visibility.subscribe(() =>
+-      this.handleForegroundReattach(),
++    const stopVisibility = this.host.visibility.subscribe(() => this.handleForegroundReattach());
++    const stopOnline = this.host.visibility.subscribeOnline?.(() =>
++      this.handleForegroundReattach(true),
+     );
++    this.run.stopForegroundReattach = () => {
++      stopVisibility();
++      stopOnline?.();
++    };
+   }
+ }
+diff --git a/packages/chat/src/core/resumable/terminal.ts b/packages/chat/src/core/resumable/terminal.ts
+index 78a706ce3dfd5bb32d18045939a48766604cca76..1efaead8d7ec36c7cae49fa259319b48c7fe98ef 100644
+--- a/packages/chat/src/core/resumable/terminal.ts
++++ b/packages/chat/src/core/resumable/terminal.ts
+@@ -1,10 +1,11 @@
+-import { Constants } from 'librechat-data-provider';
++import { Constants, DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES } from 'librechat-data-provider';
+ import type { Agents, TPendingSteer } from 'librechat-data-provider';
+ import type { ResumableHost, StreamStatusResponse } from './host';
+ import type { GenerationProtocolVersion } from '../protocol';
+ import type { ResumableSubscription } from './subscription';
+ import type { ResponsePatcher } from './patches';
+ import { GENERATION_PROTOCOL_VERSION, supportsGenerationProtocolV2 } from '../protocol';
++import { getReconnectDelay } from './start';
+ 
+ /** One subscription's terminal handling: the attachment, the app around it, and how a pending
+  *  action lands on the response it streams. */
+@@ -49,6 +50,17 @@ export function clearAttachedGenerationCreatedAt({ sub, host }: TerminalContext)
+   }
+ }
+ 
++/** Missing terminal history cannot authorize an armed follow-up under either chat alias. */
++export function clearAttachedDrainAfterAbort(
++  { sub, host }: TerminalContext,
++  conversationId: string,
++): void {
++  host.pane.clearDrainAfterAbort(conversationId, sub.generationCreatedAt);
++  if (sub.startedAsNewConversation) {
++    host.pane.clearDrainAfterAbort(Constants.NEW_CONVO, sub.generationCreatedAt);
++  }
++}
++
+ /** Seeds the steer chips, settled parts and pending action a live status reports. */
+ export function restoreLiveStatus(
+   { host, applyPendingAction }: TerminalContext,
+@@ -187,10 +199,23 @@ export function retryFencedTerminalAttachment(
+   const { run } = sub;
+   run.reconnectAttempt = Math.max(run.reconnectAttempt, 1);
+   sub.close();
+-  if (run.reconnectTimeout) {
+-    run.scheduler.clearTimeout(run.reconnectTimeout);
++  run.clearReconnectTimeout();
++  const attempt = ++run.terminalRecoveryAttempt;
++  const retryLimit = () =>
++    host.terminalRecoveryMaxRetries?.() ?? DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES;
++  if (attempt > retryLimit()) {
++    sub.terminalRecoveryPaused = true;
++    return;
+   }
+-  sub.scheduleReattach(250);
++  run.reconnectTimeout = run.scheduler.setTimeout(() => {
++    run.reconnectTimeout = null;
++    if (!sub.isCurrent() || !run.submission) return;
++    if (attempt > retryLimit()) {
++      sub.terminalRecoveryPaused = true;
++      return;
++    }
++    sub.reattach();
++  }, getReconnectDelay(attempt));
+ }
+ 
+ /** Whether a terminal frame may tear the pane down, per a fresh status read. */
+diff --git a/packages/chat/src/core/transport/sse.ts b/packages/chat/src/core/transport/sse.ts
+index 83cac50ac3416530464b0bf7c38588f2d528dbb1..02401a097f8a405898d5a9a2a0996a90df7237f7 100644
+--- a/packages/chat/src/core/transport/sse.ts
++++ b/packages/chat/src/core/transport/sse.ts
+@@ -191,7 +191,11 @@ export function createSSETransport({ token }: { token?: string }): ChatTransport
+         onEvent(event);
+       };
+ 
+-      sse.addEventListener('open', () => {
++      sse.addEventListener('open', (event: StreamErrorEvent) => {
++        /** sse.js announces error response headers as open before emitting error. */
++        if (event.responseCode == null || event.responseCode < 200 || event.responseCode >= 300) {
++          return;
++        }
+         failureSeen = false;
+         dispatch({ type: 'open' });
+       });
+diff --git a/packages/data-provider/src/config.spec.ts b/packages/data-provider/src/config.spec.ts
+index be96bd60ed1c57da531bad3dbddfc5d5d14d3043..8b972f50bad554ea68c867d0b7140b5833fcbf98 100644
+--- a/packages/data-provider/src/config.spec.ts
++++ b/packages/data-provider/src/config.spec.ts
+@@ -424,6 +424,41 @@ describe('passkey enrollment config', () => {
+   });
+ });
+ 
++describe('resumable streams config', () => {
++  it.each([{ version: '1.0' }, { version: '1.0', resumableStreams: {} }])(
++    'defaults terminal recovery retries to five for %j',
++    (config) => {
++      expect(configSchema.parse(config).resumableStreams).toEqual({
++        terminalRecoveryMaxRetries: 5,
++      });
++    },
++  );
++
++  it.each([0, 2, 8, Number.MAX_SAFE_INTEGER])(
++    'preserves terminalRecoveryMaxRetries=%s',
++    (terminalRecoveryMaxRetries) => {
++      expect(
++        configSchema.parse({
++          version: '1.0',
++          resumableStreams: { terminalRecoveryMaxRetries },
++        }).resumableStreams,
++      ).toEqual({ terminalRecoveryMaxRetries });
++    },
++  );
++
++  it.each([-1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, '2'])(
++    'rejects terminalRecoveryMaxRetries=%s',
++    (terminalRecoveryMaxRetries) => {
++      expect(
++        configSchema.safeParse({
++          version: '1.0',
++          resumableStreams: { terminalRecoveryMaxRetries },
++        }).success,
++      ).toBe(false);
++    },
++  );
++});
++
+ describe('retained tool-count ceiling', () => {
+   it('ships the exact-count budget a deployment can raise or lower', () => {
+     /** The save path tokenizes a stopped turn's retained tool results to add an
+diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
+index fa2aa40b0b8e59150373e24fd986de6e12ed9cd8..2be591214a4b37ccfbb52c8f09a5dd9fd2063085 100644
+--- a/packages/data-provider/src/config.ts
++++ b/packages/data-provider/src/config.ts
+@@ -3709,6 +3709,7 @@ export type TStartupConfig = {
+    * is advertised. */
+   codeWorkspaceInheritanceVersion?: typeof CODE_WORKSPACE_INHERITANCE_VERSION;
+   interface?: TInterfaceConfig;
++  resumableStreams?: z.infer<typeof resumableStreamsSchema>;
+   turnstile?: TTurnstileConfig;
+   balance?: TBalanceConfig;
+   transactions?: TTransactionsConfig;
+@@ -4457,3 +4458,17 @@ export const messageReadsConfigSchema = z.object({
++export const DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES = 5;
++
++export const resumableStreamsSchema = z
++  .object({
++    /** Automatic terminal history recovery retries, independent of transport reconnects. */
++    terminalRecoveryMaxRetries: z
++      .number()
++      .int()
++      .min(0)
++      .max(Number.MAX_SAFE_INTEGER)
++      .default(DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES),
++  })
++  .prefault({});
++
+ export const configSchema = z.object({
+   version: z.string(),
+   telemetry: telemetrySchema.optional(),
+@@ -4467,6 +4482,7 @@ export const configSchema = z.object({
+     .optional(),
+   cache: z.boolean().default(true),
+   projects: chatProjectsConfigSchema,
++  resumableStreams: resumableStreamsSchema,
+   ocr: ocrSchema.optional(),
+   webSearch: webSearchSchema.optional(),
+   githubCompare: z

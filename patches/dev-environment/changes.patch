@@ -1,0 +1,473 @@
+diff --git a/.devcontainer/Dockerfile b/.devcontainer/Dockerfile
+index 68f64289ac86180b0e8556d2fc585e83846f5c5d..f20192f568b977afc2271b9f01d9336057bf8d2c 100644
+--- a/.devcontainer/Dockerfile
++++ b/.devcontainer/Dockerfile
+@@ -1,5 +1,21 @@
+ FROM node:24.22.1-bookworm
+ 
+-RUN useradd -m -s /bin/bash vscode
+-RUN mkdir -p /workspaces && chown -R vscode:vscode /workspaces
++# Keep the base in sync with .nvmrc; fail the build instead of silently using another runtime.
++COPY .nvmrc package.json package-lock.json /opt/librechat-dev/
++RUN set -eu; \
++    cd /opt/librechat-dev; \
++    test "$(node --version)" = "v$(cat .nvmrc)"; \
++    npm_spec="$(node -p 'require("./package.json").packageManager')"; \
++    npm install --global "$npm_spec"; \
++    apt-get update; \
++    apt-get install -y --no-install-recommends \
++      ca-certificates git openssh-client curl python3 make g++ pkg-config \
++      libcurl4 libssl3; \
++    playwright_version="$(node -p 'require("./package-lock.json").packages["node_modules/playwright-core"].version')"; \
++    npm exec --yes --package="playwright-core@$playwright_version" -- playwright-core install-deps chromium; \
++    rm -rf /var/lib/apt/lists/* /opt/librechat-dev /root/.npm
++
++# Only image-owned directories are created here; never recursively chown a mounted checkout.
++RUN useradd -m -s /bin/bash vscode \
++    && install -d -o vscode -g vscode /workspaces
+ WORKDIR /workspaces
+diff --git a/.devcontainer/README.md b/.devcontainer/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..e319deb6ac3b5f0f88714451572ae050ca7686db
+--- /dev/null
++++ b/.devcontainer/README.md
+@@ -0,0 +1,89 @@
++# Development and local testing
++
++## Fresh image
++
++The default `devcontainer.json` builds the Dockerfile directly, so Coder Envbuilder does
++not need Docker Compose or a Docker socket. It does not set `workspaceFolder`: the
++container host's clone/mount location remains authoritative (including
++`/workspaces/LibreChat`). The image contains:
++
++- Node **24.16.0** (checked against `.nvmrc`) and the npm version from
++  `package.json#packageManager` (**11.13.0** currently).
++- Git, OpenSSH client, CA certificates and curl; Python, make, C++ and pkg-config for
++  native npm modules when a prebuilt binary is unavailable.
++- Chromium OS libraries/fonts installed by the **lockfile's** Playwright CLI.
++  Debian bookworm is supported by current Playwright and supplies `libssl3`/`libcurl4`
++  for the memory-Mongo binary; the older bullseye base is not used.
++
++`postCreateCommand` runs `bash .devcontainer/setup.sh` from the checkout. It checks
++runtime pins and ownership, performs `npm ci --include=dev`, installs the matching
++Playwright Chromium (including headless shell), and pre-downloads the locked
++memory-Mongo package's binary. Downloads require registry/browser/Mongo distribution
++access. A failure exits nonzero; rerunning the command is safe after fixing it.
++No app, database, model service, or AI tooling is started or installed by the hook.
++Husky installation is disabled for this hook to preserve the host's Git configuration.
++OpenCode/acpx/provider/MCP tooling remains owned by the surrounding Coder template.
++
++VS Code executes the hook as `vscode`; Envbuilder may execute it as root. Dependencies
++and the default browser/Mongo caches belong to the **actual executing user** and its
++HOME. Keep the same user for setup and tests. A mismatched HOME owner or mixed-owner `node_modules` fails before
++installation; the hook never recursively changes ownership of a mounted checkout.
++Do not switch between root and vscode on one installed tree. User/volume provisioning
++belongs to the container host, not this hook.
++
++## Existing fallback workspace
++
++Editing this Dockerfile does not update an already-running container. A fresh image
++build/recreation is needed for the base and OS packages; rerunning the setup hook only
++installs project dependencies/binaries and cannot repair missing OS libraries or a
++different Node/npm runtime. Use the pins above and run the hook as the workspace user
++once the host has provisioned the runtime and OS dependencies. No task-local runtime
++path is required by checked-in configuration. A passing test in an existing workspace
++is not proof that this image built successfully.
++
++## Build and test explicitly
++
++From the checkout, after setup:
++
++```sh
++npm run frontend                         # shared packages, then production frontend
++npm run frontend:dev                    # optional Vite development server
++npm run test:client-build                # three bundle/worker regression tests
++node --test .devcontainer/setup.test.mjs # isolated setup/failure/ownership contracts
++# Focused Jest and types run in their owning workspace, for example:
++(cd client && npx --no-install jest --runInBand src/routes/Overlays.test.tsx)
++(cd client && npx --no-install tsc --noEmit)
++# Reuse the build; fake model, disposable memory Mongo, loopback-only app:
++E2E_BASE_URL=http://127.0.0.1:3098 E2E_USE_MEMORY_MONGO=true E2E_STREAM_STORE=memory \
++  MONGO_URI=mongodb://127.0.0.1:27017/LibreChat-devcontainer-e2e \
++  npx --no-install playwright test --config=e2e/playwright.config.mock.ts \
++  retained-prefix.spec.ts mobile-overlay-back.spec.ts streaming.spec.ts
++bash .devcontainer/lighthouse.sh         # reuses the production build
++```
++
++The memory harness downloads/runs its own MongoDB binary; a Mongo service on 27017 is
++not required. Test databases and servers are stopped by the harness. The wrapper finds
++Chromium through the installed Playwright package, uses disk-backed shared memory for
++small container `/dev/shm`, and adds `--no-sandbox` **only for root's local test process**.
++It does not alter Lighthouse budgets, query latency injection, or production sandbox
++settings. Non-root execution retains Chrome's sandbox and depends on the host permitting
++it. Run server-owning test suites sequentially. See [mock E2E](../e2e/README.md) and
++[Lighthouse](../e2e/lighthouse/README.md) for other profiles, budgets and diagnostics.
++Browser storage state, traces and failure logs may contain disposable login material;
++keep those artifacts local. Do not copy `.env` or production credentials into this image.
++
++## Optional existing Compose setup
++
++`.devcontainer/docker-compose.yml` is retained for hosts that explicitly opt into its
++existing MongoDB/Meilisearch development services. It builds this same image and mounts
++the repository at `/workspaces`; a Compose-based devcontainer config must use that path,
++`service: "app"`, and the same post-create hook. The default build-only config does not
++launch these services. The local memory tests above do not need Compose or Redis.
++
++## SSH publication
++
++Use an SSH origin such as `git@github.com:Ricky-Hao/LibreChat.git` for GitHub pushes.
++In Coder, use the Git identity and SSH command supplied by the template; this repository
++does not install an agent, copy keys, change remotes, or rewrite Git configuration.
++The configured origin and host trust remain the operator's responsibility. No GitHub
++token is needed for SSH Git operations. Initialization never fetches or pushes commits.
+diff --git a/.devcontainer/devcontainer.json b/.devcontainer/devcontainer.json
+index a3bb78055010877f932d4c1ab35bd6aea01a70ca..83db5926087f190fe7bc616d8d6bbeaf9edabb39 100644
+--- a/.devcontainer/devcontainer.json
++++ b/.devcontainer/devcontainer.json
+@@ -1,7 +1,9 @@
+ {
+-  "dockerComposeFile": "docker-compose.yml",
+-  "service": "app",
+-  "workspaceFolder": "/workspaces",
++  "name": "LibreChat Development",
++  "build": {
++    "dockerfile": "Dockerfile",
++    "context": ".."
++  },
+   "customizations": {
+     "vscode": {
+       "extensions": [],
+@@ -12,7 +14,6 @@
+       }
+     }
+   },
+-  "postCreateCommand": "",
+-  "features": { "ghcr.io/devcontainers/features/git:1": {} },
++  "postCreateCommand": "bash .devcontainer/setup.sh",
+   "remoteUser": "vscode"
+ }
+diff --git a/.devcontainer/lighthouse.sh b/.devcontainer/lighthouse.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..87a4d3a788ef399b852c4b01cfaf923747b0b05e
+--- /dev/null
++++ b/.devcontainer/lighthouse.sh
+@@ -0,0 +1,19 @@
++#!/usr/bin/env bash
++set -euo pipefail
++cd "$(dirname "${BASH_SOURCE[0]}")/.."
++
++# Only this test process uses these settings; production Chrome flags are untouched.
++export E2E_BASE_URL=http://127.0.0.1:3098
++export E2E_USE_MEMORY_MONGO=true
++export E2E_STREAM_STORE=memory
++export E2E_REPLICAS=1
++export MONGO_URI=mongodb://127.0.0.1:27017/LibreChat-devcontainer-e2e
++unset E2E_CHROMIUM_CHANNEL
++export CHROME_PATH
++CHROME_PATH="$(node -p 'require("playwright").chromium.executablePath()')"
++test -x "$CHROME_PATH"
++export LIGHTHOUSE_CHROME_FLAGS="${LIGHTHOUSE_CHROME_FLAGS:+$LIGHTHOUSE_CHROME_FLAGS }--disable-dev-shm-usage"
++if [[ "$(id -u)" == 0 ]]; then
++  export LIGHTHOUSE_CHROME_FLAGS="$LIGHTHOUSE_CHROME_FLAGS --no-sandbox"
++fi
++exec npm run lighthouse:run -- "$@"
+diff --git a/.devcontainer/setup.sh b/.devcontainer/setup.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..726b1b8c2f7188da06877f4b0e482f8519178569
+--- /dev/null
++++ b/.devcontainer/setup.sh
+@@ -0,0 +1,26 @@
++#!/usr/bin/env bash
++set -euo pipefail
++cd "$(dirname "${BASH_SOURCE[0]}")/.."
++
++expected_node="v$(cat .nvmrc)"
++expected_npm="$(node -p 'require("./package.json").packageManager.replace(/^npm@/, "")')"
++if [[ "$(node --version)" != "$expected_node" || "$(npm --version)" != "$expected_npm" ]]; then
++  echo "Expected Node $expected_node and npm $expected_npm; rebuild the dev image or select the repository-pinned runtime." >&2
++  exit 1
++fi
++
++# VS Code runs this as vscode; Envbuilder may run it as root. Install as that actual
++# user, with its own HOME/cache. Refuse mixed ownership instead of repairing volumes.
++uid="$(id -u)"
++if [[ ! -w . || ! -w "$HOME" || "$(stat -c %u "$HOME")" != "$uid" ]] \
++  || [[ -e node_modules && "$(stat -c %u node_modules)" != "$uid" ]]; then
++  echo 'Setup needs a writable checkout and HOME/node_modules owned by the executing user.' >&2
++  exit 1
++fi
++
++# Keep the host's existing Git configuration; Husky's prepare hook otherwise rewrites it.
++HUSKY=0 npm ci --include=dev --no-audit --no-fund
++node node_modules/playwright/cli.js install chromium
++# Pre-download the version selected by the locked package. This does not start MongoDB.
++node -e 'require("mongodb-memory-server-core").MongoBinary.getPath().catch(() => { console.error("Memory Mongo binary download failed; check network access and cache permissions."); process.exit(1); })'
++echo 'Development/test dependencies installed. No app or database service has been started.'
+diff --git a/.devcontainer/setup.test.mjs b/.devcontainer/setup.test.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..83bc28b7c030187deab08e6643318a55181c883a
+--- /dev/null
++++ b/.devcontainer/setup.test.mjs
+@@ -0,0 +1,216 @@
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import os from 'node:os';
++import path from 'node:path';
++import { spawnSync } from 'node:child_process';
++import { fileURLToPath } from 'node:url';
++import { test } from 'node:test';
++
++const source = path.dirname(fileURLToPath(import.meta.url));
++
++// Configuration contract only: the actual Envbuilder build verifies COPY semantics.
++test('dockerignore narrowly admits Envbuilder cache files after the hidden-file exclusion', () => {
++  const rules = fs
++    .readFileSync(path.join(source, '..', '.dockerignore'), 'utf8')
++    .split(/\r?\n/)
++    .map((line) => line.trim())
++    .filter((line) => line && !line.startsWith('#'));
++  const cacheRules = [
++    '!.envbuilder.tmp',
++    '.envbuilder.tmp/*',
++    '!.envbuilder.tmp/envbuilder',
++    '!.envbuilder.tmp/image',
++  ];
++  assert.deepEqual(rules.slice(-cacheRules.length), cacheRules);
++  assert.ok(rules.indexOf('.*') < rules.indexOf('!.envbuilder.tmp'));
++  assert.ok(rules.includes('.*'));
++  assert.ok(rules.includes('**/.git'));
++  assert.ok(rules.includes('**/node_modules'));
++  assert.ok(rules.includes('!.nvmrc'));
++  assert.deepEqual(
++    rules.filter((rule) => rule.startsWith('!')),
++    ['!.nvmrc', ...cacheRules.filter((rule) => rule.startsWith('!'))],
++  );
++});
++
++function fixture(t, uid = process.getuid(), gid = process.getgid()) {
++  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'librechat-setup-'));
++  const own = (filename) => {
++    if (process.getuid() === 0) fs.chownSync(filename, uid, gid);
++  };
++  own(root);
++  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
++  for (const directory of [
++    '.devcontainer',
++    'bin',
++    'home',
++    'node_modules',
++    'node_modules/playwright',
++    'node_modules/mongodb-memory-server-core',
++  ]) {
++    fs.mkdirSync(path.join(root, directory));
++    own(path.join(root, directory));
++  }
++  const write = (name, content, mode = 0o644) => {
++    const filename = path.join(root, name);
++    fs.writeFileSync(filename, content, { mode });
++    own(filename);
++  };
++  for (const script of ['setup.sh', 'lighthouse.sh']) {
++    write(`.devcontainer/${script}`, fs.readFileSync(path.join(source, script)));
++  }
++  write('.nvmrc', process.versions.node);
++  write('package.json', JSON.stringify({ packageManager: 'npm@11.13.0' }));
++  write('package-lock.json', '{}');
++  write(
++    'bin/npm',
++    `#!/bin/sh
++if [ "$1" = --version ]; then echo "\${TEST_NPM_VERSION:-11.13.0}"; exit; fi
++if [ "$1" = ci ]; then
++  [ "$HUSKY" = 0 ] || exit 91
++  echo "$*" >> "$TEST_ROOT/calls"
++  exit "\${TEST_INSTALL_EXIT:-0}"
++fi
++if [ "$1" = run ]; then
++  node "$TEST_ROOT/record.cjs"
++  exit
++fi
++exit 90
++`,
++    0o755,
++  );
++  write(
++    'record.cjs',
++    `require('node:fs').writeFileSync(process.env.TEST_ROOT + '/environment.json', JSON.stringify(Object.fromEntries(['CHROME_PATH', 'LIGHTHOUSE_CHROME_FLAGS', 'E2E_BASE_URL', 'E2E_USE_MEMORY_MONGO', 'E2E_STREAM_STORE', 'E2E_REPLICAS', 'E2E_CHROMIUM_CHANNEL'].map(key => [key, process.env[key]]))))`,
++  );
++  write(
++    'node_modules/playwright/cli.js',
++    `require('node:fs').appendFileSync(process.env.TEST_ROOT + '/calls', 'browser ' + process.argv.slice(2).join(' ') + '\\n')`,
++  );
++  write(
++    'node_modules/playwright/index.js',
++    `exports.chromium = { executablePath: () => process.env.TEST_ROOT + '/chrome' };`,
++  );
++  write(
++    'node_modules/mongodb-memory-server-core/index.js',
++    `exports.MongoBinary = {getPath: async () => { require('node:fs').appendFileSync(process.env.TEST_ROOT + '/calls', 'mongo-download\\n'); }};`,
++  );
++  write('chrome', '#!/bin/sh\nexit 0\n', 0o755);
++  // A project-local runtime may live under root-only ancestors in a fallback host.
++  if (uid !== process.getuid()) write('bin/node', fs.readFileSync(process.execPath), 0o755);
++  const run = (script = 'setup.sh', extra = {}) => {
++    const env = {
++      ...process.env,
++      HOME: path.join(root, 'home'),
++      TEST_ROOT: root,
++      PATH: `${root}/bin:${process.env.PATH}`,
++      ...extra,
++    };
++    const command = ['bash', path.join(root, '.devcontainer', script)];
++    return uid === process.getuid()
++      ? spawnSync(command[0], command.slice(1), { cwd: root, env, encoding: 'utf8' })
++      : spawnSync(
++          'runuser',
++          ['-u', 'vscode', '--', 'env', `HOME=${env.HOME}`, `PATH=${env.PATH}`, ...command],
++          { cwd: root, env, encoding: 'utf8' },
++        );
++  };
++  return { root, run, write, calls: () => fs.readFileSync(path.join(root, 'calls'), 'utf8') };
++}
++
++test('setup is repeatable and installs development dependencies before browser/Mongo downloads', (t) => {
++  const f = fixture(t);
++  for (let i = 0; i < 2; i++) assert.equal(f.run().status, 0);
++  assert.equal(
++    f.calls(),
++    'ci --include=dev --no-audit --no-fund\nbrowser install chromium\nmongo-download\n'.repeat(2),
++  );
++});
++
++test('a failed locked install stops before downloading or starting anything else', (t) => {
++  const f = fixture(t);
++  assert.equal(f.run('setup.sh', { TEST_INSTALL_EXIT: '42' }).status, 42);
++  assert.equal(f.calls(), 'ci --include=dev --no-audit --no-fund\n');
++});
++
++test('runtime mismatch stops before npm ci', (t) => {
++  const f = fixture(t);
++  assert.equal(f.run('setup.sh', { TEST_NPM_VERSION: '0.0.0' }).status, 1);
++  assert.equal(fs.existsSync(path.join(f.root, 'calls')), false);
++  f.write('.nvmrc', '0.0.0');
++  assert.equal(f.run().status, 1);
++  assert.equal(fs.existsSync(path.join(f.root, 'calls')), false);
++});
++
++test(
++  'mixed ownership fails without rewriting node_modules',
++  { skip: process.getuid() !== 0 },
++  (t) => {
++    const f = fixture(t);
++    fs.chownSync(path.join(f.root, 'node_modules'), 65534, 65534);
++    assert.equal(f.run().status, 1);
++    assert.equal(fs.statSync(path.join(f.root, 'node_modules')).uid, 65534);
++    assert.equal(fs.existsSync(path.join(f.root, 'calls')), false);
++  },
++);
++
++test('Lighthouse is loopback/memory-only and resolves the matching browser', (t) => {
++  const f = fixture(t);
++  const before = process.env.LIGHTHOUSE_CHROME_FLAGS;
++  assert.equal(
++    f.run('lighthouse.sh', {
++      LIGHTHOUSE_CHROME_FLAGS: '',
++      E2E_CHROMIUM_CHANNEL: 'chrome',
++      E2E_BASE_URL: 'https://example.invalid',
++    }).status,
++    0,
++  );
++  const env = JSON.parse(fs.readFileSync(path.join(f.root, 'environment.json')));
++  assert.equal(env.E2E_BASE_URL, 'http://127.0.0.1:3098');
++  assert.equal(env.E2E_USE_MEMORY_MONGO, 'true');
++  assert.equal(env.E2E_STREAM_STORE, 'memory');
++  assert.equal(env.E2E_REPLICAS, '1');
++  assert.equal(env.E2E_CHROMIUM_CHANNEL, undefined);
++  assert.equal(env.CHROME_PATH, path.join(f.root, 'chrome'));
++  assert.ok(env.LIGHTHOUSE_CHROME_FLAGS.includes('--disable-dev-shm-usage'));
++  assert.equal(env.LIGHTHOUSE_CHROME_FLAGS.includes('--no-sandbox'), process.getuid() === 0);
++  assert.equal(process.env.LIGHTHOUSE_CHROME_FLAGS, before);
++});
++
++test(
++  'an inherited HOME owned by another user fails before installing',
++  { skip: process.getuid() !== 0 },
++  (t) => {
++    const f = fixture(t);
++    fs.chownSync(path.join(f.root, 'home'), 65534, 65534);
++    assert.equal(f.run().status, 1);
++    assert.equal(fs.statSync(path.join(f.root, 'home')).uid, 65534);
++    assert.equal(fs.existsSync(path.join(f.root, 'calls')), false);
++  },
++);
++
++test('a missing Chromium stops before launching the Lighthouse harness', (t) => {
++  const f = fixture(t);
++  fs.unlinkSync(path.join(f.root, 'chrome'));
++  assert.notEqual(f.run('lighthouse.sh').status, 0);
++  assert.equal(fs.existsSync(path.join(f.root, 'environment.json')), false);
++});
++
++test(
++  'actual vscode execution owns its install and keeps the non-root sandbox',
++  { skip: process.getuid() !== 0 },
++  (t) => {
++    const identity = spawnSync('id', ['-u', 'vscode'], { encoding: 'utf8' });
++    if (identity.status !== 0) return t.skip('vscode user is not provisioned on this host');
++    const gid = Number(spawnSync('id', ['-g', 'vscode'], { encoding: 'utf8' }).stdout.trim());
++    const uid = Number(identity.stdout.trim());
++    const f = fixture(t, uid, gid);
++    const setup = f.run();
++    assert.equal(setup.status, 0, setup.stderr);
++    assert.equal(fs.statSync(path.join(f.root, 'calls')).uid, uid);
++    const lighthouse = f.run('lighthouse.sh', { LIGHTHOUSE_CHROME_FLAGS: '' });
++    assert.equal(lighthouse.status, 0, lighthouse.stderr);
++    const env = JSON.parse(fs.readFileSync(path.join(f.root, 'environment.json')));
++    assert.equal(env.LIGHTHOUSE_CHROME_FLAGS, '--disable-dev-shm-usage');
++  },
++);
+diff --git a/.dockerignore b/.dockerignore
+index 4320d5741d357a9aadad5db055af4e77c039fc91..3d7d07008a4df2c0a47326d6aa42f7284053fd1f 100644
+--- a/.dockerignore
++++ b/.dockerignore
+@@ -16,3 +16,12 @@ docs
+ 
+ # Ignore all hidden files
+ .*
++# The dev image checks its runtime against this non-secret repository pin.
++!.nvmrc
++
++# Envbuilder appends COPY instructions for these two cache-image files.
++# Allow the directory, but keep all other temporary contents excluded.
++!.envbuilder.tmp
++.envbuilder.tmp/*
++!.envbuilder.tmp/envbuilder
++!.envbuilder.tmp/image
+diff --git a/.github/workflows/frontend-review.yml b/.github/workflows/frontend-review.yml
+index aab06be1aa3cf95576438a680b0facb4b4e013ee..4ca6c0c00cfd302a416c49491ac9ac34aa03749b 100644
+--- a/.github/workflows/frontend-review.yml
++++ b/.github/workflows/frontend-review.yml
+@@ -52,6 +52,7 @@ env:
+ jobs:
+   client-build-regression:
+     name: Client build recovery regression
++    needs: build
+     runs-on: ubuntu-latest
+     timeout-minutes: 5
+     steps:
+@@ -61,6 +62,15 @@ jobs:
+           node-version: '24.22.1'
+           cache: npm
+       - run: npm ci
++      # Loading the real Vite config imports both packages through their built entries.
++      - uses: actions/download-artifact@v7
++        with:
++          name: build-data-provider
++          path: packages/data-provider/dist
++      - uses: actions/download-artifact@v7
++        with:
++          name: build-client-package
++          path: packages/client/dist
+       - run: google-chrome --version
+       - run: npm run test:client-build
+         env:

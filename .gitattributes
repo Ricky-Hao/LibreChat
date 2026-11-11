@@ -1,3 +1,5 @@
-# Force LF line endings for shell scripts and git hooks (required for cross-platform compatibility)
-.husky/* text eol=lf
-*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+# Keep Git binary diffs and original hunk bytes intact. Check applied source diffs separately.
+*.patch -text -whitespace
