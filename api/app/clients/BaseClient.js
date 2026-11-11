@@ -24,7 +24,7 @@ const {
   isToolOwnedAttachment,
   withBalanceReservations,
   findPreviousSummary,
-  resolveCheckpointMessage,
+  getConversationHistory,
   runAfterSeed,
   saveTurnConversation,
   seedTurnConversation,
@@ -1428,12 +1428,8 @@ class BaseClient {
    *
    * This function constructs a conversation thread by traversing messages from a given parentMessageId up to the root message.
    * It handles cyclic references by ensuring that a message is not processed more than once.
-   * If the 'summary' option is set to true and a message has a 'summary' property:
-   * - The message's 'role' is set to 'system'.
-   * - The message's 'text' is set to its 'summary'.
-   * - If the message has a 'summaryTokenCount', the message's 'tokenCount' is set to 'summaryTokenCount'.
-   * - A message with a summary content block keeps its content from that block on, for the SDK formatter to promote.
-   * The traversal stops at the message with the 'summary' property.
+   * Summary mode reads through the latest checkpoint to its retained-history anchor.
+   * Without a valid anchor it starts at the positional or legacy checkpoint.
    *
    * Each message object should have an 'id' or 'messageId' property and may have a 'parentMessageId' property.
    * The 'parentMessageId' is the ID of the message that the current message is a reply to.
@@ -1445,7 +1441,7 @@ class BaseClient {
    * @param {string} options.parentMessageId - The ID of the parent message to start the traversal from.
    * @param {Function} [options.mapMethod] - An optional function to map over the ordered messages. Applied conditionally based on mapCondition.
    * @param {(message: TMessage) => boolean} [options.mapCondition] - An optional function to determine whether mapMethod should be applied to a given message. If not provided and mapMethod is set, mapMethod applies to all messages.
-   * @param {boolean} [options.summary=false] - If set to true, the traversal modifies messages with 'summary' and 'summaryTokenCount' properties and stops at the message with a 'summary' property.
+   * @param {boolean} [options.summary=false] - Restore the latest usable checkpoint and its retained history.
    * @returns {TMessage[]} An array containing the messages in the order they should be displayed, starting with the most recent message with a 'summary' property if the 'summary' option is true, and ending with the message identified by 'parentMessageId'.
    */
   static getMessagesForConversation({
@@ -1455,49 +1451,7 @@ class BaseClient {
     mapCondition = null,
     summary = false,
   }) {
-    if (!messages || messages.length === 0) {
-      return [];
-    }
-
-    const orderedMessages = [];
-    let currentMessageId = parentMessageId;
-    const visitedMessageIds = new Set();
-    const messagesById = new Map();
-    for (const msg of messages) {
-      const messageId = msg.messageId ?? msg.id;
-      if (!messagesById.has(messageId)) {
-        messagesById.set(messageId, msg);
-      }
-    }
-
-    while (currentMessageId) {
-      if (visitedMessageIds.has(currentMessageId)) {
-        break;
-      }
-      const message = messagesById.get(currentMessageId);
-
-      visitedMessageIds.add(currentMessageId);
-
-      if (!message) {
-        break;
-      }
-
-      const checkpoint = summary ? resolveCheckpointMessage(message) : null;
-      const resolved = checkpoint ?? message;
-      const shouldMap = mapMethod != null && (mapCondition != null ? mapCondition(resolved) : true);
-      const processedMessage = shouldMap ? mapMethod(resolved) : resolved;
-      orderedMessages.push(processedMessage);
-
-      if (checkpoint) {
-        break;
-      }
-
-      currentMessageId =
-        message.parentMessageId === Constants.NO_PARENT ? null : message.parentMessageId;
-    }
-
-    orderedMessages.reverse();
-    return orderedMessages;
+    return getConversationHistory({ messages, parentMessageId, mapMethod, mapCondition, summary });
   }
 
   /**

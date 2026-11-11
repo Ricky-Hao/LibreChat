@@ -122,15 +122,19 @@ export function normalizeAgentEventActorDiscoveredTools(
  * from being refused by the next event and forcing a cold reload.
  */
 export function createAgentEventActorSummary(
-  summary: { text: string; tokenCount: number } | null | undefined,
+  summary: Omit<IAgentEventActorSummary, 'version'> | null | undefined,
 ): IAgentEventActorSummary | undefined {
   if (summary == null) {
     return undefined;
   }
+  const anchor = summary.coverage?.retainedFromMessageId;
   return {
     text: summary.text,
     tokenCount: summary.tokenCount,
     version: AGENT_EVENT_ACTOR_SUMMARY_VERSION,
+    ...(typeof anchor === 'string' && anchor.trim().length > 0
+      ? { coverage: { retainedFromMessageId: anchor.trim() } }
+      : {}),
   };
 }
 
@@ -157,6 +161,13 @@ export function normalizeAgentEventActorSummary(
     summary.version !== AGENT_EVENT_ACTOR_SUMMARY_VERSION
   ) {
     throw new RangeError('Event actor summary state is invalid');
+  }
+  if (
+    summary.coverage != null &&
+    (typeof summary.coverage.retainedFromMessageId !== 'string' ||
+      summary.coverage.retainedFromMessageId.trim().length === 0)
+  ) {
+    throw new RangeError('Event actor summary coverage is invalid');
   }
   return createAgentEventActorSummary(summary);
 }

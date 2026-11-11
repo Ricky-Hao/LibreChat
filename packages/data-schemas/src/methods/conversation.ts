@@ -1251,6 +1251,13 @@ export function createConversationMethods(
       throw new RangeError('Event actor summary state is invalid');
     }
     if (
+      input.summary?.coverage != null &&
+      (typeof input.summary.coverage.retainedFromMessageId !== 'string' ||
+        input.summary.coverage.retainedFromMessageId.trim().length === 0)
+    ) {
+      throw new RangeError('Event actor summary coverage is invalid');
+    }
+    if (
       input.contextMeta != null &&
       (!Number.isFinite(input.contextMeta.calibrationRatio) ||
         input.contextMeta.calibrationRatio < 0.5 ||

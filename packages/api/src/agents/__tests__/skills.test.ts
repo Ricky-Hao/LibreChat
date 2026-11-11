@@ -1,55 +1,3 @@
-/**
- * Mock the pieces of `@librechat/agents` the installed SDK version may not
- * export yet — the `Constants.SKILL_TOOL` stub and the tool definitions
- * needed to exercise `injectSkillCatalog`.
- *
- * `formatSkillCatalog` is deliberately NOT stubbed. Its truncation ladder is
- * the behaviour the catalog warnings report on, and a passthrough stub hides
- * every truncation the model actually sees.
- */
-jest.mock('@librechat/agents', () => ({
-  ...jest.requireActual('@librechat/agents'),
-  Constants: {
-    ...(jest.requireActual('@librechat/agents') as { Constants: Record<string, unknown> })
-      .Constants,
-    SKILL_TOOL: 'skill',
-  },
-  SkillToolDefinition: {
-    name: 'skill',
-    description: `skill tool
-
-CONSTRAINTS:
-- Skill names come from the catalog only. Do not guess names.`,
-    parameters: {
-      type: 'object',
-      properties: {
-        skillName: {
-          type: 'string',
-          description: 'Must match a name from the "Available Skills" section.',
-        },
-      },
-      required: ['skillName'],
-    },
-  },
-  ReadFileToolDefinition: {
-    name: 'read_file',
-    description: 'read file',
-    parameters: {},
-    responseFormat: 'content',
-  },
-  BashExecutionToolDefinition: {
-    name: 'bash_tool',
-    description: 'bash',
-    schema: {},
-  },
-  buildBashExecutionToolDescription: ({
-    enableToolOutputReferences,
-  }: {
-    enableToolOutputReferences?: boolean;
-  } = {}): string =>
-    enableToolOutputReferences === true ? 'bash {{tool<idx>turn<turn>}}' : 'bash',
-}));
-
 import { Types } from 'mongoose';
 import { logger } from '@librechat/data-schemas';
 import { SkillsScope } from 'librechat-data-provider';
@@ -1367,11 +1315,7 @@ describe('injectSkillCatalog', () => {
      * Symmetry check with `initializeAgent`'s call: `injectSkillCatalog`
      * must forward `enableToolOutputReferences` so that if call order
      * ever flips (skills-first), the resulting `bash_tool` description
-     * still contains the `{{tool<idx>turn<turn>}}` syntax guide. Using
-     * the registry mock's stub of `buildBashExecutionToolDescription`
-     * (defined at the top of this file), the guide collapses to a
-     * `{{tool<idx>turn<turn>}}` literal substring when the flag is on
-     * and is absent when off.
+     * still contains the SDK's `{{tool<idx>turn<turn>}}` syntax guide.
      */
     const owned = makeSkill('owned-skill', userObjectId);
     const listSkillsByAccess = buildPager([[owned]]);

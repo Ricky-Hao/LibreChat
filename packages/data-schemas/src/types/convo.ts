@@ -69,6 +69,8 @@ export interface IAgentEventActorSkillIdentity {
 export interface IAgentEventActorSummary {
   text: string;
   tokenCount: number;
+  /** First source message retained by the SDK's successful compaction. */
+  coverage?: { retainedFromMessageId: string };
   /** {@link AGENT_EVENT_ACTOR_SUMMARY_VERSION}; absent on pre-version states. */
   version?: number;
 }

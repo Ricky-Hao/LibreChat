@@ -283,6 +283,82 @@ describe('checkpointer (mongodb-memory-server integration)', () => {
     ).toEqual(['ordinary history', 'current skill body']);
   });
 
+  it('applies source-message coverage to a fork and rejects an unavailable anchor', async () => {
+    const saver = await getAgentCheckpointer(MONGO_CFG);
+    const threadId = `actor-${new mongoose.Types.ObjectId().toString()}`;
+    const checkpoint = emptyCheckpoint();
+    checkpoint.channel_values.messages = [
+      new HumanMessage({
+        id: 'retained-user',
+        content: 'covered history',
+        additional_kwargs: { sourceMessageId: 'covered-user' },
+      }),
+      new HumanMessage({
+        id: 'provider-id',
+        content: 'recent history',
+        additional_kwargs: { sourceMessageId: 'retained-user' },
+      }),
+      new HumanMessage({
+        content: 'old skill body',
+        additional_kwargs: { isMeta: true, source: 'skill' },
+      }),
+    ];
+    checkpoint.channel_versions.messages = 1;
+    const sourceConfig = {
+      configurable: {
+        thread_id: threadId,
+        checkpoint_ns: '',
+        [LIBRECHAT_CHECKPOINT_NAMESPACE_KEY]: 'event-actor/base',
+        [LIBRECHAT_EVENT_ACTOR_INVOCATION_KEY]: 'event-1',
+      },
+    };
+    await saver!.put(sourceConfig, checkpoint, { source: 'input', step: -1, parents: {} });
+    const source = { threadId, checkpointId: checkpoint.id, checkpointNs: 'event-actor/base' };
+    const currentSkill = new HumanMessage({
+      content: 'current skill body',
+      additional_kwargs: { isMeta: true, source: 'skill' },
+    });
+    expect(
+      await forkAgentEventCheckpoint(source, 'event-actor/fork', 'event-2', MONGO_CFG, {
+        source: 'skill',
+        messages: [currentSkill],
+        retainedFromMessageId: 'retained-user',
+      }),
+    ).not.toBeNull();
+    const fork = await saver!.getTuple({
+      configurable: {
+        ...sourceConfig.configurable,
+        [LIBRECHAT_CHECKPOINT_NAMESPACE_KEY]: 'event-actor/fork',
+      },
+    });
+    expect(
+      (fork?.checkpoint.channel_values.messages as HumanMessage[]).map(
+        (message) => message.content,
+      ),
+    ).toEqual(['recent history', 'current skill body']);
+    expect(
+      await forkAgentEventCheckpoint(source, 'event-actor/missing', 'event-3', MONGO_CFG, {
+        source: 'skill',
+        messages: [],
+        retainedFromMessageId: 'missing-user',
+      }),
+    ).toBeNull();
+    expect(
+      await saver!.getTuple({
+        configurable: {
+          ...sourceConfig.configurable,
+          [LIBRECHAT_CHECKPOINT_NAMESPACE_KEY]: 'event-actor/missing',
+        },
+      }),
+    ).toBeUndefined();
+    const base = await saver!.getTuple(sourceConfig);
+    expect(
+      (base?.checkpoint.channel_values.messages as HumanMessage[]).map(
+        (message) => message.content,
+      ),
+    ).toEqual(['covered history', 'recent history', 'old skill body']);
+  });
+
   it('warm-continues from a copied actor head without mutating the committed base', async () => {
     const { StateGraph, START, END, Annotation } = await import('@langchain/langgraph');
     const saver = await getAgentCheckpointer(MONGO_CFG);
