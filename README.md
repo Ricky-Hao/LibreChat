@@ -12,6 +12,8 @@
 - [提取范围、全部排除项与树比较](docs/extraction.md)
 - [来源与许可证](SOURCES.md)
 
+维护入口：[新增补丁](docs/maintenance.md#新增补丁)、[更新补丁或基线](docs/maintenance.md#修改或更新基线)、[应用补丁](docs/maintenance.md#选择与失败处理)、[淘汰补丁](docs/maintenance.md#淘汰补丁)。各流程共用[测试合同](docs/maintenance.md#测试合同)。
+
 ## 在应用 checkout 重放
 
 维护工具只需要 Python 3.9+ 和 Git。下面命令在补丁仓根目录执行。`/path/to/application` 必须是单独的、干净的 Git checkout，HEAD 精确等于固定基线。
@@ -50,4 +52,4 @@ runner 在应用 checkout 执行：Jest 精确 discovery、逐文件结果与非
 python3 -m unittest discover -s tools -p 'test_*.py' -v
 ```
 
-应用的合并、发布和部署属于后续阶段，沿既有 `rickyhao/dev` → GHCR 流程执行。本分支不改变 default branch、应用主分支或发布入口。
+应用的合并、发布和部署属于后续阶段，沿既有 `rickyhao/dev` → GHCR 流程执行。新基线同步及 default branch/发布入口切换也属于后续任务；本分支不改变 default branch、应用主分支或发布入口。
