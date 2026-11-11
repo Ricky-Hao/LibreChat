@@ -5,12 +5,12 @@
 今后同步上游默认按[上游同步默认流程](docs/maintenance.md#上游同步默认流程)执行：固定官方 upstream main 完整 SHA → 有序补丁重放与验证 → 合入 `patches` → CI 镜像 → 按 digest 部署。每轮按用户请求完成相应阶段，发布和部署按当次授权执行。
 
 固定应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`（upstream main）。原始完整 fork 源：`38c026db83d0ca12a067083b5c1551c1bca2754b`。
-共有 26 个状态条目、24 份标准 Git diff：`keep` 9、`feature` 4、`awaiting-upstream` 3、`local` 8、`upstream` 2。
-本轮 12 组可直接应用，12 组完成冲突或接口适配；2 组使用固定基线的等价实现，其中 vendor-chunks 本轮退役，index-retry 延续原有替代。
+共有 27 个状态条目、25 份标准 Git diff：`keep` 10、`feature` 4、`awaiting-upstream` 3、`local` 8、`upstream` 2。
+此前基线适配中，12 组可直接应用，12 组完成冲突或接口适配；2 组使用固定基线的等价实现，其中 vendor-chunks 退役，index-retry 延续原有替代。随后新增 [file-search-provisioning](patches/file-search-provisioning/README.md)，修复 PTC 附件按实际搜索准备及无 RAG 配置行为。
 
 [manifest.json](manifest.json) 是唯一有序清单，负责状态、依赖、载荷路径和测试合同。每个 `patches/<id>/` 包含行为说明、来源、维护步骤及非空 `tests.json`；活动条目另有 `changes.patch`。
 
-- [26 组行为映射与替代边界](docs/status.md)
+- [行为映射与替代边界](docs/status.md)
 - [应用、测试及维护方法](docs/maintenance.md)
 - [提取范围、全部排除项与树比较](docs/extraction.md)
 - [来源与许可证](SOURCES.md)

@@ -1,0 +1,1256 @@
+diff --git a/api/app/clients/tools/util/fileSearch.js b/api/app/clients/tools/util/fileSearch.js
+index e58874f311ea9beffecaaa9045c79145c5d654ab..1cab0ccb5fbbd4e71a82314a99f61de8d17d2346 100644
+--- a/api/app/clients/tools/util/fileSearch.js
++++ b/api/app/clients/tools/util/fileSearch.js
+@@ -1,28 +1,16 @@
+ const axios = require('axios');
+ const { logger } = require('@librechat/data-schemas');
+-const { tool } = require('@librechat/agents/langchain/tools');
+ const {
+   logAxiosError,
+   selectFileCitationSources,
+   generateShortLivedToken,
+-  executeFileSearchQuery,
++  createFileSearchTool: createSearchTool,
++  fileSearchJsonSchema,
++  primeFileSearchFiles,
+ } = require('@librechat/api');
+-const { Tools, EToolResources } = require('librechat-data-provider');
+ const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
+ const { getFiles } = require('~/models');
+ 
+-const fileSearchJsonSchema = {
+-  type: 'object',
+-  properties: {
+-    query: {
+-      type: 'string',
+-      description:
+-        "A natural language query to search for relevant information in the files. Be specific and use keywords related to the information you're looking for. The query will be used for semantic similarity matching against the file contents.",
+-    },
+-  },
+-  required: ['query'],
+-};
+-
+ /**
+  *
+  * @param {Object} options
+@@ -36,52 +24,12 @@ const fileSearchJsonSchema = {
+  * }>}
+  */
+ const primeFiles = async (options) => {
+-  const { tool_resources, req, agentId, agentResourceType } = options;
+-  const file_ids = tool_resources?.[EToolResources.file_search]?.file_ids ?? [];
+-  const agentResourceIds = new Set(file_ids);
+-  const resourceFiles = tool_resources?.[EToolResources.file_search]?.files ?? [];
+-
+-  // Get all files first
+-  const allFiles = (await getFiles({ file_id: { $in: file_ids } }, null, { text: 0 })) ?? [];
+-
+-  // Filter by access if user and agent are provided
+-  let dbFiles;
+-  if (req?.user?.id && agentId) {
+-    dbFiles = await filterFilesByAgentAccess({
+-      files: allFiles,
+-      userId: req.user.id,
+-      role: req.user.role,
+-      agentId,
+-      resourceType: agentResourceType,
+-    });
+-  } else {
+-    dbFiles = allFiles;
+-  }
+-
+-  dbFiles = dbFiles.concat(resourceFiles);
+-
+-  let toolContext = `- Note: Semantic search is available through the ${Tools.file_search} tool but no files are currently loaded. Request the user to upload documents to search through.`;
+-
+-  const files = [];
+-  for (let i = 0; i < dbFiles.length; i++) {
+-    const file = dbFiles[i];
+-    if (!file) {
+-      continue;
+-    }
+-    if (i === 0) {
+-      toolContext = `- Note: Use the ${Tools.file_search} tool to find relevant information within:`;
+-    }
+-    toolContext += `\n\t- ${file.filename}${
+-      agentResourceIds.has(file.file_id) ? '' : ' (just attached by user)'
+-    }`;
+-    files.push({
+-      file_id: file.file_id,
+-      filename: file.filename,
+-      fromAgent: agentResourceIds.has(file.file_id),
+-    });
+-  }
+-
+-  return { files, toolContext };
++  return primeFileSearchFiles({
++    ...options,
++    ragApiUrl: process.env.RAG_API_URL,
++    getFiles,
++    filterFilesByAgentAccess,
++  });
+ };
+ 
+ /**
+@@ -101,42 +49,19 @@ const createFileSearchTool = async ({
+   fileCitations = false,
+   appConfig,
+ }) => {
+-  return tool(
+-    ({ query }) =>
+-      executeFileSearchQuery({
+-        query,
+-        userId,
+-        files,
+-        entity_id,
+-        fileCitations,
+-        appConfig,
+-        ragApiUrl: process.env.RAG_API_URL,
+-        httpClient: axios,
+-        generateShortLivedToken,
+-        logAxiosError,
+-        selectFileCitationSources,
+-        logger,
+-      }),
+-    {
+-      name: Tools.file_search,
+-      responseFormat: 'content_and_artifact',
+-      description: `Performs semantic search across attached "${Tools.file_search}" documents using natural language queries. This tool analyzes the content of uploaded files to find relevant information, quotes, and passages that best match your query. Use this to extract specific information or find relevant sections within the available documents.${
+-        fileCitations
+-          ? `
+-
+-**CITE FILE SEARCH RESULTS:**
+-Use the EXACT anchor markers shown below (copy them verbatim) immediately after statements derived from file content. Reference the filename in your text:
+-- File citation: "The document.pdf states that... \\ue202turn0file0"  
+-- Page reference: "According to report.docx... \\ue202turn0file1"
+-- Multi-file: "Multiple sources confirm... \\ue200\\ue202turn0file0\\ue202turn0file1\\ue201"
+-
+-**CRITICAL:** Output these escape sequences EXACTLY as shown (e.g., \\ue202turn0file0). Do NOT substitute with other characters like † or similar symbols.
+-**ALWAYS mention the filename in your text before the citation marker. NEVER use markdown links or footnotes.**`
+-          : ''
+-      }`,
+-      schema: fileSearchJsonSchema,
+-    },
+-  );
++  return createSearchTool({
++    userId,
++    files,
++    entity_id,
++    fileCitations,
++    appConfig,
++    ragApiUrl: process.env.RAG_API_URL,
++    httpClient: axios,
++    generateShortLivedToken,
++    logAxiosError,
++    selectFileCitationSources,
++    logger,
++  });
+ };
+ 
+ module.exports = { createFileSearchTool, primeFiles, fileSearchJsonSchema };
+diff --git a/api/server/services/Endpoints/agents/initialize.js b/api/server/services/Endpoints/agents/initialize.js
+index 46e6fd07cc724f6242b53b0c07d4076d256aff0f..aac5ba6bc42e1ee5371fc811741885d42ea270e2 100644
+--- a/api/server/services/Endpoints/agents/initialize.js
++++ b/api/server/services/Endpoints/agents/initialize.js
+@@ -2027,6 +2027,7 @@ const initializeClientWithProvider = async ({
+     filterFiles: filterFilesByAgentAccess,
+     listPublications: db.listRunArtifacts,
+     provisioning: {
++      ragApiUrl: process.env.RAG_API_URL,
+       fileStorage: getFileStorage(),
+       provisionToCodeEnv,
+       provisionToVectorDB,
+diff --git a/api/server/services/Files/provisionCallback.js b/api/server/services/Files/provisionCallback.js
+index 5c55f37403ea79dd24a55aa17b4be7bd515e4ac3..5c3c6fc67d59645c72572bfe5fc318a50d24b196 100644
+--- a/api/server/services/Files/provisionCallback.js
++++ b/api/server/services/Files/provisionCallback.js
+@@ -13,6 +13,7 @@ function createProvisionFilesCallback({
+ }) {
+   return createCallback({
+     req,
++    ragApiUrl: process.env.RAG_API_URL,
+     agentToolContexts,
+     resolvePrimaryAgentId,
+     resolveExecutionContext,
+diff --git a/api/server/services/ToolService.js b/api/server/services/ToolService.js
+index 6847f8cf6bcd5403ff9b2b1b26ca90bb81e72c39..5851feb1369c837e885f0668f78aab86c3682523 100644
+--- a/api/server/services/ToolService.js
++++ b/api/server/services/ToolService.js
+@@ -1408,6 +1408,7 @@ async function loadToolDefinitionsWrapper({
+       userId: req.user.id,
+       agentId: agent.id,
+       tools: defsFilteredTools,
++      ragApiUrl: process.env.RAG_API_URL,
+       githubCompareEnabled: appConfig?.githubCompare?.enabled,
+       toolOptions: agent.tool_options,
+       deferredToolsEnabled,
+@@ -1506,6 +1507,7 @@ async function loadToolDefinitionsWrapper({
+           userId: req.user.id,
+           agentId: agent.id,
+           tools: defsFilteredTools,
++          ragApiUrl: process.env.RAG_API_URL,
+           githubCompareEnabled: appConfig?.githubCompare?.enabled,
+           toolOptions: agent.tool_options,
+           deferredToolsEnabled,
+diff --git a/api/test/app/clients/tools/util/fileSearch.test.js b/api/test/app/clients/tools/util/fileSearch.test.js
+index b1a44115d63078f382c72be820a64cec1dcf5b1a..522c895ac87e700fb80697922efb231283edd453 100644
+--- a/api/test/app/clients/tools/util/fileSearch.test.js
++++ b/api/test/app/clients/tools/util/fileSearch.test.js
+@@ -3,13 +3,19 @@ const { ResourceType } = require('librechat-data-provider');
+ 
+ jest.mock('axios');
+ jest.mock('@librechat/api', () => {
+-  const { selectFileCitationSources, executeFileSearchQuery } =
+-    jest.requireActual('@librechat/api');
++  const {
++    selectFileCitationSources,
++    createFileSearchTool,
++    fileSearchJsonSchema,
++    primeFileSearchFiles,
++  } = jest.requireActual('@librechat/api');
+   return {
+     generateShortLivedToken: jest.fn(),
+     logAxiosError: jest.fn(),
+     selectFileCitationSources,
+-    executeFileSearchQuery,
++    createFileSearchTool,
++    fileSearchJsonSchema,
++    primeFileSearchFiles,
+   };
+ });
+ 
+@@ -34,6 +40,7 @@ const { generateShortLivedToken } = require('@librechat/api');
+ 
+ describe('fileSearch.js - agent file authorization', () => {
+   it('uses the permission resource type established by the calling route', async () => {
++    process.env.RAG_API_URL = 'http://localhost:8000';
+     const { getFiles } = require('~/models');
+     const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
+     const files = [{ file_id: 'owner-file', filename: 'owner.pdf', user: 'agent-owner' }];
+@@ -112,7 +119,7 @@ describe('fileSearch.js - tuple return validation', () => {
+       expect(result[1]).toBeUndefined();
+     });
+ 
+-    it('should return tuple when no valid results found', async () => {
++    it('fails clearly when the RAG service cannot be queried', async () => {
+       generateShortLivedToken.mockReturnValue('mock-jwt-token');
+       axios.post.mockRejectedValue(new Error('API Error'));
+ 
+@@ -121,12 +128,9 @@ describe('fileSearch.js - tuple return validation', () => {
+         files: [{ file_id: 'file-1', filename: 'test.pdf' }],
+       });
+ 
+-      const result = await fileSearchTool.func({ query: 'test query' });
+-
+-      expect(Array.isArray(result)).toBe(true);
+-      expect(result).toHaveLength(2);
+-      expect(result[0]).toBe('No results found or errors occurred while searching the files.');
+-      expect(result[1]).toBeUndefined();
++      await expect(fileSearchTool.func({ query: 'test query' })).rejects.toThrow(
++        'File search failed while querying the RAG service.',
++      );
+     });
+   });
+ 
+diff --git a/packages/api/src/agents/files/host.spec.ts b/packages/api/src/agents/files/host.spec.ts
+index 51bffaa8650e4520eaea021328176828019edcd2..ba5665114037f7f57d27ce6fd78a362bbd136cc6 100644
+--- a/packages/api/src/agents/files/host.spec.ts
++++ b/packages/api/src/agents/files/host.spec.ts
+@@ -76,6 +76,7 @@ function harness(
+     setup?: TFile[];
+     hasEntityEmbeddings?: jest.Mock;
+     adoptLegacySearchEmbeddings?: jest.Mock;
++    ragApiUrl?: string | null;
+   } = {},
+ ) {
+   const input = options.inputs ?? [file('input')];
+@@ -214,6 +215,8 @@ function harness(
+     validateMessages: jest.fn(),
+     encodeMessages,
+     provisioning: {
++      ragApiUrl:
++        options.ragApiUrl === null ? undefined : (options.ragApiUrl ?? 'https://rag.example'),
+       fileStorage: {
+         recovery: createFileProvisionRecovery(),
+         acquireFileProvision: jest.fn(async () => true),
+@@ -293,6 +296,28 @@ function harness(
+ describe('run file execution host', () => {
+   afterEach(() => jest.restoreAllMocks());
+ 
++  it.each([null, '', ' \t\n'])(
++    'keeps shared code provisioning available without RAG (%j)',
++    async (ragApiUrl) => {
++      const h = harness({ ragApiUrl });
++      await h.prepare();
++      await h.host.provision(
++        [Constants.EXECUTE_CODE, 'file_search'],
++        'worker',
++        h.signal,
++        identity(),
++      );
++      expect(h.provisionToCodeEnv).toHaveBeenCalledTimes(2);
++      expect(h.provisionToVectorDB).not.toHaveBeenCalled();
++      const state = h.host.getContext('worker', identity())?.provisionState;
++      expect(state?.codeEnvFiles).toEqual([]);
++      expect(state?.vectorDBFiles.map((entry) => entry.file_id).sort()).toEqual([
++        'input',
++        'worker-setup',
++      ]);
++    },
++  );
++
+   it.each([
+     ['file_search', { file_search: { citations: ['document'] } }],
+     ['web_search', { web_search: { results: ['page'] } }],
+diff --git a/packages/api/src/agents/files/host.ts b/packages/api/src/agents/files/host.ts
+index 5cd8f2aad9e646546b22198c904d2fadedf72382..8e42621652a5555832e92a18f4293f247d9d5995 100644
+--- a/packages/api/src/agents/files/host.ts
++++ b/packages/api/src/agents/files/host.ts
+@@ -107,6 +107,7 @@ export function createRunFileHost<TContext extends RunFileToolContext>({
+   audit?: RunFileSessionDeps['audit'];
+   provisioning: Pick<
+     ProvisionCallbackDeps,
++    | 'ragApiUrl'
+     | 'fileStorage'
+     | 'provisionToCodeEnv'
+     | 'provisionToVectorDB'
+diff --git a/packages/api/src/agents/handlers.ptcFiles.spec.ts b/packages/api/src/agents/handlers.ptcFiles.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..281512994cbdf077f8c1151f1ff6691d8b839cda
+--- /dev/null
++++ b/packages/api/src/agents/handlers.ptcFiles.spec.ts
+@@ -0,0 +1,380 @@
++import { z } from 'zod';
++import axios from 'axios';
++import { createServer } from 'node:http';
++import { Constants } from '@librechat/agents';
++import { tool } from '@librechat/agents/langchain/tools';
++import type { PTCToolCall, PTCToolResult, ToolExecuteResult } from '@librechat/agents';
++import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
++import type { PtcToolCallEvent, TFile } from 'librechat-data-provider';
++import type { FileStorageClaim } from '@librechat/data-schemas';
++import type { ProvisionToolContext, ProvisionCallbackDeps } from '~/files/provision/callback';
++import type { FileProvisionStorage } from '~/files/operations';
++import type { ToolExecuteOptions } from './handlers';
++import type { ServerRequest } from '~/types';
++import { createProvisionFilesCallback } from '~/files/provision/callback';
++import { createContextProgrammaticBashTool } from '~/code/command';
++import { createFileProvisionRecovery } from '~/files/operations';
++import { selectFileCitationSources } from '~/files/citations';
++import { createFileSearchTool } from '~/files/rag/search';
++import { createToolExecuteHandler } from './handlers';
++
++interface BridgeRequest {
++  tool_results?: PTCToolResult[];
++}
++interface QueryRequest {
++  file_id: string;
++  query: string;
++  entity_id?: string;
++}
++let respond: (path: string, request: BridgeRequest & QueryRequest) => object;
++let baseUrl: string;
++const server = createServer(async (req, res) => {
++  const chunks: Buffer[] = [];
++  for await (const chunk of req) chunks.push(Buffer.from(chunk));
++  res.setHeader('Content-Type', 'application/json');
++  res.end(JSON.stringify(respond(req.url ?? '', JSON.parse(Buffer.concat(chunks).toString()))));
++});
++beforeAll(async () => {
++  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
++  const address = server.address();
++  if (!address || typeof address === 'string') throw new Error('Missing bridge address');
++  baseUrl = `http://127.0.0.1:${address.port}`;
++});
++afterAll(async () => {
++  server.closeAllConnections();
++  await new Promise<void>((resolve) => server.close(() => resolve()));
++});
++
++const search = (id = 'search'): PTCToolCall => ({
++  id,
++  name: 'file_search',
++  input: { query: 'report' },
++});
++const mcp = { id: 'mcp', name: 'read_mcp_fixture', input: {} };
++
++function harness({
++  steps = [[search()]],
++  searchAllowed = true,
++  ragApiUrl = baseUrl as string | null,
++  runSignal,
++}: {
++  steps?: PTCToolCall[][];
++  searchAllowed?: boolean;
++  ragApiUrl?: string | null;
++  runSignal?: AbortSignal;
++} = {}) {
++  const files = ['user-file', 'agent-file'].map(
++    (file_id) =>
++      ({
++        file_id,
++        filename: `${file_id}.md`,
++        user: 'user',
++        embedded: false,
++      }) as TFile,
++  );
++  const context: ProvisionToolContext = {
++    provisionState: {
++      codeEnvFiles: [files[0]],
++      vectorDBFiles: files,
++      aliveFileIds: new Set(),
++      agentScopedFileIds: new Set(['agent-file']),
++    },
++  };
++  const claims = new Set<string>();
++  const claimKey = (claim: FileStorageClaim) =>
++    JSON.stringify([claim.tenantId ?? null, claim.userId, claim.file_id]);
++  const storage: FileProvisionStorage = {
++    recovery: createFileProvisionRecovery(),
++    acquireFileProvision: async (claim) => {
++      const key = claimKey(claim);
++      if (claims.has(key)) return false;
++      claims.add(key);
++      return true;
++    },
++    releaseFileProvision: async (claim) => claims.delete(claimKey(claim)),
++    commitFileProvision: async ({ claim }) => claims.has(claimKey(claim)),
++  };
++  const vector = jest.fn<
++    ReturnType<ProvisionCallbackDeps['provisionToVectorDB']>,
++    Parameters<ProvisionCallbackDeps['provisionToVectorDB']>
++  >(async ({ file }) => ({
++    embedded: true,
++    fileUpdate: { file_id: file.file_id, embedded: true },
++  }));
++  const codeUpload = jest.fn<
++    ReturnType<ProvisionCallbackDeps['provisionToCodeEnv']>,
++    Parameters<ProvisionCallbackDeps['provisionToCodeEnv']>
++  >(async ({ file }) => ({
++    referenceSet: {
++      codeEnvRefs: {
++        default: {
++          kind: 'user',
++          id: 'user',
++          storage_session_id: 'session',
++          file_id: 'remote-file',
++        },
++      },
++    },
++    refUpdate: {
++      file_id: file.file_id,
++      routeKey: 'default',
++      ref: {
++        kind: 'user',
++        id: 'user',
++        storage_session_id: 'session',
++        file_id: 'remote-file',
++      },
++    },
++    sandboxFilename: file.filename,
++  }));
++  const provisionFiles = createProvisionFilesCallback({
++    req: { user: { id: 'user' } } as ServerRequest,
++    ragApiUrl: ragApiUrl ?? undefined,
++    agentToolContexts: new Map([['agent', context]]),
++    fileStorage: storage,
++    provisionToCodeEnv: codeUpload,
++    provisionToVectorDB: vector,
++    updateFile: async () => true,
++    updateCodeEnvRef: async () => true,
++    addEmbeddedEntity: async () => true,
++  });
++  const mcpInvoke = jest.fn(async () => 'MCP ready');
++  const mcpTool = tool(mcpInvoke, {
++    name: mcp.name,
++    description: 'Local MCP fixture.',
++    schema: z.object({}),
++  });
++  const batches: PTCToolResult[][] = [];
++  const queries: QueryRequest[] = [];
++  const queryReadiness: boolean[] = [];
++  let step = 0;
++  respond = (path, request) => {
++    if (path === '/query') {
++      queries.push(request);
++      queryReadiness.push(
++        files.find((file) => file.file_id === request.file_id)?.embedded === true,
++      );
++      return [[{ page_content: 'report content', metadata: { source: '/report.md' } }, 0.1]];
++    }
++    if (request.tool_results) batches.push(request.tool_results);
++    const calls = steps[step++];
++    return calls
++      ? {
++          status: 'tool_call_required',
++          continuation_token: 'local-fixture',
++          tool_calls: calls,
++        }
++      : { status: 'completed', stdout: 'done', stderr: '', files: [] };
++  };
++  const events: PtcToolCallEvent[] = [];
++  const loadTools: jest.MockedFunction<ToolExecuteOptions['loadTools']> = jest.fn(async (names) => {
++    // A fresh snapshot reproduces the production factory's captured file list.
++    const resource = context.tool_resources?.file_search;
++    const searchTool = await createFileSearchTool({
++      ragApiUrl: ragApiUrl ?? undefined,
++      userId: 'user',
++      entity_id: 'agent',
++      files: [
++        ...(resource?.files ?? []).map((file) => ({ file_id: file.file_id })),
++        ...(resource?.file_ids ?? []).map((file_id) => ({ file_id, fromAgent: true })),
++      ],
++      httpClient: axios,
++      generateShortLivedToken: () => 'fixture',
++      logAxiosError: () => '',
++      selectFileCitationSources,
++      logger: { debug: jest.fn() },
++    });
++    if (names.includes('file_search')) return { loadedTools: searchTool ? [searchTool] : [] };
++    const ptc = createContextProgrammaticBashTool(() => ({}), {
++      baseUrl,
++      codeSessionKey: 'fixture',
++      executionProfile: 'default',
++      statefulSessions: false,
++    });
++    ptc.name = names[0];
++    const ptcToolMap = new Map<string, StructuredToolInterface>([[mcpTool.name, mcpTool]]);
++    if (searchTool) ptcToolMap.set(searchTool.name, searchTool);
++    return {
++      loadedTools: [ptc],
++      configurable: {
++        ptcToolMap,
++        toolRegistry: new Map(
++          [...ptcToolMap.keys()].map((name) => [
++            name,
++            {
++              name,
++              description: name,
++              parameters:
++                name === 'file_search'
++                  ? {
++                      type: 'object',
++                      properties: {
++                        query: { type: 'string' },
++                      },
++                      required: ['query'],
++                    }
++                  : { type: 'object', properties: {} },
++              allowed_callers:
++                name === 'file_search' && !searchAllowed
++                  ? ['direct']
++                  : ['direct', 'code_execution'],
++            },
++          ]),
++        ),
++      },
++    };
++  });
++  const handler = createToolExecuteHandler({
++    loadTools,
++    provisionFiles,
++    runSignal,
++    emitPtcProgress: (event) => events.push(event),
++  });
++  const run = (
++    name = Constants.BASH_PROGRAMMATIC_TOOL_CALLING,
++    args: Record<string, unknown> | string = { code: 'dynamic_call "{}"' },
++  ) =>
++    new Promise<ToolExecuteResult[]>((resolve, reject) => {
++      handler.handle('on_tool_execute', {
++        agentId: 'agent',
++        // The handler also accepts provider JSON strings beyond the SDK event type.
++        toolCalls: [{ id: 'outer', name, args: args as Record<string, unknown> }],
++        resolve,
++        reject,
++      });
++    });
++  return {
++    run,
++    vector,
++    codeUpload,
++    loadTools,
++    context,
++    batches,
++    queries,
++    queryReadiness,
++    mcpInvoke,
++    events,
++  };
++}
++
++it.each([
++  [Constants.BASH_PROGRAMMATIC_TOOL_CALLING, false],
++  [Constants.PROGRAMMATIC_TOOL_CALLING, true],
++])(
++  'prepares an actual inner search without a manifest (%s, JSON string %s)',
++  async (name, json) => {
++    const h = harness();
++    const input = { code: 'dynamic_call "{}"' };
++    const [result] = await h.run(name, json ? JSON.stringify(input) : input);
++    expect(result.status).toBe('success');
++    expect(h.vector).toHaveBeenCalledTimes(2);
++    expect(h.codeUpload).toHaveBeenCalledTimes(1);
++    expect(h.queries).toEqual(
++      expect.arrayContaining([
++        { file_id: 'user-file', query: 'report', k: 5 },
++        { file_id: 'agent-file', entity_id: 'agent', query: 'report', k: 5 },
++      ]),
++    );
++    expect(h.queryReadiness).toEqual([true, true]);
++    expect(JSON.stringify(h.batches)).toContain('report content');
++    expect(h.loadTools.mock.calls.map(([names]) => names)).toEqual([[name], ['file_search']]);
++  },
++);
++
++it.each([null, '', ' \t\n', 'configured'])(
++  'keeps pure MCP PTC free of search preparation (%j)',
++  async (url) => {
++    const h = harness({ steps: [[mcp]], ragApiUrl: url === 'configured' ? baseUrl : url });
++    const [result] = await h.run(undefined, {
++      code: '# file_search is only a comment\nread_mcp_fixture "{}"',
++      tool_manifest: url === 'configured' ? [mcp.name, 'file_search'] : [mcp.name],
++    });
++    expect(result.status).toBe('success');
++    expect(h.vector).not.toHaveBeenCalled();
++    expect(h.codeUpload).toHaveBeenCalledTimes(1);
++    expect(h.mcpInvoke).toHaveBeenCalledTimes(1);
++    expect(h.context.provisionState?.vectorDBFiles).toHaveLength(2);
++    expect(h.queries).toEqual([]);
++  },
++);
++
++it('shares preparation for parallel searches while preserving mixed MCP calls and progress', async () => {
++  const h = harness({ steps: [[mcp, search('first'), search('second')]] });
++  await h.run();
++  expect(h.vector).toHaveBeenCalledTimes(2);
++  expect(h.mcpInvoke).toHaveBeenCalledTimes(1);
++  expect(h.queries).toHaveLength(4);
++  expect(h.queryReadiness.every(Boolean)).toBe(true);
++  expect(
++    h.events.filter((event) => event.name === 'file_search').map((event) => event.status),
++  ).toEqual(['running', 'running', 'success', 'success']);
++});
++
++it('keeps denied inner search outside the callable map and never prepares its files', async () => {
++  const h = harness({ searchAllowed: false });
++  await h.run(undefined, { code: 'dynamic_call "{}"', tool_manifest: [mcp.name] });
++  expect(h.vector).not.toHaveBeenCalled();
++  expect(h.queries).toEqual([]);
++  expect(h.batches[0][0]).toMatchObject({
++    is_error: true,
++    error_message: expect.stringContaining("Tool 'file_search' not found"),
++  });
++});
++
++it('rejects an explicit direct-only search manifest before invoking the bridge', async () => {
++  const h = harness({ searchAllowed: false });
++  const [result] = await h.run(undefined, {
++    code: 'dynamic_call "{}"',
++    tool_manifest: ['file_search'],
++  });
++  expect(result.status).toBe('error');
++  expect(h.vector).not.toHaveBeenCalled();
++  expect(h.queries).toEqual([]);
++  expect(h.batches).toEqual([]);
++});
++
++it.each([null, '', ' \t\n'])(
++  'returns an inner tool error when search has no RAG service (%j)',
++  async (ragApiUrl) => {
++    const h = harness({ ragApiUrl });
++    await h.run();
++    expect(h.batches[0][0]).toMatchObject({
++      is_error: true,
++      error_message: expect.stringContaining("Tool 'file_search' not found"),
++    });
++    expect(h.vector).not.toHaveBeenCalled();
++    expect(h.queries).toEqual([]);
++  },
++);
++
++it('reports embedding failure to the bridge and retries its retained queue on the next search', async () => {
++  const h = harness({ steps: [[search('first')], [search('retry')]] });
++  h.vector.mockRejectedValueOnce(new Error('fixture embedding failed'));
++  await h.run();
++  expect(h.batches[0][0]).toMatchObject({
++    is_error: true,
++    error_message: expect.stringContaining('Failed to provision 1 file(s) for search'),
++  });
++  expect(JSON.stringify(h.batches[1][0])).toContain('report content');
++  expect(h.vector).toHaveBeenCalledTimes(3);
++  expect(h.queries).toHaveLength(2);
++  expect(h.context.provisionState?.vectorDBFiles).toEqual([]);
++});
++
++it('cancels preparation before reloading or querying the inner search', async () => {
++  const controller = new AbortController();
++  const h = harness({ runSignal: controller.signal });
++  h.vector.mockImplementation(async ({ signal }) => {
++    expect(signal).toBeDefined();
++    controller.abort(new Error('fixture cancelled'));
++    signal?.throwIfAborted();
++    throw new Error('Expected cancellation');
++  });
++  const [result] = await h.run();
++  expect(result.status).toBe('error');
++  expect(controller.signal.aborted).toBe(true);
++  expect(h.vector).toHaveBeenCalled();
++  expect(h.loadTools).toHaveBeenCalledTimes(1);
++  expect(h.queries).toEqual([]);
++  expect(h.context.provisionState?.vectorDBFiles).toHaveLength(2);
++});
+diff --git a/packages/api/src/agents/handlers.ts b/packages/api/src/agents/handlers.ts
+index c30537c77c157d45b26ed1feec325c02836da1d5..58c273067150c37b0c6fb6cc733e828cecf546cb 100644
+--- a/packages/api/src/agents/handlers.ts
++++ b/packages/api/src/agents/handlers.ts
+@@ -7631,6 +7631,51 @@ export function createToolExecuteHandler(handlerOptions: ToolExecuteOptions): Ev
+                         const eligiblePtcToolMap = new Map(
+                           [...(ptcToolMap ?? toolMap)].filter(([name]) => eligibleNames.has(name)),
+                         );
++                        const searchTool = eligiblePtcToolMap.get('file_search');
++                        if (searchTool && provisionFiles) {
++                          /* Inner calls bypass ON_TOOL_EXECUTE. Prepare only an actual
++                           * search, then reload: the first instance captured the file
++                           * list before these queued attachments were embedded. */
++                          eligiblePtcToolMap.set(
++                            'file_search',
++                            new Proxy(searchTool, {
++                              get(target, property) {
++                                if (property !== 'invoke')
++                                  return Reflect.get(target, property, target);
++                                return async (
++                                  input: unknown,
++                                  config?: Parameters<StructuredToolInterface['invoke']>[1],
++                                ) => {
++                                  const signal =
++                                    runSignal && config?.signal
++                                      ? AbortSignal.any([runSignal, config.signal])
++                                      : (runSignal ?? config?.signal);
++                                  await provisionFiles(
++                                    ['file_search'],
++                                    agentId,
++                                    signal,
++                                    executionContext,
++                                  );
++                                  signal?.throwIfAborted();
++                                  const { loadedTools } = await loadTools(
++                                    ['file_search'],
++                                    agentId,
++                                    mergedConfigurable,
++                                    callerCapabilityProjection,
++                                    signal,
++                                    executionContext,
++                                  );
++                                  signal?.throwIfAborted();
++                                  const preparedTool = loadedTools.find(
++                                    (loaded) => loaded.name === 'file_search',
++                                  );
++                                  if (!preparedTool) throw new Error('Tool file_search not found');
++                                  return preparedTool.invoke(input, { ...config, signal });
++                                };
++                              },
++                            }),
++                          );
++                        }
+                         /* Inner calls produce no run step and no card of their
+                          * own, so the only record of what the program did is
+                          * this trace. `invoke` is the single seam every inner
+diff --git a/packages/api/src/files/provision/callback.spec.ts b/packages/api/src/files/provision/callback.spec.ts
+index 1e836c284096067900705894a1fb275b66b09475..94ed57cb0eb00cd3e08553cce38186ed3acbfead 100644
+--- a/packages/api/src/files/provision/callback.spec.ts
++++ b/packages/api/src/files/provision/callback.spec.ts
+@@ -61,10 +61,12 @@ function buildHarness({
+   codeImpl,
+   vectorImpl,
+   resolveExecutionContext,
++  ragApiUrl = 'http://rag.test',
+ }: {
+   contexts: Array<[string, ProvisionToolContext]>;
+   codeImpl?: jest.Mock;
+   vectorImpl?: jest.Mock;
++  ragApiUrl?: string | null;
+   resolveExecutionContext?: Parameters<
+     typeof createProvisionFilesCallback
+   >[0]['resolveExecutionContext'];
+@@ -143,6 +145,7 @@ function buildHarness({
+     fileStorage,
+     provisionFiles: createProvisionFilesCallback({
+       req,
++      ragApiUrl: ragApiUrl ?? undefined,
+       fileStorage,
+       agentToolContexts,
+       provisionToCodeEnv: provisionToCodeEnv as never,
+@@ -156,6 +159,40 @@ function buildHarness({
+ }
+ 
+ describe('createProvisionFilesCallback', () => {
++  it.each([null, '', ' \t\n'])('keeps search queued without RAG (%j)', async (ragApiUrl) => {
++    const pending = state([makeFile()], [makeFile()]);
++    const harness = buildHarness({
++      ragApiUrl,
++      contexts: [['agent-a', { provisionState: pending }]],
++    });
++    await harness.provisionFiles(['file_search'], 'agent-a');
++    expect(harness.provisionToVectorDB).not.toHaveBeenCalled();
++    expect(harness.fileStorage.acquireFileProvision).not.toHaveBeenCalled();
++    expect(pending.vectorDBFiles).toHaveLength(1);
++
++    await harness.provisionFiles([Constants.BASH_PROGRAMMATIC_TOOL_CALLING], 'agent-a');
++    expect(harness.provisionToCodeEnv).toHaveBeenCalledTimes(1);
++    expect(harness.provisionToVectorDB).not.toHaveBeenCalled();
++    expect(pending.codeEnvFiles).toEqual([]);
++    expect(pending.vectorDBFiles).toHaveLength(1);
++  });
++
++  it.each([Constants.PROGRAMMATIC_TOOL_CALLING, Constants.BASH_PROGRAMMATIC_TOOL_CALLING])(
++    'prepares only code attachments for the outer %s call with RAG configured',
++    async (name) => {
++      const pending = state([makeFile()], [makeFile()]);
++      const harness = buildHarness({ contexts: [['agent-a', { provisionState: pending }]] });
++      await harness.provisionFiles([name], 'agent-a');
++      expect(harness.provisionToCodeEnv).toHaveBeenCalledTimes(1);
++      expect(harness.provisionToVectorDB).not.toHaveBeenCalled();
++      expect(pending.vectorDBFiles).toHaveLength(1);
++
++      await harness.provisionFiles(['file_search'], 'agent-a');
++      expect(harness.provisionToVectorDB).toHaveBeenCalledTimes(1);
++      expect(pending.vectorDBFiles).toEqual([]);
++    },
++  );
++
+   it.each(['primer', 'callback'] as const)(
+     'recovers the canonical ref across producers when the %s uploads first',
+     async (first) => {
+@@ -248,6 +285,7 @@ describe('createProvisionFilesCallback', () => {
+       const harness = claimHarness();
+       const provisionFiles = createProvisionFilesCallback({
+         req: {} as ServerRequest,
++        ragApiUrl: 'http://rag.test',
+         fileStorage: harness.fileStorage,
+         agentToolContexts: harness.agentToolContexts,
+         provisionToCodeEnv: harness.provisionToCodeEnv as never,
+@@ -377,6 +415,7 @@ describe('createProvisionFilesCallback', () => {
+       const originalClaim = harness.fileStorage.acquireFileProvision.mock.calls[0][0];
+       const next = createProvisionFilesCallback({
+         req,
++        ragApiUrl: 'http://rag.test',
+         fileStorage: harness.fileStorage,
+         agentToolContexts: harness.agentToolContexts,
+         provisionToCodeEnv: harness.provisionToCodeEnv as never,
+diff --git a/packages/api/src/files/provision/callback.ts b/packages/api/src/files/provision/callback.ts
+index f733d0a2e11ebab5ef31604bccb2ea39bb1d0441..8095df47b9e4c13bfc7073510410e7b436f1cf50 100644
+--- a/packages/api/src/files/provision/callback.ts
++++ b/packages/api/src/files/provision/callback.ts
+@@ -23,6 +23,8 @@ export type { ProvisionToolContext } from '../code/queued';
+ 
+ export interface ProvisionCallbackDeps {
+   req: ServerRequest;
++  /** Deployment RAG address, supplied by the host wiring. */
++  ragApiUrl?: string;
+   fileStorage: FileProvisionStorage;
+   agentToolContexts: Map<string, ProvisionToolContext>;
+   resolvePrimaryAgentId?: () => string | undefined;
+@@ -77,6 +79,7 @@ function resolveProvisionContext({
+  */
+ export function createProvisionFilesCallback({
+   req,
++  ragApiUrl,
+   fileStorage,
+   agentToolContexts,
+   resolvePrimaryAgentId,
+@@ -148,13 +151,8 @@ export function createProvisionFilesCallback({
+     /** The same set that decides whether an agent wants code-file provisioning at all,
+      *  so a tool cannot be eligible in one place and unrecognized in the other. */
+     const needsCode = toolNames.some(isCodeFileToolName);
+-    /** Programmatic tool calling orchestrates nested tools whose names never reach
+-     *  this predicate, so a file_search reachable only through PTC would otherwise
+-     *  run before its attachments were embedded. Provision when PTC is invoked. */
+-    const needsSearch =
+-      toolNames.includes('file_search') ||
+-      toolNames.includes(Constants.PROGRAMMATIC_TOOL_CALLING) ||
+-      toolNames.includes(Constants.BASH_PROGRAMMATIC_TOOL_CALLING);
++    /** PTC prepares search at the actual inner invoke, before reloading its files. */
++    const needsSearch = !!ragApiUrl?.trim() && toolNames.includes('file_search');
+ 
+     if (!needsCode && !needsSearch) {
+       return [];
+diff --git a/packages/api/src/files/rag/search.spec.ts b/packages/api/src/files/rag/search.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..473f9c7afc0b1b511b5274c24e60905cf68ba0a6
+--- /dev/null
++++ b/packages/api/src/files/rag/search.spec.ts
+@@ -0,0 +1,113 @@
++import axios from 'axios';
++import { once } from 'node:events';
++import { createServer } from 'node:http';
++import type { TFile } from 'librechat-data-provider';
++import { createFileSearchTool, executeFileSearchQuery, primeFileSearchFiles } from './search';
++import { selectFileCitationSources } from '../citations';
++
++function options(ragApiUrl?: string) {
++  return {
++    ragApiUrl,
++    userId: 'user',
++    files: [{ file_id: 'attachment' }],
++    fileCitations: false,
++    httpClient: axios,
++    generateShortLivedToken: jest.fn(() => 'local-fixture-token'),
++    logAxiosError: jest.fn(),
++    selectFileCitationSources,
++    logger: { debug: jest.fn() },
++  };
++}
++
++it.each([undefined, '', ' \t\n'])(
++  'neither exposes a search tool nor executes a query without RAG (%j)',
++  async (ragApiUrl) => {
++    const deps = options(ragApiUrl);
++    expect(await createFileSearchTool(deps)).toBeUndefined();
++    await expect(executeFileSearchQuery({ ...deps, query: 'report' })).rejects.toThrow(
++      'File search is unavailable because RAG_API_URL is not configured.',
++    );
++    expect(deps.generateShortLivedToken).not.toHaveBeenCalled();
++  },
++);
++
++it('reports an unreachable configured RAG service as failure', async () => {
++  const server = createServer();
++  server.listen(0, '127.0.0.1');
++  await once(server, 'listening');
++  const address = server.address();
++  if (!address || typeof address === 'string') throw new Error('Missing fixture address');
++  await new Promise<void>((resolve) => server.close(() => resolve()));
++  const deps = options(`http://127.0.0.1:${address.port}`);
++  await expect(executeFileSearchQuery({ ...deps, query: 'report' })).rejects.toThrow(
++    'File search failed while querying the RAG service.',
++  );
++  expect(deps.logAxiosError).toHaveBeenCalledTimes(1);
++});
++
++it.each([undefined, '', ' \t\n'])(
++  'omits file context and storage reads without RAG (%j)',
++  async (ragApiUrl) => {
++    const getFiles = jest.fn();
++    const filterFilesByAgentAccess = jest.fn();
++    expect(
++      await primeFileSearchFiles({
++        ragApiUrl,
++        getFiles,
++        filterFilesByAgentAccess,
++        tool_resources: { file_search: { file_ids: ['agent-file'] } },
++      }),
++    ).toEqual({ files: [], toolContext: '' });
++    expect(getFiles).not.toHaveBeenCalled();
++    expect(filterFilesByAgentAccess).not.toHaveBeenCalled();
++  },
++);
++
++it('preserves access filtering and agent versus user search namespaces in file context', async () => {
++  const allowed = { file_id: 'allowed', filename: 'allowed.md' } as TFile;
++  const denied = { file_id: 'denied', filename: 'denied.md' } as TFile;
++  const attached = { file_id: 'attached', filename: 'attached.md' } as TFile;
++  const getFiles = jest.fn(async () => [allowed, denied]);
++  const filterFilesByAgentAccess = jest.fn(async () => [allowed]);
++  const result = await primeFileSearchFiles({
++    ragApiUrl: 'http://rag.test',
++    getFiles,
++    filterFilesByAgentAccess,
++    req: { user: { id: 'user', role: 'USER' } },
++    agentId: 'agent',
++    tool_resources: { file_search: { file_ids: ['allowed', 'denied'], files: [attached] } },
++  });
++  expect(filterFilesByAgentAccess).toHaveBeenCalledWith({
++    files: [allowed, denied],
++    userId: 'user',
++    role: 'USER',
++    agentId: 'agent',
++    resourceType: undefined,
++  });
++  expect(result.files).toEqual([
++    { file_id: 'allowed', filename: 'allowed.md', fromAgent: true },
++    { file_id: 'attached', filename: 'attached.md', fromAgent: false },
++  ]);
++  expect(result.toolContext).toContain('attached.md (just attached by user)');
++  expect(result.toolContext).not.toContain('denied.md');
++});
++
++it('forwards tool cancellation to an in-flight RAG HTTP query', async () => {
++  const server = createServer((_req, _res) => controller.abort());
++  const controller = new AbortController();
++  server.listen(0, '127.0.0.1');
++  await once(server, 'listening');
++  try {
++    const address = server.address();
++    if (!address || typeof address === 'string') throw new Error('Missing fixture address');
++    const searchTool = await createFileSearchTool(options(`http://127.0.0.1:${address.port}`));
++    expect(searchTool).toBeDefined();
++    await expect(
++      searchTool?.invoke({ query: 'report' }, { signal: controller.signal }),
++    ).rejects.toThrow(/aborted/i);
++    expect(controller.signal.aborted).toBe(true);
++  } finally {
++    server.closeAllConnections();
++    await new Promise<void>((resolve) => server.close(() => resolve()));
++  }
++});
+diff --git a/packages/api/src/files/rag/search.ts b/packages/api/src/files/rag/search.ts
+index 2a798a448a03dc8a0b552a06d7b07c4aab24f44f..6534d4cf13066d5608d870ff1cecf51b4ab6123d 100644
+--- a/packages/api/src/files/rag/search.ts
++++ b/packages/api/src/files/rag/search.ts
+@@ -1,11 +1,16 @@
+ import { EModelEndpoint, Tools } from 'librechat-data-provider';
++import { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
++import type { AgentToolResources, TFile } from 'librechat-data-provider';
+ import type { logger } from '@librechat/data-schemas';
+ import type axios from 'axios';
+ import type { FileCitationSelectionConfig, selectFileCitationSources } from '../citations';
++import type { ExtendedJsonSchema } from '~/tools/registry/schema';
+ import type { logAxiosError } from '~/utils/axios';
++import type { ServerRequest } from '~/types';
+ import { getOutboundTimeoutMs, outboundRequestBudget } from '~/utils/timeouts';
+ 
+ type SearchFile = { file_id: string; fromAgent?: boolean };
++type FileSearchInput = { query: string };
+ type FileSearchResult = [
+   string,
+   { file_search: { sources: FileSearchSource[]; fileCitations: boolean } } | undefined,
+@@ -39,6 +44,7 @@ interface SearchOptions {
+     timeouts?: { ragMs?: number };
+   };
+   ragApiUrl?: string;
++  signal?: AbortSignal;
+   httpClient: Pick<typeof axios, 'post'>;
+   generateShortLivedToken: (userId: string) => string;
+   logAxiosError: typeof logAxiosError;
+@@ -46,6 +52,117 @@ interface SearchOptions {
+   logger: Pick<typeof logger, 'debug'>;
+ }
+ 
++export const fileSearchJsonSchema: ExtendedJsonSchema = {
++  type: 'object',
++  properties: {
++    query: {
++      type: 'string',
++      description:
++        "A natural language query to search for relevant information in the files. Be specific and use keywords related to the information you're looking for. The query will be used for semantic similarity matching against the file contents.",
++    },
++  },
++  required: ['query'],
++};
++
++/** Resolve only authorized files; an unavailable service must not advertise search context. */
++export async function primeFileSearchFiles({
++  tool_resources,
++  req,
++  agentId,
++  agentResourceType,
++  ragApiUrl,
++  getFiles,
++  filterFilesByAgentAccess,
++}: {
++  tool_resources?: AgentToolResources;
++  req?: { user?: Pick<NonNullable<ServerRequest['user']>, 'id' | 'role'> };
++  agentId?: string;
++  agentResourceType?: string;
++  ragApiUrl?: string;
++  getFiles: (
++    filter: { file_id: { $in: string[] } },
++    projection: null,
++    options: { text: number },
++  ) => Promise<TFile[] | null | undefined>;
++  filterFilesByAgentAccess: (params: {
++    files: TFile[];
++    userId: string;
++    role?: string;
++    agentId: string;
++    resourceType?: string;
++  }) => Promise<TFile[]>;
++}): Promise<{ files: Array<SearchFile & { filename: string }>; toolContext: string }> {
++  if (!ragApiUrl?.trim()) return { files: [], toolContext: '' };
++  const file_ids = tool_resources?.file_search?.file_ids ?? [];
++  const agentResourceIds = new Set(file_ids);
++  const resourceFiles = tool_resources?.file_search?.files ?? [];
++  const allFiles = (await getFiles({ file_id: { $in: file_ids } }, null, { text: 0 })) ?? [];
++  const authorizedFiles =
++    req?.user?.id && agentId
++      ? await filterFilesByAgentAccess({
++          files: allFiles,
++          userId: req.user.id,
++          role: req.user.role,
++          agentId,
++          resourceType: agentResourceType,
++        })
++      : allFiles;
++  const dbFiles = authorizedFiles.concat(resourceFiles);
++  let toolContext = `- Note: Semantic search is available through the ${Tools.file_search} tool but no files are currently loaded. Request the user to upload documents to search through.`;
++  const files: Array<SearchFile & { filename: string }> = [];
++  for (const file of dbFiles) {
++    if (!file) continue;
++    if (files.length === 0) {
++      toolContext = `- Note: Use the ${Tools.file_search} tool to find relevant information within:`;
++    }
++    const fromAgent = agentResourceIds.has(file.file_id);
++    toolContext += `\n\t- ${file.filename}${fromAgent ? '' : ' (just attached by user)'}`;
++    files.push({ file_id: file.file_id, filename: file.filename, fromAgent });
++  }
++  return { files, toolContext };
++}
++
++/** The host supplies the RAG client and configuration for both direct and PTC calls. */
++export async function createFileSearchTool({
++  fileCitations = false,
++  ...options
++}: Omit<SearchOptions, 'query' | 'fileCitations'> & {
++  fileCitations?: boolean;
++}): Promise<
++  | DynamicStructuredTool<ExtendedJsonSchema, FileSearchInput, FileSearchInput, FileSearchResult>
++  | undefined
++> {
++  if (!options.ragApiUrl?.trim()) {
++    return undefined;
++  }
++  return new DynamicStructuredTool<
++    typeof fileSearchJsonSchema,
++    FileSearchInput,
++    FileSearchInput,
++    FileSearchResult
++  >({
++    func: ({ query }, _runManager, config) =>
++      executeFileSearchQuery({ ...options, query, fileCitations, signal: config?.signal }),
++    name: Tools.file_search,
++    responseFormat: 'content_and_artifact',
++    description: `Performs semantic search across attached "${Tools.file_search}" documents using natural language queries. This tool analyzes the content of uploaded files to find relevant information, quotes, and passages that best match your query. Use this to extract specific information or find relevant sections within the available documents.${
++      fileCitations
++        ? `
++
++**CITE FILE SEARCH RESULTS:**
++Use the EXACT anchor markers shown below (copy them verbatim) immediately after statements derived from file content. Reference the filename in your text:
++- File citation: "The document.pdf states that... \\ue202turn0file0"
++- Page reference: "According to report.docx... \\ue202turn0file1"
++- Multi-file: "Multiple sources confirm... \\ue200\\ue202turn0file0\\ue202turn0file1\\ue201"
++
++**CRITICAL:** Output these escape sequences EXACTLY as shown (e.g., \\ue202turn0file0). Do NOT substitute with other characters like † or similar symbols.
++**ALWAYS mention the filename in your text before the citation marker. NEVER use markdown links or footnotes.**`
++        : ''
++    }`,
++    schema: fileSearchJsonSchema,
++  });
++}
++
+ /** Executes a file-search tool call without sending malformed queries to RAG API. */
+ export async function executeFileSearchQuery({
+   query,
+@@ -55,12 +172,18 @@ export async function executeFileSearchQuery({
+   fileCitations,
+   appConfig,
+   ragApiUrl,
++  signal,
+   httpClient,
+   generateShortLivedToken,
+   logAxiosError,
+   selectFileCitationSources,
+   logger,
+ }: SearchOptions): Promise<FileSearchResult> {
++  signal?.throwIfAborted();
++  const baseUrl = ragApiUrl?.trim();
++  if (!baseUrl) {
++    throw new Error('File search is unavailable because RAG_API_URL is not configured.');
++  }
+   if (files.length === 0) {
+     return ['No files to search. Instruct the user to add files for the search.', undefined];
+   }
+@@ -90,12 +213,12 @@ export async function executeFileSearchQuery({
+   const timeout = getOutboundTimeoutMs(appConfig, 'ragMs');
+   const queryPromises = files.map((file) =>
+     httpClient
+-      .post<SearchResults>(`${ragApiUrl}/query`, createQueryBody(file), {
++      .post<SearchResults>(`${baseUrl}/query`, createQueryBody(file), {
+         headers: {
+           Authorization: `Bearer ${jwtToken}`,
+           'Content-Type': 'application/json',
+         },
+-        ...outboundRequestBudget(timeout, 'ragMs'),
++        ...outboundRequestBudget(timeout, 'ragMs', signal),
+       })
+       .then((result) => ({ data: result.data, file_id: file.file_id }))
+       .catch((error) => {
+@@ -108,10 +231,11 @@ export async function executeFileSearchQuery({
+   );
+ 
+   const results = await Promise.all(queryPromises);
++  signal?.throwIfAborted();
+   const validResults = results.filter((result) => result !== null);
+ 
+   if (validResults.length === 0) {
+-    return ['No results found or errors occurred while searching the files.', undefined];
++    throw new Error('File search failed while querying the RAG service.');
+   }
+ 
+   const formattedResults = validResults
+diff --git a/packages/api/src/tools/definitions.spec.ts b/packages/api/src/tools/definitions.spec.ts
+index a0949d3f5c1bba22875536debee723c27577a65b..ec5a5654762a22cbc0ba6190d6a2c805e9ab106d 100644
+--- a/packages/api/src/tools/definitions.spec.ts
++++ b/packages/api/src/tools/definitions.spec.ts
+@@ -407,6 +407,7 @@ describe('definitions.ts', () => {
+           userId: 'user-123',
+           agentId: 'agent-123',
+           tools: ['file_search'],
++          ragApiUrl: 'http://rag.test',
+         };
+ 
+         const deps: LoadToolDefinitionsDeps = {
+@@ -423,6 +424,29 @@ describe('definitions.ts', () => {
+         expect(fileSearchDef?.parameters?.required).toContain('query');
+       });
+ 
++      it.each([undefined, '', ' \t\n'])(
++        'omits file_search definitions and registry entries without RAG (%j)',
++        async (ragApiUrl) => {
++          mockIsBuiltInTool.mockReturnValue(true);
++          const result = await loadToolDefinitions(
++            {
++              userId: 'user-123',
++              agentId: 'agent-123',
++              tools: ['file_search', 'calculator'],
++              ragApiUrl,
++            },
++            {
++              getOrFetchMCPServerTools: mockGetOrFetchMCPServerTools,
++              isBuiltInTool: mockIsBuiltInTool,
++            },
++          );
++          expect(result.toolDefinitions.map((definition) => definition.name)).toEqual([
++            'calculator',
++          ]);
++          expect(result.toolRegistry.has('file_search')).toBe(false);
++        },
++      );
++
+       it('should skip built-in tools without registry definitions', async () => {
+         mockIsBuiltInTool.mockImplementation((name) => name === 'unknown_tool');
+ 
+diff --git a/packages/api/src/tools/definitions.ts b/packages/api/src/tools/definitions.ts
+index f38e918f9f098fe4c51674c22b3cd3b9ee681d8e..cbcc268206fcb537f547b524c22d397415167397 100644
+--- a/packages/api/src/tools/definitions.ts
++++ b/packages/api/src/tools/definitions.ts
+@@ -45,6 +45,8 @@ export interface LoadToolDefinitionsParams {
+   agentId: string;
+   /** Agent's tool list (tool names/identifiers) */
+   tools: string[];
++  /** Deployment RAG address; file_search is unavailable without it. */
++  ragApiUrl?: string;
+   /** Explicit deployment opt-in for read-only GitHub comparisons. */
+   githubCompareEnabled?: boolean;
+   /** Agent-specific tool options */
+@@ -188,6 +190,9 @@ export async function loadToolDefinitions(
+   let resolvedMCPToolCount = 0;
+ 
+   for (const toolName of tools) {
++    if (toolName === 'file_search' && !params.ragApiUrl?.trim()) {
++      continue;
++    }
+     if (toolName === GitHubCompareToolName && params.githubCompareEnabled !== true) {
+       continue;
+     }

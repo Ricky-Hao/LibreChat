@@ -33,7 +33,9 @@
 | 25. Devcontainer, fork image CI, build/test adaptations | [dev-environment](../patches/dev-environment/README.md)、[fork-image](../patches/fork-image/README.md)、[test-adaptations](../patches/test-adaptations/README.md) | local | 分别维护 Coder/locked setup、旧 rickyhao/dev 镜像入口兼容载荷和当前有效 fixture；活动镜像入口在补丁仓根，从 manifest 生成应用。保留基线 a11y workflow，不重放过期 fixture。 |
 | 26. Vendored SDK, lock/build wiring and prior artifacts | [sdk](../patches/sdk/README.md) | keep | 只携带当前消费的 4.2.2-ricky.1、源码 patch、元数据、锁文件、主机消费方和构建接线；历史归档不重放。 |
 
-另有 [contributor-guidance](../patches/contributor-guidance/README.md) 文档载荷（local），保存应用 AGENTS 和 PR template 的净差异。根 AGENTS 负责补丁仓自身维护。合并三对行为、拆出环境/镜像/测试责任并保留贡献指南后，清单共 26 条目、24 份载荷：keep 9、feature 4、awaiting-upstream 3、local 8、upstream 2。
+另有 [contributor-guidance](../patches/contributor-guidance/README.md) 文档载荷（local），保存应用 AGENTS 和 PR template 的净差异。根 AGENTS 负责补丁仓自身维护。合并三对行为、拆出环境/镜像/测试责任并保留贡献指南后，原清单共 26 条目、24 份载荷。
+
+随后新增 [file-search-provisioning](../patches/file-search-provisioning/README.md)（keep）：纯代码／MCP PTC 不无条件向量化附件；实际内层文件搜索先准备再重载工具，无 RAG 配置时定义、加载、上下文与 callback 一致停用搜索。保留任务 callback、权限、Agent／用户 scope、失败、重试和取消。当前清单共 27 条目、25 份载荷：keep 10、feature 4、awaiting-upstream 3、local 8、upstream 2。
 
 ## 替代证据
 
