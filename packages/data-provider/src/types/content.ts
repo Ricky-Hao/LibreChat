@@ -231,6 +231,10 @@ export type SummaryContentPart = {
   model?: string;
   provider?: string;
   createdAt?: string;
+  /** First source message retained verbatim after compaction. */
+  coverage?: {
+    retainedFromMessageId: string;
+  };
   boundary?: {
     messageId: string;
     contentIndex: number;

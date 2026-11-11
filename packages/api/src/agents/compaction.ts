@@ -1,5 +1,5 @@
 import { isMetadataSummaryStub } from '@librechat/agents';
-import { ContentTypes, ErrorTypes } from 'librechat-data-provider';
+import { Constants, ContentTypes, ErrorTypes } from 'librechat-data-provider';
 import {
   COMPACTION_SEMANTIC_INDEX_PROJECTION_VERSION,
   MAX_COMPACTION_SEMANTIC_INDEX_ENTRIES,
@@ -158,6 +158,82 @@ export function resolveCheckpointMessage<T extends CheckpointCandidate>(
   };
 }
 
+interface HistoryMessage extends CheckpointCandidate {
+  id?: string;
+  messageId?: string;
+  parentMessageId?: string | null;
+}
+
+/**
+ * Reads one parent chain from already-loaded rows. A coverage checkpoint keeps
+ * reading through older checkpoints to its retained anchor, leaving whole rows
+ * for the SDK formatter. Missing, off-branch, or newer anchors use the legacy
+ * positional checkpoint. Mapping runs only on retained rows, newest first, as
+ * it did in BaseClient's traversal.
+ */
+export function getConversationHistory<T extends HistoryMessage, R = T>({
+  messages,
+  parentMessageId,
+  mapMethod = null,
+  mapCondition = null,
+  summary = false,
+}: {
+  messages?: readonly T[] | null;
+  parentMessageId?: string | null;
+  mapMethod?: ((message: T) => R) | null;
+  mapCondition?: ((message: T) => boolean) | null;
+  summary?: boolean;
+}): Array<T | R> {
+  const messagesById = new Map<string | undefined, T>();
+  for (const message of messages ?? []) {
+    const id = message.messageId ?? message.id;
+    if (!messagesById.has(id)) {
+      messagesById.set(id, message);
+    }
+  }
+
+  const branch: T[] = [];
+  const visited = new Set<string>();
+  let currentId = parentMessageId;
+  let checkpoint: { index: number; message: T } | undefined;
+  let retainedFrom: string | undefined;
+  let retained = false;
+  while (currentId && !visited.has(currentId)) {
+    const message = messagesById.get(currentId);
+    if (message == null) {
+      break;
+    }
+    visited.add(currentId);
+    branch.push(message);
+    if (summary && checkpoint == null) {
+      const resolved = resolveCheckpointMessage(message);
+      if (resolved != null) {
+        checkpoint = { index: branch.length - 1, message: resolved };
+        const anchor = findCheckpointSummaryPart(message.content)?.coverage?.retainedFromMessageId;
+        retainedFrom = typeof anchor === 'string' ? anchor.trim() : undefined;
+      }
+    }
+    if (checkpoint != null) {
+      retained = currentId === retainedFrom;
+      if (retained || !retainedFrom || visited.has(retainedFrom)) {
+        break;
+      }
+    }
+    currentId = message.parentMessageId === Constants.NO_PARENT ? null : message.parentMessageId;
+  }
+
+  if (checkpoint != null && !retained) {
+    branch.length = checkpoint.index + 1;
+    branch[checkpoint.index] = checkpoint.message;
+  }
+  const mapped = branch.map((message) =>
+    mapMethod != null && (mapCondition == null || mapCondition(message))
+      ? mapMethod(message)
+      : message,
+  );
+  return mapped.reverse();
+}
+
 /**
  * The summary a warm event-actor continuation carries forward: the last usable
  * one in the run's content parts, stamped as actor state. A failed or
@@ -179,6 +255,7 @@ export function getLatestEventActorSummary(
     const tokenCount = part.tokenCount;
     return createAgentEventActorSummary({
       text: getSummaryPartText(part),
+      coverage: part.coverage,
       tokenCount:
         typeof tokenCount === 'number' && Number.isFinite(tokenCount) && tokenCount >= 0
           ? tokenCount

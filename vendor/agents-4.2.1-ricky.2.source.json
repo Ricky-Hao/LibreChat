@@ -1,0 +1,15 @@
+{
+  "name": "@librechat/agents",
+  "version": "4.2.1-ricky.2",
+  "artifact": "vendor/librechat-agents-4.2.1-ricky.2.tgz",
+  "sha256": "832579d9dfeb24f04f7666adb3e2069aa89c133bb19a0e005282f977a3d9329f",
+  "source": {
+    "repository": "https://github.com/LibreChat-AI/agents",
+    "baseCommit": "708c9118f478a84f28e8e253148a373b49fec191",
+    "dirty": true,
+    "buildState": "uncommitted-source",
+    "patch": "vendor/agents-4.2.1-ricky.2.patch",
+    "patchSha256": "e00b435dd2a16431974f33bd6067a7459fd6c242bdafee8cac66651444b16467"
+  },
+  "consumers": ["api", "packages/api"]
+}

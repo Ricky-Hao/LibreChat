@@ -700,18 +700,39 @@ export interface AgentEventCheckpointReference {
 export interface AgentEventCheckpointMessageOverlay {
   source: string;
   messages: readonly BaseMessage[];
+  /** Trusted summary coverage; an unavailable anchor requires a cold continuation. */
+  retainedFromMessageId?: string;
 }
 
 function applyAgentEventCheckpointMessageOverlay(
   checkpoint: Checkpoint,
   overlay: AgentEventCheckpointMessageOverlay | undefined,
-): Checkpoint {
+): Checkpoint | null {
   if (overlay == null) {
     return checkpoint;
   }
   const channelValues = checkpoint.channel_values;
-  const messages = Array.isArray(channelValues.messages) ? channelValues.messages : [];
-  const retainedMessages = messages.filter((message) => {
+  const messages: BaseMessage[] = Array.isArray(channelValues.messages)
+    ? channelValues.messages
+    : [];
+  const anchor = overlay.retainedFromMessageId;
+  const retainedIndex =
+    anchor == null
+      ? 0
+      : messages.findIndex((message) => {
+          const sourceId = message.additional_kwargs?.sourceMessageId;
+          const id =
+            typeof sourceId === 'string' && sourceId.trim() !== ''
+              ? sourceId.trim()
+              : message.id?.trim();
+          return id === anchor;
+        });
+  if (retainedIndex < 0) {
+    return null;
+  }
+  // The SDK's outer reducer can retain covered history after automatic compaction.
+  // Apply its persisted boundary to the fork before adding current Skill context.
+  const retainedMessages = messages.slice(retainedIndex).filter((message) => {
     if (message == null || typeof message !== 'object') {
       return true;
     }
@@ -780,10 +801,14 @@ export async function forkAgentEventCheckpoint(
   if (!tuple || tuple.metadata == null || (tuple.pendingWrites?.length ?? 0) > 0) {
     return null;
   }
+  const checkpoint = applyAgentEventCheckpointMessageOverlay(tuple.checkpoint, messageOverlay);
+  if (checkpoint == null) {
+    return null;
+  }
   const target = { threadId: source.threadId, checkpointNs };
   const persisted = await saver.put(
     eventActorRunnableConfig(target, invocationId, undefined, owner),
-    applyAgentEventCheckpointMessageOverlay(tuple.checkpoint, messageOverlay),
+    checkpoint,
     tuple.metadata,
   );
   const checkpointId = persisted.configurable?.checkpoint_id;

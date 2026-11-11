@@ -12,12 +12,10 @@ const { artifact, version, consumers, sha256 } = metadata;
 const archive = readFileSync(resolve(root, artifact));
 assert.equal(createHash('sha256').update(archive).digest('hex'), sha256);
 const { source } = metadata;
-assert.equal(
-  source.dirty,
-  true,
-  'This artifact was built from upstream source plus the recorded patch',
-);
-assert.equal(source.buildState, 'uncommitted-source');
+assert.equal(source.dirty, false, 'The current artifact must be built from clean committed source');
+assert.equal(source.buildState, 'clean-commit');
+assert.match(source.commit, /^[a-f0-9]{40}$/);
+assert.match(source.tree, /^[a-f0-9]{40}$/);
 assert.match(source.baseCommit, /^[a-f0-9]{40}$/);
 assert.equal(
   createHash('sha256')
@@ -423,6 +421,7 @@ for (const consumer of consumers) {
   await verifyIntent(sdk, DynamicStructuredTool, ToolMessage);
   await verifyArtifactGuidance(sdk);
   for (const subpath of Object.keys(manifest.exports)) {
+    assert.ok(readFileSync(resolve(packageRoot, manifest.exports[subpath].types), 'utf8'));
     const specifier = `@librechat/agents${subpath === '.' ? '' : subpath.slice(1)}`;
     assert.ok(require(specifier));
   }

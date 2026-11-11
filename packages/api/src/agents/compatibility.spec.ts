@@ -263,6 +263,24 @@ describe('event actor summary state', () => {
     expect(normalizeAgentEventActorSummary(stored)).toEqual(stored);
   });
 
+  it('preserves coverage when stamping and restoring actor summaries', () => {
+    const summary = {
+      text: 'Checkpoint',
+      tokenCount: 12,
+      coverage: { retainedFromMessageId: 'retained-user' },
+    };
+    const stored = createAgentEventActorSummary(summary);
+    expect(stored).toEqual({ ...summary, version: 1 });
+    expect(normalizeAgentEventActorSummary(stored)).toEqual(stored);
+    expect(() =>
+      normalizeAgentEventActorSummary({
+        ...summary,
+        version: 1,
+        coverage: { retainedFromMessageId: '  ' },
+      }),
+    ).toThrow('Event actor summary coverage is invalid');
+  });
+
   it('treats an absent summary as nothing to carry forward', () => {
     expect(normalizeAgentEventActorSummary(undefined)).toBeUndefined();
   });

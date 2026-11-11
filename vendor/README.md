@@ -1,6 +1,52 @@
 # Vendored agent SDK
 
-The current `librechat-agents-4.2.1-ricky.2.tgz` combines upstream 4.2.1
+The current `librechat-agents-4.2.2-ricky.1.tgz` combines upstream v4.2.2
+(`7ea84fc4db98ec9cf373b6927a3cee9549661f28`) with the fork contracts previously
+carried by the 4.2.1-ricky.2 consumer patch. It was built with Node 24.22.1 and
+npm 11.13.0 from clean merged SDK commit
+`1559d8661120b77acd7a6189bf5ba24b82cf6f50` (tree
+`11535ca225857425e7253d428f8cbfcc4e450ccd`), after
+[SDK PR #4](https://github.com/Ricky-Hao/agents/pull/4).
+The build used an isolated detached checkout and did not change the SDK's
+primary checkout or refs. `agents.json` records `dirty: false`,
+`buildState: clean-commit`, source identity, build commands and both digests.
+`agents-4.2.2-ricky.1.patch` reproduces the source tree from the recorded base,
+including regression tests and lock changes; it is provenance, not a consumer
+runtime patch.
+
+The SDK owns these fork behaviors. LibreChat consumes its public exports:
+
+| Contract                                      | SDK owner                                                          | LibreChat owner                                                                          |
+| --------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Skill provenance and full source bodies       | `messages/skillCarrier.ts`, `messages/format.ts`, Skill tools      | Skill loading, ACLs and trusted checkpoint overlays                                      |
+| Assistant phase and provider projection       | `messages/assistantPhase.ts`, `stream.ts`, provider converters     | Content persistence and display                                                          |
+| Reasoning and summary content-block deltas    | `messages/reasoningTypes.ts`, `stream.ts`, `summarization/node.ts` | SSE callbacks; `packages/chat` reducer, transport and recovery                           |
+| Summary success, failure and retention policy | `summarization/node.ts`, `shared.ts`, retry/input/window helpers   | Persist completed summaries and coverage; restore retained rows                          |
+| Programmatic invocation identity              | `tools/intentArg.ts`, `ProgrammaticToolCalling.ts`                 | Read `PROGRAMMATIC_TOOL_CALL_ID`; bind replay, callbacks, child permissions and sessions |
+| Schema-aware intent removal                   | `tools/intentArg.ts`, `utils/schema.ts`                            | Supply the real callee schema and invoke SDK normalization                               |
+| Protocol errors, rich content and artifacts   | `tools/response.ts`, execution tools, `utils/toolContent.ts`       | Submit structured results and preserve status                                            |
+| File delivery guidance                        | `tools/codeGuidance.ts`, execution tools, `agents/AgentContext.ts` | Supply host workspace context and deliver requested files                                |
+| Langfuse identity, redaction and cache usage  | Tracing modules and provider accounting                            | Supply tenant-scoped configuration and credentials                                       |
+
+The host retains HTTP authentication, authorization, private context, session
+trust and database writes. SDK invocation markers do not authorize requests.
+The frontend reducer stays in `packages/chat`: deltas are temporary display,
+completion replaces them, and a failed completion cannot become a checkpoint.
+
+Successful compaction defaults to retaining two recent user-led turns within
+`min(16000, 16% of maxContextTokens)` tokens. LibreChat preserves
+`summary.coverage.retainedFromMessageId` through message and actor persistence.
+Cold history loading follows the selected parent chain back to that anchor and
+leaves whole retained rows for the SDK formatter. Missing, invalid, off-branch
+or newer anchors retain the legacy positional fallback. Warm continuation
+applies coverage to a new owned checkpoint fork after the existing fingerprint
+and owner checks; an unavailable anchor requests a cold rebuild. The committed
+base is preserved. `initialSummary` alone restores summary text and token count;
+it does not trim a checkpoint. Existing summaries without coverage still load.
+The host forwards `retainRecent`, including `{ turns: 0 }` for full compaction.
+The SDK's `contextBudgetMode` is not exposed by the host configuration adapter.
+
+The retained `librechat-agents-4.2.1-ricky.2.tgz` combines upstream 4.2.1
 (`708c9118f478a84f28e8e253148a373b49fec191`) with the fork changes from
 4.1.1-ricky.2. It retains PTC call identity, trusted host context, intent/error
 handling, artifact guidance, reasoning normalization, assistant phases and skill
@@ -12,11 +58,16 @@ before falling back to Zod 3 `_def`. This avoids invoking Zod 4's legacy getter
 while preserving bounded inspection and unsafe getter/proxy rejection.
 The previous 4.2.1-ricky.1 tarball and patch remain available for recovery.
 
-This artifact was built with Node 24.22.1 from **uncommitted source in a normal
+That artifact was built with Node 24.22.1 from **uncommitted source in a normal
 directory**, using the upstream source archive plus `agents-4.2.1-ricky.2.patch`.
 No SDK repository, branch or registry was changed. There is no matching SDK commit.
 The complete patch includes regression tests and package lock changes.
-`agents.json` records the upstream base, patch digest and artifact digest.
+`agents-4.2.1-ricky.2.source.json` preserves its original upstream base, patch
+digest, artifact digest and `dirty: true` / `buildState: uncommitted-source`
+provenance. The old archive and patch remain unchanged. Its archive SHA-256 is
+`832579d9dfeb24f04f7666adb3e2069aa89c133bb19a0e005282f977a3d9329f`;
+its patch SHA-256 is
+`e00b435dd2a16431974f33bd6067a7459fd6c242bdafee8cac66651444b16467`.
 
 `librechat-agents-4.1.1-ricky.2.tgz` adds the non-enumerable
 `PROGRAMMATIC_TOOL_CALL_ID` symbol to `executeTools` invocation config. Host
@@ -136,20 +187,23 @@ Both API workspaces use this file dependency. Do not replace it with an npm
 link, an edited node_modules copy, or the stock registry package. Docker copies
 this directory before npm ci. No registry publishing is required.
 
-To reproduce the current candidate, extract the upstream archive for the recorded
-base into a normal directory, apply the recorded patch, and use Node 24. Keep this
-uncommitted-source provenance; a build from a clean SDK commit is a separate artifact.
-Reuse an unchanged valid dependency installation or run `npm ci` before building:
+To reproduce the current artifact, use a clean detached checkout of the exact
+SDK commit and an empty output directory outside the SDK checkout. Check that
+Git is clean before installation and after packing. Use Node 24.22.1 and
+npm 11.13.0, and run the build steps serially:
 
 ```sh
-cd /path/to/patched-sdk-source
-npm ci --ignore-scripts
+git -C /path/to/agents worktree add --detach /path/to/sdk-build 1559d8661120b77acd7a6189bf5ba24b82cf6f50
+cd /path/to/sdk-build
+git status --porcelain
+npm ci --ignore-scripts --no-audit --no-fund
 npm run build
-npm pack --ignore-scripts --pack-destination /path/to/LibreChat/vendor
+npm pack --ignore-scripts --json --pack-destination /path/to/empty-artifact-directory
+git status --porcelain
+sha256sum /path/to/empty-artifact-directory/librechat-agents-4.2.2-ricky.1.tgz
 cd /path/to/LibreChat
-npm install --ignore-scripts --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm ls @librechat/agents zod zod-v4 zod-to-json-schema --all
-sha256sum vendor/librechat-agents-4.2.1-ricky.2.tgz
 node vendor/verify-agents.mjs
 ```
 
@@ -158,7 +212,9 @@ used tarball or patch. Update both API manifests and the lock resolution/integri
 for the new artifact before reinstalling it.
 
 Verify the new lock with a clean `npm ci` as well. A tarball update can retain a
-stale nested Zod entry: the SDK must resolve its declared exact Zod version.
+stale nested Zod entry: this SDK must resolve its declared exact Zod 4.6.7 and
+`zod-to-json-schema` 3.25.2. Check both API consumers and the installed tree for
+stale nested SDK/Zod entries; valid nested dependencies remain allowed.
 Do not mask an invalid tree with an override.
 
 The artifact includes ESM, CJS and declarations, plus public source, license and
@@ -174,11 +230,13 @@ the reviewed artifact identity and checksum for both this verifier and the E2E
 locked-origin policy; update it when intentionally replacing the artifact.
 
 Regeneration must also refresh the source patch, its digest, the artifact digest
-and lock integrity. Build after all SDK edits. To reproduce this snapshot,
-apply the patch to the recorded upstream base before building with Node 24. Retain the
+and lock integrity. Build after all SDK edits. To reproduce the source tree,
+apply the patch to the recorded upstream base. Retain the
 historical build provenance when recording a later matching source commit;
 do not relabel an artifact built from uncommitted source as a clean-commit build.
 Space-only empty context lines in the stored patch are normalized to blank
 lines (accepted by `git apply`) so the provenance file passes whitespace checks.
 
-Current artifact SHA-256: `832579d9dfeb24f04f7666adb3e2069aa89c133bb19a0e005282f977a3d9329f`.
+Current artifact SHA-256: `57e3622cfeead811a46e6c34606d05dba016c6c873bc0185dd810b50de949368`.
+
+Current patch SHA-256: `6ffb7b907dcf961b5b68170146845aaa12a8e7edcbac521e2fb2d172c069d66a`.

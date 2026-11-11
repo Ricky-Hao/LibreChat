@@ -2201,6 +2201,7 @@ class AgentClient extends BaseClient {
       ...context,
       checkpointMessageOverlay: {
         source: 'skill',
+        retainedFromMessageId: summary?.coverage?.retainedFromMessageId,
         messages: buildAgentEventActorSkillMessages(skillBodies, [
           ...(rootAgentContext?.manualSkillPrimes ?? []),
           ...(rootAgentContext?.alwaysApplySkillPrimes ?? []),
