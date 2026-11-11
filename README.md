@@ -1,6 +1,8 @@
 # LibreChat fork 补丁集
 
-`patches` 是维护源码主分支，保存可选择、可重放的 fork 差异。应用源码在独立应用 checkout 中生成；活动 CI 从 manifest 固定基线重放后构建 GHCR 镜像。
+`patches` 是默认分支和维护源码主分支，保存可选择、可重放的 fork 差异。应用源码在独立应用 checkout 中生成；活动 CI 从 manifest 固定基线重放后构建 GHCR 镜像。
+
+今后同步上游默认按[上游同步默认流程](docs/maintenance.md#上游同步默认流程)执行：固定官方 upstream main 完整 SHA → 有序补丁重放与验证 → 合入 `patches` → CI 镜像 → 按 digest 部署。每轮按用户请求完成相应阶段，发布和部署按当次授权执行。
 
 固定应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`（upstream main）。原始完整 fork 源：`38c026db83d0ca12a067083b5c1551c1bca2754b`。
 共有 26 个状态条目、24 份标准 Git diff：`keep` 9、`feature` 4、`awaiting-upstream` 3、`local` 8、`upstream` 2。
@@ -49,7 +51,9 @@ runner 在应用 checkout 执行：Jest 精确 discovery、逐文件结果与非
 
 业务验收版本的正式重放与[应用提交 `4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79`](https://github.com/Ricky-Hao/LibreChat/commit/4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79) 的 tree 均为 `dcc8f4edc32c510e7eea8e9b514ef0117c02c90c`。
 
-CI 采用阶段仅同步应用 `AGENTS.md` 的维护与发布入口；当前[应用提交 `c81e3483feffc4e6ae50298dcf081139c1b3a98f`](https://github.com/Ricky-Hao/LibreChat/commit/c81e3483feffc4e6ae50298dcf081139c1b3a98f) 与正式重放的 tree 为 `c00edf8153e549ffc044609af4a21c9eb409dc5f`。业务实现未变，复用上述完整验收与生产构建证据。新增 CI 的 actionlint、24 种发布条件、权限、精确 checkout、完整祖先历史及构建 context 检查通过；本地实际执行验证与发布两个 job 的重放脚本，均得到该 tree，脏目标失败能立即停止。13 项维护工具自测及贡献文档合同通过。应用文档提交经原 hooks 正常提交、推送，pre-push 以已完整验收的 `4ab9f9c` 为本次文档增量基线；没有重跑完整业务或慢速门禁。以上为本地证据，GitHub Actions 运行与镜像发布结果待负责人跟踪。
+CI 采用阶段仅同步应用 `AGENTS.md` 的维护与发布入口；当前[应用提交 `c81e3483feffc4e6ae50298dcf081139c1b3a98f`](https://github.com/Ricky-Hao/LibreChat/commit/c81e3483feffc4e6ae50298dcf081139c1b3a98f) 与正式重放的 tree 为 `c00edf8153e549ffc044609af4a21c9eb409dc5f`。业务实现未变，复用上述完整验收与生产构建证据。新增 CI 的 actionlint、24 种发布条件、权限、精确 checkout、完整祖先历史及构建 context 检查通过；本地实际执行验证与发布两个 job 的重放脚本，均得到该 tree，脏目标失败能立即停止。13 项维护工具自测及贡献文档合同通过。应用文档提交经原 hooks 正常提交、推送，pre-push 以已完整验收的 `4ab9f9c` 为本次文档增量基线；没有重跑完整业务或慢速门禁。
+
+随后已完成默认分支切换、真实 CI 镜像发布及首次 digest 部署。补丁版本 `08f1af9cfd6179adfdad0934ec73306dc07cc399` 的[自动构建 #30](https://github.com/Ricky-Hao/LibreChat/actions/runs/43026513891) 与[部署所用构建 #31](https://github.com/Ricky-Hao/LibreChat/actions/runs/43028307670) 均成功，后者的镜像已通过 rollout、内外健康检查和构建版本核验；完整 SHA、digest 与验收边界见[采用及首次部署记录](docs/status.md#ci-采用与首次部署2026-11-11)。CI 的业务合同仍仅执行 `--plan`，不计为重新运行全套业务测试。
 
 首次浏览器执行发现历史窗口、移动端编辑器入口和耗时文案断言未适配当前上游；修正夹具和定位后，相关失败及连带跳过用例已实际补跑通过。提交 lint 另发现计时器测试字面文本与导出夹具嵌套三元表达式，修正后定向执行的 33 个计时器测试和 3 个导出浏览器测试通过。上述重复执行不另加到去重计数。
 
@@ -59,7 +63,7 @@ CI 采用阶段仅同步应用 `AGENTS.md` 的维护与发布入口；当前[应
 
 已提交应用相对固定基线的普通 static-checks 通过；最终提交另通过原 pre-push 的 `--full --skip config-tests` 检查，包含慢速类型检查与未使用 i18n keys 检查。传输中断后，普通重推复用原门禁按相同 tree、base 和参数缓存的成功结果，退出 0。原 pre-push 显式跳过 Config migration tests；Unused npm packages 因未安装 depcheck 跳过，ESLint config validation 因本轮差异未涉及而不执行。这些项目不计为已运行通过。
 
-原始执行证据留在本地 `.work/main-e6567c7/`，不作为补丁重放依赖。验收使用隔离 loopback 服务、memory Mongo 与 Chromium；fresh Docker/Envbuilder、可选 Compose、真实 Redis/provider、Safari/Firefox、镜像发布和部署未验收。
+原始业务执行证据留在本地 `.work/main-e6567c7/`，不作为补丁重放依赖。该阶段使用隔离 loopback 服务、memory Mongo 与 Chromium；后续 CI 镜像构建及首次部署已有上述独立证据。全新 Devcontainer/Envbuilder 环境、可选 Compose、真实 Redis/provider 与 Safari/Firefox 未验收；本阶段也未实测登录后的模型、工具、子 agent、PTC callback、Langfuse 或长期稳定性。
 
 维护工具自测：
 
@@ -73,6 +77,6 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 
 发布 job 依赖验证成功，仅在 `Ricky-Hao/LibreChat` 的 `refs/heads/patches` push/手动事件运行。它从相同补丁 SHA 和固定 base 再生成应用、核对 tree，然后从该目录的 `Dockerfile.multi`、`api-build` target 构建 `linux/amd64` 镜像。PR 不登录 registry 或推镜像。
 
-镜像继续发布到 `ghcr.io/ricky-hao/librechat:rickyhao-dev`，并保留完整补丁 SHA 标签 `sha-<patchset SHA>`。OCI revision、`io.librechat.patchset.revision` 和运行时 `BUILD_COMMIT` 表示补丁集版本；`io.librechat.upstream.base` 与 `io.librechat.generated.tree` 分别记录上游基线和生成源码 tree，不把补丁 SHA 当作应用 checkout 的 HEAD。部署继续消费现有标签，部署动作另行授权。
+镜像继续发布到 `ghcr.io/ricky-hao/librechat:rickyhao-dev`，该标签保留为兼容入口；追溯与部署使用完整补丁 SHA 标签 `sha-<patchset SHA>` 和对应 digest。OCI revision、`io.librechat.patchset.revision` 和运行时 `BUILD_COMMIT` 表示补丁集版本，`BUILD_BRANCH` 为 `patches`；`io.librechat.upstream.base` 与 `io.librechat.generated.tree` 分别记录上游基线和生成源码 tree，不把补丁 SHA 当作应用 checkout 的 HEAD。部署按[默认流程](docs/maintenance.md#上游同步默认流程)在当次授权范围执行。
 
 生成应用中的旧 `rickyhao/dev` workflow 仍由 [fork-image](patches/fork-image/README.md) 载荷保留，其静态合同只检查兼容数据；活动入口以本补丁仓根 workflow 为准。维护、合并和发布采用 `patches` → manifest 重放 → GHCR 流程，不要求将新应用合回旧 fork。

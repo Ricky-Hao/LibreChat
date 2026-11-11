@@ -58,6 +58,19 @@ index-retry 的 replacement commit 为 `e2b2839375d5e8052dec4785bf3117ce27aa67dc
 
 CI 采用阶段仅更新贡献指引载荷中的应用 `AGENTS.md`。当前[应用提交 `c81e3483feffc4e6ae50298dcf081139c1b3a98f`](https://github.com/Ricky-Hao/LibreChat/commit/c81e3483feffc4e6ae50298dcf081139c1b3a98f) 与正式重放共用新 tree `c00edf8153e549ffc044609af4a21c9eb409dc5f`；业务实现、锁文件和 Dockerfile 未变，复用既有真实验收及生产构建。新增根 CI 的 actionlint、触发/权限/checkout/context/metadata 结构检查、13 项工具自测和两 job 重放脚本的本地模拟通过，71 项合同入口计划明确为 `NOT RUN`。文档差异、格式和链接通过，应用文档增量经原 hooks 普通提交、推送；不将这些本地结果计为 GitHub Actions 或镜像发布成功。
 
-fresh Docker/Envbuilder、可选 Compose、镜像发布、部署、真实 Redis/provider 与 Safari/Firefox 均没有新增验收证据。
+全新 Devcontainer/Envbuilder 环境、可选 Compose、真实 Redis/provider 与 Safari/Firefox 没有新增验收证据。镜像发布和首次部署的后续实际结果见下节；本阶段未实测登录后的真实模型、工具、子 agent、PTC callback、Langfuse 或长期稳定性。
 
-当前维护入口为 `patches` → manifest 固定基线重放 → GHCR，继续使用 `rickyhao-dev` 标签；见 [maintenance.md](maintenance.md#ci-与发布) 和[活动 workflow](../.github/workflows/rickyhao-dev-image.yml)。PR 只验证，发布仅限本仓 `patches` 的 push/手动入口。独立文档里的旧 merge-sync 推荐不作为此补丁仓的默认流程；默认分支设置和实际 Actions 结果由负责人随后处理，合并、push 与部署各按当前授权执行。
+## CI 采用与首次部署（2026-11-11）
+
+默认分支已由负责人切换为 `patches`，远端 `HEAD` 符号引用也已独立核实。补丁版本 `08f1af9cfd6179adfdad0934ec73306dc07cc399` 完成以下真实 CI；均为 attempt 1、`completed/success`：
+
+| 运行 | 触发方式 | 完成时间（UTC） |
+| --- | --- | --- |
+| [#30 / 43026513891](https://github.com/Ricky-Hao/LibreChat/actions/runs/43026513891) | push `patches` | 2026-11-11 13:15:50 |
+| [#31 / 43028307670](https://github.com/Ricky-Hao/LibreChat/actions/runs/43028307670) | workflow_dispatch，`patches` | 2026-11-11 13:28:50 |
+
+首次部署使用 #31 产物。validate 日志记录固定 base `e6567c7a681ce67869dce31486a21d3a25d6931b`、generated tree `c00edf8153e549ffc044609af4a21c9eb409dc5f`；publish 构建 `linux/amd64`，发布 `rickyhao-dev` 和 `sha-08f1af9cfd6179adfdad0934ec73306dc07cc399` 标签，OCI index digest 为 `sha256:7501ee56289016e84518bc301a4a36df8bf246e269a040885a9c8516d5467658`。CI 实际范围为维护工具自测、重放、合同入口 `--plan` 和 Docker 构建；业务测试仍标记 `NOT RUN`，完整业务验收沿用前节证据。
+
+首次部署用完整 SHA 标签加上述 index digest 固定镜像，已核对其 amd64 manifest 映射。K8s 专家于 2026-11-11 14:09/14:12 UTC 独立验收：rollout 完成，Deployment Available，Pod Ready、零重启；实际 `BUILD_COMMIT` 为 `08f1af9cfd6179adfdad0934ec73306dc07cc399`，`BUILD_BRANCH=patches`，SDK 为 `4.2.2-ricky.1`。内外首页、`/livez`、`/readyz` 均返回 200，有效配置与 build 匹配，匿名用户接口返回 401；配置、环境、数据卷、Mongo 与 Meili 保留。详细部署、digest 映射及回退证据保存在部署仓[2026-11-11 日期记录](https://git.rickyhao.com/RickyHao/k8s-config/src/branch/main/maintenance/librechat-patches-20261111.md)，长期操作入口为[LibreChat 部署文档](https://git.rickyhao.com/RickyHao/k8s-config/src/branch/main/librechat/README.md)。
+
+今后采用[上游同步默认流程](maintenance.md#上游同步默认流程)：固定 upstream main 完整 SHA → 有序补丁重放与验证 → `patches` → CI 镜像 → digest 部署。旧 `rickyhao/dev` 和旧 merge-sync 文档仅保留历史与兼容来源；每轮合并、push、发布和部署按当次授权执行。

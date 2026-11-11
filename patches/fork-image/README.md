@@ -29,4 +29,4 @@ python3 tools/patchset.py test --target /path/to/application --only fork-image -
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-2026-11-11：workflow 静态合同通过，核实仅 `rickyhao/dev` 的 push 可进入发布任务。未运行镜像发布或部署。项目门禁汇总见[根 README](../../README.md#验证)。
+2026-11-11 的本组验收：旧 workflow 静态合同通过，核实仅 `rickyhao/dev` 的 push 可进入其发布任务；该合同未运行镜像发布或部署。随后补丁仓活动 CI 已完成真实镜像发布和首次 digest 部署，见[采用与部署记录](../../docs/status.md#ci-采用与首次部署2026-11-11)。今后按[上游同步默认流程](../../docs/maintenance.md#上游同步默认流程)维护；本组继续只承担旧入口兼容责任。项目门禁汇总见[根 README](../../README.md#验证)。

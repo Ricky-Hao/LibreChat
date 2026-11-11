@@ -2,6 +2,7 @@
 
 本分支管理补丁数据与维护工具。应用工程规则保存在 `contributor-guidance` 载荷，并在生成的应用 checkout 生效。
 
+- 今后同步上游默认按[上游同步默认流程](docs/maintenance.md#上游同步默认流程)执行：固定官方 upstream main 完整 SHA，维护有序补丁，在干净应用 checkout 重放和验证，合入 `patches` 后由 CI 发布，并在当次部署范围内按 digest 部署。旧 `rickyhao/dev` 仅保留历史与兼容来源。
 - 先读 README、manifest、相关组 README 和 `docs/maintenance.md`。只改当前责任，不扩大应用能力。
 - `manifest.json` 是唯一执行顺序。按独立能力或修复分组，显式记录依赖；共享文件按 hunks 保留各组责任，不用整文件覆盖上游。
 - 每组保留理由、状态、基线、来源、后续修正、替代边界和非空测试合同。历史提交只作来源，不能当作可直接重放的提交队列。
