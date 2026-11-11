@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "base": "f4154b649efa37e1345ccc517a4d8d1ed2178c82",
+  "base": "e6567c7a681ce67869dce31486a21d3a25d6931b",
   "patches": [
     {
       "id": "sdk",
@@ -321,7 +321,6 @@
         "api/server/controllers/agents/client.test.js",
         "api/server/controllers/agents/request.js",
         "client/src/components/Chat/Subagents/Recovery.test.tsx",
-        "client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx",
         "client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx",
         "e2e/setup/fake-model.js",
         "e2e/specs/mock/subagent-recovery.spec.ts",
@@ -354,10 +353,14 @@
       "depends_on": [],
       "patch": "patches/autoscroll/changes.patch",
       "paths": [
-        "client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx",
-        "client/src/hooks/Messages/useMessageScrolling.ts",
+        "client/src/components/Chat/ChatView.tsx",
         "e2e/setup/fake-model.js",
-        "e2e/specs/mock/running-autoscroll.spec.ts"
+        "e2e/specs/mock/running-autoscroll.spec.ts",
+        "packages/chat/src/components/messages/MessagesView.tsx",
+        "packages/chat/src/components/pane/messages.tsx",
+        "packages/chat/src/react.ts",
+        "packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx",
+        "packages/chat/src/react/messages/useMessageScrolling.ts"
       ],
       "tests": "patches/autoscroll/tests.json"
     },
@@ -365,7 +368,8 @@
       "id": "history-window",
       "status": "feature",
       "depends_on": [
-        "bounded-reads"
+        "bounded-reads",
+        "autoscroll"
       ],
       "patch": "patches/history-window/changes.patch",
       "paths": [
@@ -393,9 +397,6 @@
         "client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx",
         "client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx",
         "client/src/components/Chat/Messages/Content/parent.tsx",
-        "client/src/components/Chat/Messages/MessagesView.tsx",
-        "client/src/components/Chat/Messages/MultiMessage.tsx",
-        "client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx",
         "client/src/components/Chat/__tests__/ChatView.spec.tsx",
         "client/src/components/Conversations/ConvoOptions/ShareButton.tsx",
         "client/src/components/Conversations/ConvoOptions/__tests__/ShareButton.test.tsx",
@@ -409,14 +410,12 @@
         "client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx",
         "client/src/hooks/Conversations/useExportConversation.ts",
         "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx",
-        "client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx",
         "client/src/hooks/Messages/useHistoryPaging.ts",
-        "client/src/hooks/Messages/useThreadRows.ts",
         "client/src/hooks/SSE/cache.ts",
         "client/src/locales/en/translation.json",
         "client/src/routes/History.tsx",
         "client/src/routes/Root.tsx",
-        "client/src/utils/history.ts",
+        "client/test/messagesHost.tsx",
         "client/test/turnServices.ts",
         "docs/history-window-patch.md",
         "docs/history.md",
@@ -433,13 +432,19 @@
         "packages/chat/src/__fixtures__/messagesHost.ts",
         "packages/chat/src/components/messages/MessagesView.tsx",
         "packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx",
+        "packages/chat/src/components/messages/thread/MultiMessage.tsx",
+        "packages/chat/src/components/pane/__tests__/messages.spec.tsx",
+        "packages/chat/src/core/history.ts",
+        "packages/chat/src/core/index.ts",
         "packages/chat/src/core/parts/rerunParent.ts",
         "packages/chat/src/core/turns/regenerate.ts",
         "packages/chat/src/react.ts",
         "packages/chat/src/react/chat/__fixtures__/services.ts",
         "packages/chat/src/react/chat/host.tsx",
         "packages/chat/src/react/chat/turns.ts",
+        "packages/chat/src/react/messages/__tests__/rows.spec.tsx",
         "packages/chat/src/react/messages/host.tsx",
+        "packages/chat/src/react/messages/rows.ts",
         "packages/chat/test/consumer.spec.tsx",
         "packages/data-provider/src/api-endpoints.ts",
         "packages/data-provider/src/config.ts",
@@ -462,8 +467,6 @@
       "patch": "patches/native-overlays/changes.patch",
       "paths": [
         "client/src/components/Artifacts/Artifacts.tsx",
-        "client/src/components/Chat/Messages/Content/DialogImage.tsx",
-        "client/src/components/Chat/Subagents/SubagentThreadPanel.tsx",
         "client/src/components/Input/SetKeyDialog/InputWithLabel.tsx",
         "client/src/components/Nav/Settings/Dialog.tsx",
         "client/src/hooks/SSE/pane.ts",
@@ -475,6 +478,8 @@
         "client/src/utils/overlays.ts",
         "e2e/specs/mock/mobile-overlay-back.spec.ts",
         "packages/chat/src/components/composer/files/ImagePreview.tsx",
+        "packages/chat/src/components/parts/DialogImage.tsx",
+        "packages/chat/src/components/subagents/panel.tsx",
         "packages/client/src/Providers/Overlay.tsx",
         "packages/client/src/Providers/index.ts",
         "packages/client/src/components/AlertDialog.tsx",
@@ -486,14 +491,15 @@
     },
     {
       "id": "vendor-chunks",
-      "status": "awaiting-upstream",
+      "status": "upstream",
       "depends_on": [],
-      "patch": "patches/vendor-chunks/changes.patch",
-      "paths": [
-        "client/vite.config.ts",
-        "e2e/client-build.test.mjs"
-      ],
-      "tests": "patches/vendor-chunks/tests.json"
+      "patch": null,
+      "paths": [],
+      "tests": "patches/vendor-chunks/tests.json",
+      "replacement": {
+        "commit": "fc3b86acbc0a5290154b25f7a0091641667cd14b",
+        "evidence": "patches/vendor-chunks/README.md: fixed base includes first-node_modules package classification, normalized Windows paths, and vendor-chunk-paths.spec.ts config probes"
+      }
     },
     {
       "id": "mcp-ping",
@@ -542,12 +548,12 @@
         "client/src/components/Chat/Messages/Content/ProgressText.tsx",
         "client/src/components/Chat/Messages/Content/RetrievalCall.tsx",
         "client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx",
-        "client/src/utils/__tests__/activityLabels.spec.ts",
-        "client/src/utils/activityLabels.ts",
         "e2e/specs/mock/activity-fold.spec.ts",
         "packages/api/src/agents/intent.spec.ts",
         "packages/api/src/agents/intent.ts",
         "packages/chat/src/components/parts/rows.ts",
+        "packages/chat/src/core/parts/__tests__/activityLabels.spec.ts",
+        "packages/chat/src/core/parts/activityLabels.ts",
         "tool-intent-spec.md"
       ],
       "tests": "patches/intent-labels/tests.json"
@@ -612,11 +618,9 @@
       ],
       "patch": "patches/test-adaptations/changes.patch",
       "paths": [
-        "e2e/specs/mock/activity-fold.spec.ts",
         "e2e/specs/mock/content-filters.persisted.spec.ts",
         "e2e/specs/mock/scenarios/pinned-drag-rules.spec.ts",
         "e2e/specs/mock/scenarios/pinned.helpers.ts",
-        "e2e/specs/mock/scenarios/sidebar-single-scroll.spec.ts",
         "e2e/specs/mock/scenarios/unseen-replies.spec.ts",
         "e2e/specs/mock/streaming.spec.ts"
       ],

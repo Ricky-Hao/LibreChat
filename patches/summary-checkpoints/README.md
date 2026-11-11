@@ -1,6 +1,6 @@
 # Summary、reasoning 与可用 checkpoint
 
-状态：`keep`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
 保留多块及空 reasoning 处理、失败/空白/legacy stub 拒绝和保留不确定性的摘要指引。coverage.retainedFromMessageId 贯穿消息与 actor 存储、冷 parent-chain 读取和可信 warm checkpoint overlay；缺锚点与旧摘要保留原 fallback。
 
@@ -32,4 +32,4 @@ python3 tools/patchset.py test --target /path/to/application --only summary-chec
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。
+2026-11-11：本组 3 项 focused 和 3 项 types 合同通过，覆盖 summary/reasoning 与 checkpoint 消费方。项目门禁汇总见[根 README](../../README.md#验证)。

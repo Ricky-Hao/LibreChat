@@ -1,6 +1,6 @@
 # 侧栏延迟 focus
 
-状态：`awaiting-upstream`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`awaiting-upstream`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
 侧栏延迟打开期间保留用户主动选择的 focus，避免 fallback 抢走焦点。
 
@@ -28,4 +28,4 @@ python3 tools/patchset.py test --target /path/to/application --only sidebar-focu
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。
+2026-11-11：OpenSidebar focused 与 client 类型检查通过。固定基线仍需本地载荷。项目门禁汇总见[根 README](../../README.md#验证)。

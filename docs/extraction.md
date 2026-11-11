@@ -1,8 +1,10 @@
-# 提取范围与完整性
+# 原始提取范围与完整性
 
-应用基线为 `f4154b649efa37e1345ccc517a4d8d1ed2178c82`，完整 fork 源为 `38c026db83d0ca12a067083b5c1551c1bca2754b`，补充文档源为 `2e79586e547131de06494bed2f3274f4745ca435`。原应用净差异涉及 366 个路径，文本统计为 72021 insertions、3197 deletions；统计只描述提取输入。
+本文保存首次提取的历史证据，使用旧基线 `f4154b649efa37e1345ccc517a4d8d1ed2178c82`，完整 fork 源为 `38c026db83d0ca12a067083b5c1551c1bca2754b`，补充文档源为 `2e79586e547131de06494bed2f3274f4745ca435`。原应用净差异涉及 366 个路径，文本统计为 72021 insertions、3197 deletions；统计只描述提取输入。
 
-提取按最终源码 hunks 归责，构造有序中间 tree，再生成标准 Git U3/binary diff。共享文件保留各组 hunks，不用整文件覆盖上游；完整选择恢复源文件原始字节。历史提交用于追溯，不作为可直接重放的队列。[manifest.json](../manifest.json) 定义 25 份真实载荷的顺序、完整路径范围、状态及依赖，另有已同源的无载荷 index-retry 条目。
+当前执行基线已更新为 `e6567c7a681ce67869dce31486a21d3a25d6931b`。当前清单为 24 份活动载荷及 vendor-chunks、index-retry 两个上游替代条目，见 [README](../README.md) 和[状态映射](status.md)。下面的原始文件数、blob、tree 和 NOT RUN 记录均属于旧基线提取，不用作新基线的运行验收。
+
+首次提取按最终源码 hunks 归责，构造有序中间 tree，再生成标准 Git U3/binary diff。共享文件保留各组 hunks，不用整文件覆盖上游；完整选择恢复源文件原始字节。历史提交用于追溯，不作为可直接重放的队列。首次清单包含 25 份真实载荷，另有已同源的无载荷 index-retry 条目；当前顺序、路径、状态及依赖以 [manifest.json](../manifest.json) 为准。
 
 ## 全部排除项
 
@@ -59,10 +61,10 @@ bd7963d6c15f234810e9fbf441a1341b2fafcf8a
 
 各组依赖闭包已用独立临时 index 核对可应用；新增模块的相对导入与 `~/` 导入扫描未发现缺失模块。四处相邻独立增量采用单侧稳定上下文，位置和预检方式见 [maintenance.md](maintenance.md)，不把非依赖组混入上下文。
 
-## 本阶段验证范围
+## 原始提取阶段验证范围
 
 维护工具单元测试使用微型 Git 仓和受控 runner 进程，覆盖依赖选择、完整预检、脏目标/错误基线/重复应用保护、清单路径、替代证据、计划入口、目标 cwd、失败传播、Jest/Playwright discovery 与空跑/跳过拒绝。受控进程测试 runner 逻辑，不代表应用测试已通过。
 
-维护工具 13 项单元测试通过。应用重放只执行合同 `--tier all --plan`：142 个合同项去重为 70 个检查命令，入口校验全部通过并输出 NOT RUN；没有执行应用 Jest、类型检查、构建、浏览器或 Lighthouse。最终实际源差异的 `git diff --check <固定基线>` 通过，独立于嵌套 patch 文件的字节保留。下一阶段按 [README](../README.md) 和 [维护说明](maintenance.md) 准备依赖并执行实际合同。
+原始提取阶段的维护工具 13 项单元测试通过。该阶段应用重放只执行合同 `--tier all --plan`：142 个合同项去重为 70 个检查命令，入口校验全部通过并输出 NOT RUN；没有执行应用 Jest、类型检查、构建、浏览器或 Lighthouse。旧基线实际源差异的 `git diff --check <固定基线>` 通过，独立于嵌套 patch 文件的字节保留。当前验证范围见 [README](../README.md)，执行方法见 [维护说明](maintenance.md)。
 
 补丁仓只保留许可证、来源、维护说明、清单、载荷和维护工具；应用发布 workflow 仅存在于载荷数据。`.work/` 内的临时提取脚本、index、checkout 和日志不提交，也不是交付依赖。应用源码继续保存在固定源 Git 历史及下一阶段生成的应用 checkout 中。

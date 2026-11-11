@@ -37,7 +37,7 @@ index 0179a8a4805f7ee7efcebc907c377147d8c38fd0..0f9d9a42363c478cca9c614fb375ac54
  
  <!--
 diff --git a/AGENTS.md b/AGENTS.md
-index ff82d6ea8239dcbf7cf47b313ae05ca9b2d8f8db..5b12a594a838eda38276076ecc0c43e3d667e1f5 100644
+index 685b2af282d688eb31c3911b52ff704082c17061..bb5a9e740ff89458acbae56a3cb1b49eea71293a 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -1,4 +1,64 @@
@@ -160,7 +160,7 @@ index ff82d6ea8239dcbf7cf47b313ae05ca9b2d8f8db..5b12a594a838eda38276076ecc0c43e3
  `npm run sort-imports` with no arguments rewrites every source root — pass the paths you touched.
  Run `npm run static-checks -- --against origin/dev` to reproduce the PR's static checks; use
  `npm run static-checks:full` for the slower gates. Fix all formatting, lint, and TypeScript
-@@ -174,7 +236,7 @@ Jotai conversion scoped to the state a feature owns. For persisted atoms, use th
+@@ -176,7 +238,7 @@ Jotai conversion scoped to the state a feature owns. For persisted atoms, use th
  
  ## Code style and performance
  
@@ -169,7 +169,7 @@ index ff82d6ea8239dcbf7cf47b313ae05ca9b2d8f8db..5b12a594a838eda38276076ecc0c43e3
  Prefer flat early returns, pure functions, and explicit types. Avoid `any`, broad `unknown`/casts,
  duplicated types, and dynamic imports. Extract genuinely repeated logic instead of copying it;
  write comments only for non-obvious behavior or public API contracts.
-@@ -206,6 +268,8 @@ success, and failure states in focused component tests.
+@@ -208,6 +270,8 @@ success, and failure states in focused component tests.
  
  ## Testing
  

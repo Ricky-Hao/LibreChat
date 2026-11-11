@@ -1,8 +1,8 @@
 diff --git a/api/app/clients/BaseClient.js b/api/app/clients/BaseClient.js
-index 4e74116405f9012ddfefce24cdbb5a645299d476..58ca0e53706033bf6a6cec46864b2929437516fd 100644
+index d21864e5933c1b3faf3b349cbb5b646486923d28..988ad187a11385571b6f358cb45c9929c583d544 100644
 --- a/api/app/clients/BaseClient.js
 +++ b/api/app/clients/BaseClient.js
-@@ -23,9 +23,8 @@ const {
+@@ -24,9 +24,8 @@ const {
    isModelBoundAttachmentFile,
    isToolOwnedAttachment,
    withBalanceReservations,
@@ -14,7 +14,7 @@ index 4e74116405f9012ddfefce24cdbb5a645299d476..58ca0e53706033bf6a6cec46864b2929
    runAfterSeed,
    saveTurnConversation,
    seedTurnConversation,
-@@ -1303,27 +1302,7 @@ class BaseClient {
+@@ -1304,27 +1303,7 @@ class BaseClient {
        mapMethod,
      });
      if (this.shouldSummarize) {
@@ -43,7 +43,7 @@ index 4e74116405f9012ddfefce24cdbb5a645299d476..58ca0e53706033bf6a6cec46864b2929
  
        _messages = this.constructor.getMessagesForConversation({
          messages,
-@@ -1473,12 +1452,8 @@ class BaseClient {
+@@ -1474,12 +1453,8 @@ class BaseClient {
     *
     * This function constructs a conversation thread by traversing messages from a given parentMessageId up to the root message.
     * It handles cyclic references by ensuring that a message is not processed more than once.
@@ -58,7 +58,7 @@ index 4e74116405f9012ddfefce24cdbb5a645299d476..58ca0e53706033bf6a6cec46864b2929
     *
     * Each message object should have an 'id' or 'messageId' property and may have a 'parentMessageId' property.
     * The 'parentMessageId' is the ID of the message that the current message is a reply to.
-@@ -1490,7 +1465,7 @@ class BaseClient {
+@@ -1491,7 +1466,7 @@ class BaseClient {
     * @param {string} options.parentMessageId - The ID of the parent message to start the traversal from.
     * @param {Function} [options.mapMethod] - An optional function to map over the ordered messages. Applied conditionally based on mapCondition.
     * @param {(message: TMessage) => boolean} [options.mapCondition] - An optional function to determine whether mapMethod should be applied to a given message. If not provided and mapMethod is set, mapMethod applies to all messages.
@@ -67,7 +67,7 @@ index 4e74116405f9012ddfefce24cdbb5a645299d476..58ca0e53706033bf6a6cec46864b2929
     * @returns {TMessage[]} An array containing the messages in the order they should be displayed, starting with the most recent message with a 'summary' property if the 'summary' option is true, and ending with the message identified by 'parentMessageId'.
     */
    static getMessagesForConversation({
-@@ -1500,49 +1475,7 @@ class BaseClient {
+@@ -1501,49 +1476,7 @@ class BaseClient {
      mapCondition = null,
      summary = false,
    }) {
@@ -730,10 +730,10 @@ index 27150b7fcb02067e9ca8a7a292f664853a9f6ada..63a26f048831f2062cf70b6767281e6b
      /** The save guard keeps it: a primary usage follows the latest snapshot. */
      const afterLatest = usageEmitSink.slice(contextUsageSink.latestUsageIndex ?? 0);
 diff --git a/api/server/controllers/agents/client.js b/api/server/controllers/agents/client.js
-index 1a68393c4fc74e986bdcf7e442e10ef4771e8482..5648dcb3b8939377961d7277caad2a023c93c824 100644
+index bc0ec5ab682b99a34af49cc4fc5a3577e6a7a007..267a335082b87b199509b3a0028af195f4d9348e 100644
 --- a/api/server/controllers/agents/client.js
 +++ b/api/server/controllers/agents/client.js
-@@ -2229,6 +2229,7 @@ class AgentClient extends BaseClient {
+@@ -2235,6 +2235,7 @@ class AgentClient extends BaseClient {
        ...context,
        checkpointMessageOverlay: {
          source: 'skill',
@@ -1312,10 +1312,10 @@ index 3c418a722d0562ca81c9f05aa4dacfc6d63ecb97..40a66b8cf935770ebb87eb35f9d092d5
      messageId: string;
      contentIndex: number;
 diff --git a/packages/data-schemas/src/methods/conversation.spec.ts b/packages/data-schemas/src/methods/conversation.spec.ts
-index ecea2ae3596987530b574ffd477b97b2cc9a6510..0fe51d89a63774b4a17d31fd18d569570451338f 100644
+index 3f06f1e37a19a77869d849ca00f8bfc548087822..e9c5cb2e0cc748b87c19d065d22df98efa1496e5 100644
 --- a/packages/data-schemas/src/methods/conversation.spec.ts
 +++ b/packages/data-schemas/src/methods/conversation.spec.ts
-@@ -6884,7 +6884,12 @@ describe('Conversation Operations', () => {
+@@ -7005,7 +7005,12 @@ describe('Conversation Operations', () => {
        };
        const skillManifest = [{ id: 'skill-1', name: 'analysis', version: 3 }];
        const discoveredToolNames = ['deferred_lookup', 'deferred_write'];

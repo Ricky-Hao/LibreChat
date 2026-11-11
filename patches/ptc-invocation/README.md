@@ -1,6 +1,6 @@
 # 按 callee schema 处理 PTC intent
 
-状态：`keep`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
 仅在实际 callee schema 允许时去掉 UI intent，保留业务 intent、schema 校验与 rich results。该调用正确性与可选标签长度分开维护。
 
@@ -29,4 +29,4 @@ python3 tools/patchset.py test --target /path/to/application --only ptc-invocati
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。
+2026-11-11：handlers focused 合同与 API 类型检查通过，保留 callee schema、业务 intent 和 rich result 断言。项目门禁汇总见[根 README](../../README.md#验证)。

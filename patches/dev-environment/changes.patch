@@ -28,7 +28,7 @@ index 68f64289ac86180b0e8556d2fc585e83846f5c5d..f20192f568b977afc2271b9f01d93360
  WORKDIR /workspaces
 diff --git a/.devcontainer/README.md b/.devcontainer/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..e319deb6ac3b5f0f88714451572ae050ca7686db
+index 0000000000000000000000000000000000000000..3db361e40af6f6e4173db793dd0048ffadfd883d
 --- /dev/null
 +++ b/.devcontainer/README.md
 @@ -0,0 +1,89 @@
@@ -41,7 +41,7 @@ index 0000000000000000000000000000000000000000..e319deb6ac3b5f0f88714451572ae050
 +container host's clone/mount location remains authoritative (including
 +`/workspaces/LibreChat`). The image contains:
 +
-+- Node **24.16.0** (checked against `.nvmrc`) and the npm version from
++- Node **24.22.1** (checked against `.nvmrc`) and the npm version from
 +  `package.json#packageManager` (**11.13.0** currently).
 +- Git, OpenSSH client, CA certificates and curl; Python, make, C++ and pkg-config for
 +  native npm modules when a prebuilt binary is unavailable.
@@ -206,10 +206,10 @@ index 0000000000000000000000000000000000000000..726b1b8c2f7188da06877f4b0e482f85
 +echo 'Development/test dependencies installed. No app or database service has been started.'
 diff --git a/.devcontainer/setup.test.mjs b/.devcontainer/setup.test.mjs
 new file mode 100644
-index 0000000000000000000000000000000000000000..83bc28b7c030187deab08e6643318a55181c883a
+index 0000000000000000000000000000000000000000..1f161ce237290291f96b2a1095d12eb6b754b952
 --- /dev/null
 +++ b/.devcontainer/setup.test.mjs
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,219 @@
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
 +import os from 'node:os';
@@ -240,13 +240,16 @@ index 0000000000000000000000000000000000000000..83bc28b7c030187deab08e6643318a55
 +  assert.ok(rules.includes('**/node_modules'));
 +  assert.ok(rules.includes('!.nvmrc'));
 +  assert.deepEqual(
-+    rules.filter((rule) => rule.startsWith('!')),
++    // The SDK group may also admit its vendored source archive.
++    rules.filter((rule) => rule.startsWith('!') && rule !== '!vendor/librechat-agents-*.tgz'),
 +    ['!.nvmrc', ...cacheRules.filter((rule) => rule.startsWith('!'))],
 +  );
 +});
 +
 +function fixture(t, uid = process.getuid(), gid = process.getgid()) {
-+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'librechat-setup-'));
++  // A root-owned TMPDIR may have ancestors the fixture user cannot traverse.
++  const tempDir = uid === process.getuid() ? os.tmpdir() : '/tmp';
++  const root = fs.mkdtempSync(path.join(tempDir, 'librechat-setup-'));
 +  const own = (filename) => {
 +    if (process.getuid() === 0) fs.chownSync(filename, uid, gid);
 +  };
@@ -444,7 +447,7 @@ index 4320d5741d357a9aadad5db055af4e77c039fc91..3d7d07008a4df2c0a47326d6aa42f728
 +!.envbuilder.tmp/envbuilder
 +!.envbuilder.tmp/image
 diff --git a/.github/workflows/frontend-review.yml b/.github/workflows/frontend-review.yml
-index aab06be1aa3cf95576438a680b0facb4b4e013ee..4ca6c0c00cfd302a416c49491ac9ac34aa03749b 100644
+index 652f48676d1e1d50257f9f6c9c9c70b8491c85c2..862b55aac586908e78586640a2596ec801639f2d 100644
 --- a/.github/workflows/frontend-review.yml
 +++ b/.github/workflows/frontend-review.yml
 @@ -52,6 +52,7 @@ env:
@@ -455,10 +458,10 @@ index aab06be1aa3cf95576438a680b0facb4b4e013ee..4ca6c0c00cfd302a416c49491ac9ac34
      runs-on: ubuntu-latest
      timeout-minutes: 5
      steps:
-@@ -61,6 +62,15 @@ jobs:
-           node-version: '24.22.1'
-           cache: npm
-       - run: npm ci
+@@ -96,6 +97,15 @@ jobs:
+             packages/api/node_modules
+             api/node_modules
+           key: ${{ steps.cache-node-modules.outputs.cache-primary-key }}
 +      # Loading the real Vite config imports both packages through their built entries.
 +      - uses: actions/download-artifact@v7
 +        with:

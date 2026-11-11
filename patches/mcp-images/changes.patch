@@ -1,5 +1,5 @@
 diff --git a/api/app/clients/specs/BaseClient.test.js b/api/app/clients/specs/BaseClient.test.js
-index 035b20d032a4afa59d7ceee15977779fdc0ec0cc..7364dcf3c796ddda34b4c60f7a2b7462ff7186f1 100644
+index 9d2f844e2bb8f5d2c1212b726ab58769b4e14000..ad4dc8c1d899d37d41650c72307b283bb1b493fb 100644
 --- a/api/app/clients/specs/BaseClient.test.js
 +++ b/api/app/clients/specs/BaseClient.test.js
 @@ -657,6 +657,41 @@ describe('BaseClient', () => {

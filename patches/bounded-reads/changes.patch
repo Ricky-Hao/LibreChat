@@ -118,7 +118,7 @@ index 8c78a8897d70bf28a1604614ce377dfc8b8ed393..0e5199083343ed27d4fa304c54be9209
    };
  });
 diff --git a/api/server/routes/skills.test.js b/api/server/routes/skills.test.js
-index a91ca7f0bfede87bcd0298a7b147a3e662f6495e..18be32db59e301454b077d9cca69452e9db9a7f7 100644
+index 7a6bfc92797e87b7dc11a92fa6011973cb12786c..412c6f43a7888d35fa37df90878aca6a4bde472a 100644
 --- a/api/server/routes/skills.test.js
 +++ b/api/server/routes/skills.test.js
 @@ -80,8 +80,12 @@ jest.mock('~/server/services/Skills/sync', () => ({
@@ -1995,10 +1995,10 @@ index 3ff6bab12a96b364241274167426134ca438568d..73e388924ace8003a5b34a68ab34fbf5
      if (!conversation) {
        if (await canReadActiveJobConversation(req, conversationId, options)) {
 diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
-index 54c0550ae71a00ad4f813a8eaebf6c6fedfbb9d0..fa2aa40b0b8e59150373e24fd986de6e12ed9cd8 100644
+index b8aab527824df2c3d4daf4cc0b8cd5a9c829eab0..39199452d3162b89aca2e82d43d732a5200f37fa 100644
 --- a/packages/data-provider/src/config.ts
 +++ b/packages/data-provider/src/config.ts
-@@ -4445,6 +4445,15 @@ export const toolCallPreviewsConfigSchema = z.object({
+@@ -4477,6 +4477,15 @@ export const toolCallPreviewsConfigSchema = z.object({
  
  export type TToolCallPreviewsConfig = z.infer<typeof toolCallPreviewsConfigSchema>;
  
@@ -2014,7 +2014,7 @@ index 54c0550ae71a00ad4f813a8eaebf6c6fedfbb9d0..fa2aa40b0b8e59150373e24fd986de6e
  export const configSchema = z.object({
    version: z.string(),
    telemetry: telemetrySchema.optional(),
-@@ -4498,6 +4507,7 @@ export const configSchema = z.object({
+@@ -4530,6 +4539,7 @@ export const configSchema = z.object({
    toolCallPreviews: toolCallPreviewsConfigSchema.default(() =>
      toolCallPreviewsConfigSchema.parse({}),
    ),
@@ -2047,7 +2047,7 @@ index 0000000000000000000000000000000000000000..3e46dbf82e8a298a96c4cf0e0a2c9e78
 +export type MessageReadBodyField = 'text' | 'entry' | 'args' | 'output';
 +export type MessageReadOperation = 'list' | 'content' | 'read';
 diff --git a/packages/data-schemas/src/app/service.ts b/packages/data-schemas/src/app/service.ts
-index 00001d68a463cd64775c0f65f7cccc50344b4dbe..86c650fa4404cade42cbae7941fbc612d1af7a80 100644
+index 9bc94265c0fcedf41a086d654ccf55d0aa497145..676bf5d6441e1eeb432b0524506f438349ce5277 100644
 --- a/packages/data-schemas/src/app/service.ts
 +++ b/packages/data-schemas/src/app/service.ts
 @@ -6,6 +6,7 @@ import {
@@ -2058,7 +2058,7 @@ index 00001d68a463cd64775c0f65f7cccc50344b4dbe..86c650fa4404cade42cbae7941fbc612
    hasActiveFiltersConfig,
    getConfigDefaults,
    langfuseConfigSchema,
-@@ -250,6 +251,7 @@ export const AppService = async (params?: {
+@@ -252,6 +253,7 @@ export const AppService = async (params?: {
      credentials: { writeFormat: config.credentials?.writeFormat ?? 'v3' },
      conversationList: loadConversationListConfig(config),
      toolCallPreviews: loadToolCallPreviewsConfig(config),
@@ -2067,7 +2067,7 @@ index 00001d68a463cd64775c0f65f7cccc50344b4dbe..86c650fa4404cade42cbae7941fbc612
  
    const agentsDefaults = agentsConfigSetup(config);
 diff --git a/packages/data-schemas/src/index.ts b/packages/data-schemas/src/index.ts
-index f9e256fd402492e09612c0c0e3c6e7807472906a..d1572235d75544af364adc989af43957ddf34ed7 100644
+index 306020302f3a7f6c8099006509cf65d231c57b81..947df6f92fe7c5eebd952e7140b3d4503c071a67 100644
 --- a/packages/data-schemas/src/index.ts
 +++ b/packages/data-schemas/src/index.ts
 @@ -4,6 +4,12 @@ export * from './common';
@@ -2923,10 +2923,10 @@ index fe6c19de075336c3b5f9022e2a74d6c1810ca0d3..416d90f06e41998b3082703f1dc1b608
  /**
   * Serves the cursor-paginated message read when sorted by `updatedAt`, the
 diff --git a/packages/data-schemas/src/types/app.ts b/packages/data-schemas/src/types/app.ts
-index 8a6b6fdb9ab7c98e0e48f4dfcfdc83e2abb6b64a..7f2a63417126f4cf6dc4fd9b216c29e6286d4041 100644
+index f6f08ba0c41a30aacc9ed0f0a4547211b3e59d8b..507e95173170cd050963d5b307d3532b7d8d336e 100644
 --- a/packages/data-schemas/src/types/app.ts
 +++ b/packages/data-schemas/src/types/app.ts
-@@ -139,6 +139,7 @@ export interface AppConfig {
+@@ -142,6 +142,7 @@ export interface AppConfig {
    conversationList?: TConversationListConfig;
    /** Bounds for the tool-call previews sent on conversation loads */
    toolCallPreviews?: TToolCallPreviewsConfig;

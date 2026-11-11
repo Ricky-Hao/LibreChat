@@ -1,17 +1,375 @@
-diff --git a/client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx b/client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx
-index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88982fc89f 100644
---- a/client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx
-+++ b/client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx
-@@ -1,700 +1,477 @@
- import React from 'react';
--import { RecoilRoot } from 'recoil';
- import { Provider, createStore } from 'jotai';
+diff --git a/client/src/components/Chat/ChatView.tsx b/client/src/components/Chat/ChatView.tsx
+index ee4701f35d796504f32ebf32dba844aefc2082fc..aefce03e252c3a251ba1f67b8251e8c1707d3b9e 100644
+--- a/client/src/components/Chat/ChatView.tsx
++++ b/client/src/components/Chat/ChatView.tsx
+@@ -82,6 +82,7 @@ function ChatViewPane({
+   messages: TMessage[] | null;
+   isLoading: boolean;
+ }) {
++  const { targetMessageId } = useParams();
+   const rootSubmission = useAtomValue(submissionByIndex(index));
+   const { saveDrafts } = useChatSettings();
+   const enterToSend = useRecoilValue(store.enterToSend);
+@@ -171,7 +172,22 @@ function ChatViewPane({
+                               />
+                             )}
+                             renderBadge={(projectId) => <ProjectBadge projectId={projectId} />}
+-                            messagesSlots={messagesSlots}
++                            messagesSlots={{
++                              ...messagesSlots,
++                              scrollNavigation: {
++                                conversationKey: conversationId,
++                                targetMessageId,
++                                ready: !routePending,
++                                explicitSendId:
++                                  rootSubmission &&
++                                  !('resumeStreamId' in rootSubmission) &&
++                                  (rootSubmission.conversation?.conversationId == null ||
++                                    rootSubmission.conversation?.conversationId === conversationId)
++                                    ? (rootSubmission.clientRequestId ??
++                                      rootSubmission.initialResponse?.messageId)
++                                    : undefined,
++                              },
++                            }}
+                             landing={<Landing centerFormOnLanding={centerFormOnLanding} />}
+                             renderColumn={(column) => (
+                               <OwnerTextProvider
+diff --git a/e2e/setup/fake-model.js b/e2e/setup/fake-model.js
+index 9e2fbe08ee2847f1e8934cc28e72d91276233e9c..74263b302093f32a5a9905e532a6efa38309116b 100644
+--- a/e2e/setup/fake-model.js
++++ b/e2e/setup/fake-model.js
+@@ -11,6 +11,7 @@
+  */
+ const sharp = require('sharp');
+ const { FakeChatModel } = require('@librechat/agents');
++const { setTimeout: delay } = require('node:timers/promises');
+ const { ChatGenerationChunk } = require('@langchain/core/outputs');
+ const { AIMessageChunk } = require('@langchain/core/messages');
+ const { tryBindReplay } = require('./model-replay');
+@@ -49,6 +50,7 @@ const RETAINED_PREFIX_MARKER = 'E2E_RETAINED_PREFIX:';
+ const COUNTED_REPLY_MARKER = 'E2E_COUNTED_REPLY:';
+ const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
+ const SLOW_REPLY_MARKER = 'E2E_SLOW_REPLY:';
++const RUNNING_REPLY_MARKER = 'E2E_RUNNING_REPLY:';
+ const EMPTY_SLOW_REPLY_MARKER = 'E2E_EMPTY_SLOW_REPLY:';
+ const PRE_TOKEN_REPLY_MARKER = 'E2E_PRE_TOKEN_REPLY:';
+ /** A run that completes having produced no content at all: the shape a
+@@ -874,6 +876,15 @@ function replyResponses(text) {
+     };
+   }
+ 
++  const runningName = getMarkerValue(text, RUNNING_REPLY_MARKER);
++  if (runningName) {
++    return {
++      responses: [''],
++      sleep: SLOW_CHUNK_DELAY_MS,
++      resolveInvocation: async () => ({ runningReply: runningName }),
++    };
++  }
++
+   const slowName = getMarkerValue(text, SLOW_REPLY_MARKER);
+   if (slowName) {
+     return slowReplyResponses(slowName);
+@@ -954,6 +965,20 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
+     this.streamSleep = sleep ?? CHUNK_DELAY_MS;
+   }
+ 
++  /** Navigation tests need a live run until Stop, not a finite timing window. */
++  async *streamRunningResponseChunks(label, signal, runManager) {
++    yield* this.streamScriptedResponseChunks({
++      response: `E2E running reply ${label}`,
++      runManager,
++    });
++    for (let index = 0; ; index++) {
++      await delay(this.streamSleep, undefined, { signal });
++      const text = index % 2 === 0 ? ' ' : `chunk-${String((index - 1) / 2).padStart(3, '0')}`;
++      yield this._createResponseChunk(text);
++      void runManager?.handleLLMNewToken(text);
++    }
++  }
++
+   async *streamScriptedResponseChunks({
+     response,
+     toolCalls,
+@@ -1050,7 +1075,13 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
+       ? null
+       : await this.resolveOnStream?.(messages, options, runManager);
+     let chunkStream;
+-    if (scriptedResponse) {
++    if (scriptedResponse?.runningReply) {
++      chunkStream = this.streamRunningResponseChunks(
++        scriptedResponse.runningReply,
++        options.signal,
++        runManager,
++      );
++    } else if (scriptedResponse) {
+       chunkStream = this.streamScriptedResponseChunks({
+         response: scriptedResponse.response ?? '',
+         toolCalls: scriptedResponse.toolCalls,
+diff --git a/e2e/specs/mock/running-autoscroll.spec.ts b/e2e/specs/mock/running-autoscroll.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d1483c529a7522097e804518a0055a237dae00e2
+--- /dev/null
++++ b/e2e/specs/mock/running-autoscroll.spec.ts
+@@ -0,0 +1,175 @@
++import { randomUUID } from 'node:crypto';
++import { expect, test } from '@playwright/test';
++import type { Page, Route } from '@playwright/test';
++import { seedConversations, seedMessages } from './db';
++import { getE2EUser } from '../../setup/user';
++import { MOCK_ENDPOINTS, selectMockEndpoint, sendMessage } from './helpers';
++
++const scroller = (page: Page) => page.locator('[data-chat-pane="0"] .scrollbar-gutter-stable');
++const gap = (page: Page) =>
++  scroller(page).evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
++const row = (page: Page, id: string) => page.locator(`nav [data-conversation-id="${id}"]`);
++const output = (page: Page) =>
++  page.locator('[data-testid="screenshot-target"] .message-render').last();
++
++async function setAutoScroll(page: Page, enabled: boolean) {
++  await page.getByTestId('nav-user').click();
++  await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
++  await page.getByRole('tab', { name: 'Chat', exact: true }).click();
++  const toggle = page.getByRole('switch', { name: 'Auto-Scroll to latest message on chat open' });
++  await toggle.setChecked(enabled);
++  await expect(toggle).toBeChecked({ checked: enabled });
++  await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
++  await expect
++    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('autoScroll') ?? 'true')))
++    .toBe(enabled);
++}
++
++async function seedThread() {
++  const id = randomUUID();
++  const email = getE2EUser().email;
++  await seedConversations(email, [
++    { conversationId: id, title: `Scroll ${id}`, updatedAt: new Date() },
++  ]);
++  let parent = '00000000-0000-0000-0000-000000000000';
++  await seedMessages(
++    email,
++    id,
++    Array.from({ length: 50 }, (_, index) => {
++      const messageId = randomUUID();
++      const result = {
++        messageId,
++        parentMessageId: parent,
++        text: `Navigation history row ${index}. This is synthetic scrolling test content.`,
++        isCreatedByUser: index % 2 === 0,
++        sender: index % 2 === 0 ? 'User' : 'Assistant',
++      };
++      parent = messageId;
++      return result;
++    }),
++  );
++  return id;
++}
++
++test.describe('running conversation navigation scrolling', () => {
++  test.use({ serviceWorkers: 'block', viewport: { width: 1100, height: 700 } });
++
++  for (const enabled of [false, true]) {
++    test(`navigation and resumed output honor autoScroll=${enabled}`, async ({ page }) => {
++      test.setTimeout(120_000);
++      const id = await seedThread();
++      const otherId = enabled ? await seedThread() : undefined;
++      await page.goto(`/c/${id}`);
++      await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
++      // Exercise the existing control and persistence, including the default true.
++      await setAutoScroll(page, !enabled);
++      await setAutoScroll(page, enabled);
++      await sendMessage(page, `E2E_RUNNING_REPLY:scroll-${enabled}`);
++      await expect(output(page)).toContainText('chunk-005', { timeout: 30_000 });
++      await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++      // Cold running load reads the stored preference before restoring submission.
++      await page.reload();
++      await expect(output(page)).toContainText('chunk-015', { timeout: 30_000 });
++      if (enabled) await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++      else await expect.poll(() => gap(page)).toBeGreaterThan(200);
++      await page.getByRole('link', { name: 'New chat', exact: true }).click();
++      await expect(page).toHaveURL(/\/c\/new/);
++      const resumed = page.waitForResponse(
++        (response) =>
++          response.url().includes(`/api/agents/chat/stream/${id}?`) &&
++          response.url().includes('resume=true'),
++      );
++      await row(page, id).click();
++      await resumed;
++      await expect(output(page)).toContainText('chunk-020', { timeout: 30_000 });
++      if (enabled) {
++        await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++        const height = await scroller(page).evaluate((el) => el.scrollHeight);
++        await expect
++          .poll(() => scroller(page).evaluate((el) => el.scrollHeight))
++          .toBeGreaterThan(height);
++        await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++        await scroller(page).hover();
++        await page.mouse.wheel(0, -600);
++        await expect.poll(() => gap(page)).toBeGreaterThan(200);
++        const top = await scroller(page).evaluate((el) => el.scrollTop);
++        await expect(output(page)).toContainText('chunk-070', { timeout: 30_000 });
++        await expect
++          .poll(() => scroller(page).evaluate((el) => el.scrollTop))
++          .toBeLessThanOrEqual(top + 2);
++      } else {
++        await expect.poll(() => gap(page)).toBeGreaterThan(200);
++        const top = await scroller(page).evaluate((el) => el.scrollTop);
++        await expect(output(page)).toContainText('chunk-070', { timeout: 30_000 });
++        expect(await scroller(page).evaluate((el) => el.scrollTop)).toBeLessThanOrEqual(top + 2);
++      }
++      await page
++        .getByRole('button', { name: 'Scroll to bottom', exact: true })
++        .and(page.locator(':not([data-msg-id])'))
++        .click();
++      await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++      await expect(output(page)).toContainText('chunk-090', { timeout: 30_000 });
++      await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++
++      // Sidebar navigation preserves the outgoing cache; New chat clears it.
++      // Keep both chats running while the return visit revalidates that cache.
++      if (otherId) {
++        await row(page, otherId).click();
++        await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
++        await sendMessage(page, 'E2E_RUNNING_REPLY:scroll-other');
++        await expect(output(page)).toContainText('chunk-005', { timeout: 30_000 });
++        let release!: () => void;
++        const historyGate = new Promise<void>((resolve) => {
++          release = resolve;
++        });
++        let requested!: (route: Route) => void;
++        const historyRequested = new Promise<Route>((resolve) => {
++          requested = resolve;
++        });
++        await page.route(
++          (url) => url.pathname === `/api/messages/${id}`,
++          async (route) => {
++            const response = await route.fetch();
++            requested(route);
++            await historyGate;
++            await route.fulfill({ response });
++          },
++          { times: 1 },
++        );
++        try {
++          await row(page, id).click();
++          const historyRoute = await historyRequested;
++          await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
++          await scroller(page).hover();
++          await page.mouse.wheel(0, -600);
++          await expect.poll(() => gap(page)).toBeGreaterThan(200);
++          const top = await scroller(page).evaluate((el) => el.scrollTop);
++          const historyReturned = page.waitForResponse(
++            (response) => response.request() === historyRoute.request(),
++          );
++          release();
++          expect(await (await historyReturned).finished()).toBeNull();
++          await expect(output(page)).toContainText('chunk-130', { timeout: 30_000 });
++          expect(await scroller(page).evaluate((el) => el.scrollTop)).toBeLessThanOrEqual(top + 2);
++          await expect.poll(() => gap(page)).toBeGreaterThan(200);
++        } finally {
++          release();
++        }
++      } else {
++        await page.getByRole('link', { name: 'New chat', exact: true }).click();
++        await row(page, id).click();
++        await expect(output(page)).toContainText('chunk-100', { timeout: 30_000 });
++        await expect.poll(() => gap(page)).toBeGreaterThan(200);
++      }
++      await page.getByRole('button', { name: 'Stop generating', exact: true }).click();
++      await expect(page.getByRole('button', { name: 'Stop generating', exact: true })).toBeHidden();
++      if (otherId) {
++        await row(page, otherId).click();
++        await page.getByRole('button', { name: 'Stop generating', exact: true }).click();
++        await expect(
++          page.getByRole('button', { name: 'Stop generating', exact: true }),
++        ).toBeHidden();
++      }
++    });
++  }
++});
+diff --git a/packages/chat/src/components/messages/MessagesView.tsx b/packages/chat/src/components/messages/MessagesView.tsx
+index 3552c364bf2c4f3632658e85626fc51444b6016a..b63057e9cf96c7781300492b0525a563075b4df3 100644
+--- a/packages/chat/src/components/messages/MessagesView.tsx
++++ b/packages/chat/src/components/messages/MessagesView.tsx
+@@ -3,6 +3,7 @@ import { Constants } from 'librechat-data-provider';
+ import { cn, useLocalize } from '@librechat/client';
+ import type { RefObject, ReactNode, ReactElement } from 'react';
+ import type { TMessage } from 'librechat-data-provider';
++import type { ScrollNavigation } from '../../react/messages/useMessageScrolling';
+ import type { MessagesScrollButtonProps } from './ScrollButton';
+ import type { MessagesThreadProps } from './thread/Thread';
+ import {
+@@ -24,6 +25,7 @@ export type { MessagesThreadProps, MessagesScrollButtonProps };
+ export type MessagesViewProps = {
+   messagesTree?: TMessage[] | null;
+   messages?: TMessage[] | null;
++  scrollNavigation?: ScrollNavigation;
+   /** The viewer's preference for the scroll-to-bottom control. */
+   showScrollButton: boolean;
+   /** The viewer's chat-width preference. */
+@@ -73,6 +75,7 @@ const renderDefaultNav: NonNullable<MessagesViewProps['renderNav']> = ({
+ export default function MessagesView({
+   messagesTree,
+   messages,
++  scrollNavigation,
+   showScrollButton,
+   maximizeChatSpace,
+   flatThread = true,
+@@ -114,6 +117,7 @@ export default function MessagesView({
+     abortScroll,
+     setAbortScroll,
+     autoScroll,
++    navigation: scrollNavigation,
+   });
+ 
+   useScrollbarGutter(scrollableRef);
+@@ -173,7 +177,7 @@ export default function MessagesView({
+   );
+ 
+   const mountWindow = useProgressiveRowMount({
+-    tailDepth: latestMessageDepth,
++    tailDepth: scrollNavigation?.targetMessageId ? undefined : latestMessageDepth,
+     anchorBottom: autoScroll || isSubmitting,
+     isSubmitting,
+     conversationId: treeConversationId,
+diff --git a/packages/chat/src/components/pane/messages.tsx b/packages/chat/src/components/pane/messages.tsx
+index 3388b6a100bcbcbd37906605fc5a937338024428..f6837be6a2aa3f0c23b82b0891c5548bdf89dbaa 100644
+--- a/packages/chat/src/components/pane/messages.tsx
++++ b/packages/chat/src/components/pane/messages.tsx
+@@ -9,6 +9,7 @@ import MessagesView from '../messages/MessagesView';
+ export type ChatScreenMessagesSlots = Pick<
+   MessagesViewProps,
+   | 'flatThread'
++  | 'scrollNavigation'
+   | 'renderThread'
+   | 'renderPendingTurn'
+   | 'renderPendingSteers'
+diff --git a/packages/chat/src/react.ts b/packages/chat/src/react.ts
+index eedeb5ce015d3da22e76c7e4dadef4a41cc816ad..1687295ae723e423dfcad1bf65053f712ac9d0ed 100644
+--- a/packages/chat/src/react.ts
++++ b/packages/chat/src/react.ts
+@@ -132,6 +132,7 @@ export { default as useTimeTick } from './react/tick';
+ export { default as useGenerationsByLatest } from './react/messages/generations';
+ export type { Generations, TUseGenerations } from './react/messages/generations';
+ export { default as useConversationSeen } from './react/messages/useConversationSeen';
++export type { ScrollNavigation } from './react/messages/useMessageScrolling';
+ export {
+   reconcileMessageContentLayout,
+   getRenderedContentMaxScrollTop,
+diff --git a/packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx b/packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx
+index cee231ebade97c48d8b3f5b7cb2732639b52c1cd..68e7f85a0b469b492c8047c2e770910b8e8c9362 100644
+--- a/packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx
++++ b/packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx
+@@ -1,657 +1,471 @@
+-/**
+- * @jest-environment jsdom
+- */
+-import { createContext, useContext } from 'react';
++/** @jest-environment jsdom */
++import React from 'react';
  import { act, fireEvent, render, screen } from '@testing-library/react';
- import type { TConversation, TMessage } from 'librechat-data-provider';
--import {
--  MessagesViewContext,
--  type MessagesViewContextValue,
--} from '~/Providers/MessagesViewContext';
+ import type { TMessage } from 'librechat-data-provider';
+-import type { MessageScrollingInput } from '../useMessageScrolling';
 -
 -type MockScrollToBottom = jest.Mock & {
 -  cancel: jest.Mock;
@@ -24,7 +382,7 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -const mockHandleSmoothToRef = jest.fn();
 -let mockScrollCallback: (() => void) | undefined;
 -
--jest.mock('~/hooks/useScrollToRef', () => ({
+-jest.mock('../useScrollToRef', () => ({
 -  __esModule: true,
 -  default: ({ callback }: { callback: () => void }) => {
 -    mockScrollCallback = callback;
@@ -39,13 +397,10 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -  reconcileMessageContentLayout: jest.fn(),
 -}));
 -
-+import type { MessagesViewContextValue } from '~/Providers/MessagesViewContext';
 +import type { ScrollNavigation } from '../useMessageScrolling';
-+import { MessagesViewContext } from '~/Providers/MessagesViewContext';
  import useMessageScrolling from '../useMessageScrolling';
 -import { reconcileMessageContentLayout } from '../messageLayout';
- import { autoScrollAtom } from '~/store/autoScroll';
- 
+-
 -const mockReconcileMessageContentLayout = reconcileMessageContentLayout as jest.Mock;
 -
 -class MockResizeObserver {
@@ -58,7 +413,7 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -  static last(): MockResizeObserver | undefined {
 -    return MockResizeObserver.instances[MockResizeObserver.instances.length - 1];
 -  }
--
+ 
 -  readonly callback: ResizeObserverCallback;
 +class ResizeObserverMock {
 +  static instances: ResizeObserverMock[] = [];
@@ -143,28 +498,48 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 +const bottomLabel = 'Bottom';
 +const oldButtonLabel = 'Old button';
 +
-+function Harness({ tree, route, ready, sendId, targetId }: Props) {
++function Harness({
++  tree,
++  route,
++  context,
++  submitting,
++  abort,
++  ready,
++  sendId,
++  targetId,
++  autoScroll,
++}: Props & { autoScroll: boolean }) {
 +  const navigation: ScrollNavigation = {
 +    conversationKey: route,
 +    ready,
 +    explicitSendId: sendId,
 +    targetMessageId: targetId,
 +  };
-+  const scrolling = useMessageScrolling(tree, navigation);
++  // Install layout metrics before the scrolling hook's layout effects read them.
++  React.useLayoutEffect(() => {
++    const el = scrolling.scrollableRef.current;
++    if (el) {
++      Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height });
++      Object.defineProperty(el, 'clientHeight', { configurable: true, value: 200 });
++      el.scrollTo = scrollTo;
++    }
++  });
++  const scrolling = useMessageScrolling({
++    messagesTree: tree,
++    conversationId: context,
++    isSubmitting: submitting,
++    abortScroll: abort ?? false,
++    setAbortScroll,
++    autoScroll,
++    navigation,
++  });
 +  latestScroll = scrolling;
 +  return (
 +    <>
 +      <div
 +        data-testid="scrollable"
 +        onScroll={scrolling.debouncedHandleScroll}
-+        ref={(el) => {
-+          scrolling.scrollableRef.current = el;
-+          if (el) {
-+            Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height });
-+            Object.defineProperty(el, 'clientHeight', { configurable: true, value: 200 });
-+            el.scrollTo = scrollTo;
-+          }
-+        }}
++        ref={scrolling.scrollableRef}
 +      >
 +        <div ref={scrolling.contentRef} data-testid="content">
 +          <textarea aria-label="Edit" />
@@ -191,38 +566,22 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
    );
  }
  
--const conversation = {
--  conversationId: 'conversation-1',
--  endpoint: 'openAI',
--  model: 'gpt-4',
--} as TConversation;
--
 -const message = {
 -  messageId: 'message-1',
--  conversationId: conversation.conversationId,
+-  conversationId: 'conversation-1',
 -  isCreatedByUser: false,
 -} as TMessage;
 -
--function createContextValue(
--  overrides: Partial<MessagesViewContextValue> = {},
--): MessagesViewContextValue {
+-type ScrollingInputs = Omit<MessageScrollingInput, 'messagesTree'>;
+-
+-function createContextValue(overrides: Partial<ScrollingInputs> = {}): ScrollingInputs {
 -  return {
--    conversation,
--    conversationId: conversation.conversationId,
+-    conversationId: 'conversation-1',
 -    isSubmitting: true,
 -    abortScroll: false,
 -    setAbortScroll: jest.fn(),
--    ask: jest.fn(),
--    regenerate: jest.fn(),
--    handleContinue: jest.fn(),
--    index: 0,
--    latestMessageId: message.messageId,
--    latestMessageDepth: 0,
--    getMessages: jest.fn(),
--    setMessages: jest.fn(),
+-    autoScroll: true,
 +function setup(overrides: Partial<Props> = {}, autoScroll = true) {
-+  const store = createStore();
-+  store.set(autoScrollAtom, autoScroll);
 +  let props: Props = {
 +    route: 'a',
 +    context: 'a',
@@ -230,33 +589,8 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 +    submitting: false,
 +    ready: true,
      ...overrides,
--  } as MessagesViewContextValue;
-+  };
-+  const renderTree = () => {
-+    const value: MessagesViewContextValue = {
-+      conversation: { conversationId: props.context } as TConversation,
-+      conversationId: props.context,
-+      isSubmitting: props.submitting,
-+      abortScroll: props.abort ?? false,
-+      setAbortScroll,
-+      readOnly: false,
-+      ask: jest.fn(),
-+      regenerate: jest.fn(),
-+      handleContinue: jest.fn(),
-+      index: 0,
-+      latestMessageId: undefined,
-+      latestMessageDepth: undefined,
-+      getMessages: jest.fn(),
-+      setMessages: jest.fn(),
-+    };
-+    return (
-+      <Provider store={store}>
-+        <MessagesViewContext.Provider value={value}>
-+          <Harness {...props} />
-+        </MessagesViewContext.Provider>
-+      </Provider>
-+    );
-+  };
+   };
++  const renderTree = () => <Harness {...props} autoScroll={autoScroll} />;
 +  const view = render(renderTree(), { wrapper: React.StrictMode });
 +  return {
 +    ...view,
@@ -265,13 +599,22 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 +      props = { ...props, ...next };
 +      view.rerender(renderTree());
 +    },
-+    toggle: (value: boolean) => act(() => store.set(autoScrollAtom, value)),
++    toggle: (value: boolean) => {
++      autoScroll = value;
++      view.rerender(renderTree());
++    },
 +  };
  }
  
+-/** Stands in for the message list, which feeds the hook from the chat context. */
+-const ScrollingInputsContext = createContext<ScrollingInputs>(createContextValue());
+-
 -function ScrollingHarness({ messagesTree }: { messagesTree?: TMessage[] | null }) {
--  const { contentRef, scrollableRef, messagesEndRef, debouncedHandleScroll } =
--    useMessageScrolling(messagesTree);
+-  const inputs = useContext(ScrollingInputsContext);
+-  const { contentRef, scrollableRef, messagesEndRef, debouncedHandleScroll } = useMessageScrolling({
+-    ...inputs,
+-    messagesTree,
+-  });
 -
 -  return (
 -    <div ref={scrollableRef} onScroll={debouncedHandleScroll} data-testid="scrollable">
@@ -282,32 +625,21 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -  );
 +function resize(nextHeight: number) {
 +  height = nextHeight;
-+  act(() => ResizeObserverMock.instances.at(-1)?.callback());
++  act(() => ResizeObserverMock.instances.slice(-1)[0]?.callback());
  }
  
 -function renderScrolling({
 -  contextOverrides,
 -  messagesTree,
 -}: {
--  contextOverrides?: Partial<MessagesViewContextValue>;
+-  contextOverrides?: Partial<ScrollingInputs>;
 -  messagesTree?: TMessage[] | null;
 -} = {}) {
 -  return render(
--    <RecoilRoot>
--      <MessagesViewContext.Provider value={createContextValue(contextOverrides)}>
--        <ScrollingHarness messagesTree={messagesTree} />
--      </MessagesViewContext.Provider>
--    </RecoilRoot>,
+-    <ScrollingInputsContext.Provider value={createContextValue(contextOverrides)}>
+-      <ScrollingHarness messagesTree={messagesTree} />
+-    </ScrollingInputsContext.Provider>,
 -  );
-+it('centers an explicit target and keeps it detached from later growth', () => {
-+  const { el, update } = setup({ targetId: 'target-message' });
-+  expect(el.scrollTop).toBe(400);
-+  resize(2000);
-+  expect(el.scrollTop).toBe(400);
-+  update({ targetId: 'other-message' });
-+  expect(el.scrollTop).toBe(400);
-+});
-+
 +function upward(el: HTMLElement, method: string) {
 +  if (method === 'wheel') fireEvent.wheel(el, { deltaY: -100 });
 +  if (method === 'keyboard') fireEvent.keyDown(el, { key: 'PageUp' });
@@ -374,13 +706,13 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -     *  scrollIntoView helper, so an answer arriving a few pixels at a time flows
 -     *  instead of lurching once every throttle window. */
 -    expect(scrollable.scrollTop).toBe(800);
-+  it.each([false, true])('lands running navigation only with preference %s', (enabled) => {
-+    const { el, update } = setup({ submitting: true }, enabled);
-+    expect(el.scrollTop).toBe(enabled ? 800 : 0);
-+    update({ tree: treeFor('a') });
-+    resize(1400);
-+    expect(el.scrollTop).toBe(enabled ? 1200 : 0);
-+    expect(scrollTo).not.toHaveBeenCalled();
++  it('centers an explicit target and keeps it detached from later growth', () => {
++    const { el, update } = setup({ targetId: 'target-message' });
++    expect(el.scrollTop).toBe(400);
++    resize(2000);
++    expect(el.scrollTop).toBe(400);
++    update({ targetId: 'other-message' });
++    expect(el.scrollTop).toBe(400);
    });
  
 -  it('reconciles message layout after an explicit scroll to bottom', () => {
@@ -392,8 +724,13 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -    });
 -
 -    expect(mockReconcileMessageContentLayout).toHaveBeenCalledWith(scrollable);
-+  it.each([false, true])('preserves non-running opening preference %s', (enabled) => {
-+    expect(setup({}, enabled).el.scrollTop).toBe(enabled ? 800 : 0);
++  it.each([false, true])('lands running navigation only with preference %s', (enabled) => {
++    const { el, update } = setup({ submitting: true }, enabled);
++    expect(el.scrollTop).toBe(enabled ? 800 : 0);
++    update({ tree: treeFor('a') });
++    resize(1400);
++    expect(el.scrollTop).toBe(enabled ? 1200 : 0);
++    expect(scrollTo).not.toHaveBeenCalled();
    });
  
 -  /**
@@ -413,23 +750,11 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -
 -    act(() => {
 -      MockResizeObserver.last()?.trigger();
-+  it('waits for route, context, rendered tree and visible route readiness', () => {
-+    const { el, update } = setup({
-+      route: 'b',
-+      context: 'a',
-+      tree: treeFor('a'),
-+      submitting: true,
-     });
+-    });
 -
 -    expect(scrollable.scrollTop).toBe(800);
-+    expect(el.scrollTop).toBe(0);
-+    update({ tree: treeFor('b') });
-+    resize(1200);
-+    expect(el.scrollTop).toBe(0);
-+    update({ context: 'b', ready: false });
-+    expect(el.scrollTop).toBe(0);
-+    update({ ready: true });
-+    expect(el.scrollTop).toBe(1000);
++  it.each([false, true])('preserves non-running opening preference %s', (enabled) => {
++    expect(setup({}, enabled).el.scrollTop).toBe(enabled ? 800 : 0);
    });
  
 -  it('does not follow resizes after the user scrolls away from the bottom', () => {
@@ -444,19 +769,23 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -
 -    act(() => {
 -      MockResizeObserver.last()?.trigger();
--    });
++  it('waits for route, context, rendered tree and visible route readiness', () => {
++    const { el, update } = setup({
++      route: 'b',
++      context: 'a',
++      tree: treeFor('a'),
++      submitting: true,
+     });
 -
 -    expect(mockScrollToBottom).not.toHaveBeenCalled();
-+  it('lands cold history and follows delayed revalidation, resume and row bodies', () => {
-+    const { el, update } = setup({ tree: null });
 +    expect(el.scrollTop).toBe(0);
-+    update({ tree: treeFor('a') });
-+    expect(el.scrollTop).toBe(800);
-+    resize(1800);
-+    expect(el.scrollTop).toBe(1600);
-+    update({ submitting: true });
-+    resize(2200);
-+    expect(el.scrollTop).toBe(2000);
++    update({ tree: treeFor('b') });
++    resize(1200);
++    expect(el.scrollTop).toBe(0);
++    update({ context: 'b', ready: false });
++    expect(el.scrollTop).toBe(0);
++    update({ ready: true });
++    expect(el.scrollTop).toBe(1000);
    });
  
 -  it('judges the first scroll against a real previous position, not against the top', () => {
@@ -485,8 +814,18 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -    });
 -
 -    expect(scrollable.scrollTop).toBe(500);
--  });
--
++  it('lands cold history and follows delayed revalidation, resume and row bodies', () => {
++    const { el, update } = setup({ tree: null });
++    expect(el.scrollTop).toBe(0);
++    update({ tree: treeFor('a') });
++    expect(el.scrollTop).toBe(800);
++    resize(1800);
++    expect(el.scrollTop).toBe(1600);
++    update({ submitting: true });
++    resize(2200);
++    expect(el.scrollTop).toBe(2000);
+   });
+ 
 -  it('obeys the first scroll away from a thread that was placed at its end', () => {
 -    renderScrolling();
 -
@@ -617,11 +956,9 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -    jest.useFakeTimers();
 -    try {
 -      const view = render(
--        <RecoilRoot>
--          <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
--            <ScrollingHarness messagesTree={[message]} />
--          </MessagesViewContext.Provider>
--        </RecoilRoot>,
+-        <ScrollingInputsContext.Provider value={createContextValue({ isSubmitting: false })}>
+-          <ScrollingHarness messagesTree={[message]} />
+-        </ScrollingInputsContext.Provider>,
 -      );
 -
 -      const scrollable = screen.getByTestId('scrollable');
@@ -632,11 +969,9 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -      scrollable.scrollTop = 0;
 -
 -      view.rerender(
--        <RecoilRoot>
--          <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
--            <ScrollingHarness messagesTree={[message]} />
--          </MessagesViewContext.Provider>
--        </RecoilRoot>,
+-        <ScrollingInputsContext.Provider value={createContextValue({ isSubmitting: true })}>
+-          <ScrollingHarness messagesTree={[message]} />
+-        </ScrollingInputsContext.Provider>,
 -      );
 -
 -      expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' });
@@ -714,11 +1049,9 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -   */
 -  it('starts the turn once a stale abort flag clears', () => {
 -    const view = render(
--      <RecoilRoot>
--        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
--          <ScrollingHarness messagesTree={[message]} />
--        </MessagesViewContext.Provider>
--      </RecoilRoot>,
+-      <ScrollingInputsContext.Provider value={createContextValue({ isSubmitting: false })}>
+-        <ScrollingHarness messagesTree={[message]} />
+-      </ScrollingInputsContext.Provider>,
 -    );
 -
 -    const scrollable = screen.getByTestId('scrollable');
@@ -732,13 +1065,11 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -    fireEvent.wheel(scrollable, { deltaY: -120 });
 -
 -    view.rerender(
--      <RecoilRoot>
--        <MessagesViewContext.Provider
--          value={createContextValue({ isSubmitting: true, abortScroll: true })}
--        >
--          <ScrollingHarness messagesTree={[message]} />
--        </MessagesViewContext.Provider>
--      </RecoilRoot>,
+-      <ScrollingInputsContext.Provider
+-        value={createContextValue({ isSubmitting: true, abortScroll: true })}
+-      >
+-        <ScrollingHarness messagesTree={[message]} />
+-      </ScrollingInputsContext.Provider>,
 -    );
 -
 +  it.each([false, true])('explicit sends retain their glide with preference %s', (enabled) => {
@@ -749,13 +1080,11 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -
 -    /** The connection opens and lowers the flag. */
 -    view.rerender(
--      <RecoilRoot>
--        <MessagesViewContext.Provider
--          value={createContextValue({ isSubmitting: true, abortScroll: false })}
--        >
--          <ScrollingHarness messagesTree={[message]} />
--        </MessagesViewContext.Provider>
--      </RecoilRoot>,
+-      <ScrollingInputsContext.Provider
+-        value={createContextValue({ isSubmitting: true, abortScroll: false })}
+-      >
+-        <ScrollingHarness messagesTree={[message]} />
+-      </ScrollingInputsContext.Provider>,
 -    );
 -
 -    expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' });
@@ -763,11 +1092,9 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -
 -  it('leaves the send glide alone while the answer streams in', () => {
 -    const view = render(
--      <RecoilRoot>
--        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
--          <ScrollingHarness messagesTree={[message]} />
--        </MessagesViewContext.Provider>
--      </RecoilRoot>,
+-      <ScrollingInputsContext.Provider value={createContextValue({ isSubmitting: false })}>
+-        <ScrollingHarness messagesTree={[message]} />
+-      </ScrollingInputsContext.Provider>,
 -    );
 -
 -    const scrollable = screen.getByTestId('scrollable');
@@ -778,11 +1105,9 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -    scrollable.scrollTop = 0;
 -
 -    view.rerender(
--      <RecoilRoot>
--        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
--          <ScrollingHarness messagesTree={[message]} />
--        </MessagesViewContext.Provider>
--      </RecoilRoot>,
+-      <ScrollingInputsContext.Provider value={createContextValue({ isSubmitting: true })}>
+-        <ScrollingHarness messagesTree={[message]} />
+-      </ScrollingInputsContext.Provider>,
 -    );
 -
 -    expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' });
@@ -790,11 +1115,9 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -    /** The next delta of the answer arrives while the glide is still travelling. */
 -    Object.defineProperty(scrollable, 'scrollHeight', { value: 1100, configurable: true });
 -    view.rerender(
--      <RecoilRoot>
--        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
--          <ScrollingHarness messagesTree={[message, message]} />
--        </MessagesViewContext.Provider>
--      </RecoilRoot>,
+-      <ScrollingInputsContext.Provider value={createContextValue({ isSubmitting: true })}>
+-        <ScrollingHarness messagesTree={[message, message]} />
+-      </ScrollingInputsContext.Provider>,
 -    );
 -
 -    /** A plain follow would have written scrollTop outright and killed the animation. */
@@ -814,11 +1137,9 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -   */
 -  it('catches up to the new bottom when the glide lands', () => {
 -    const view = render(
--      <RecoilRoot>
--        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
--          <ScrollingHarness messagesTree={[message]} />
--        </MessagesViewContext.Provider>
--      </RecoilRoot>,
+-      <ScrollingInputsContext.Provider value={createContextValue({ isSubmitting: false })}>
+-        <ScrollingHarness messagesTree={[message]} />
+-      </ScrollingInputsContext.Provider>,
 -    );
 -
 -    const scrollable = screen.getByTestId('scrollable');
@@ -828,11 +1149,9 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -    scrollable.scrollTop = 0;
 -
 -    view.rerender(
--      <RecoilRoot>
--        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
--          <ScrollingHarness messagesTree={[message]} />
--        </MessagesViewContext.Provider>
--      </RecoilRoot>,
+-      <ScrollingInputsContext.Provider value={createContextValue({ isSubmitting: true })}>
+-        <ScrollingHarness messagesTree={[message]} />
+-      </ScrollingInputsContext.Provider>,
 -    );
 -
 -    /** The whole answer arrives before the glide reports that it landed. */
@@ -894,23 +1213,15 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -  ];
 -
 -  const harness = (
--    store: ReturnType<typeof createStore>,
+-    autoScroll: boolean,
 -    conversationId: string,
 -    messagesTree: TMessage[] | null,
 -  ) => (
--    <RecoilRoot>
--      <Provider store={store}>
--        <MessagesViewContext.Provider
--          value={createContextValue({
--            isSubmitting: false,
--            conversation: { ...conversation, conversationId } as TConversation,
--            conversationId,
--          })}
--        >
--          <ScrollingHarness messagesTree={messagesTree} />
--        </MessagesViewContext.Provider>
--      </Provider>
--    </RecoilRoot>
+-    <ScrollingInputsContext.Provider
+-      value={createContextValue({ isSubmitting: false, conversationId, autoScroll })}
+-    >
+-      <ScrollingHarness messagesTree={messagesTree} />
+-    </ScrollingInputsContext.Provider>
 +  it.each(['scroll', 'button'])(
 +    'returning by %s resumes following even with preference off',
 +    (method) => {
@@ -937,13 +1248,11 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 -    messagesTree: TMessage[] | null,
 -    autoScroll = true,
 -  ) {
--    const store = createStore();
--    store.set(autoScrollAtom, autoScroll);
--    const view = render(harness(store, conversationId, messagesTree));
+-    const view = render(harness(autoScroll, conversationId, messagesTree));
 -    return {
 -      ...view,
 -      rerenderWith: (nextId: string, nextTree: TMessage[] | null) =>
--        view.rerender(harness(store, nextId, nextTree)),
+-        view.rerender(harness(autoScroll, nextId, nextTree)),
 -    };
 -  }
 -
@@ -1008,7 +1317,7 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 +    const { el, update } = setup({ submitting: true });
 +    const old = latestScroll;
 +    render(<button onClick={old.handleSmoothToRef}>{oldButtonLabel}</button>);
-+    const observer = ResizeObserverMock.instances.at(-1);
++    const observer = ResizeObserverMock.instances.slice(-1)[0];
 +    fireEvent.wheel(el, { deltaY: 10 });
 +    fireEvent.click(screen.getByRole('button', { name: 'Bottom' }));
 +    update({ route: 'b', context: 'b', tree: treeFor('b') });
@@ -1103,22 +1412,63 @@ index 0330e1583c2b19e2863f4a7c4d4872b565735703..b5260c8590ebf54eedc6267c57079f88
 +    expect(el.scrollTop).toBe(200);
    });
  });
-diff --git a/client/src/hooks/Messages/useMessageScrolling.ts b/client/src/hooks/Messages/useMessageScrolling.ts
-index cd5ae9df63f8d04983291363c85145b8018a7c41..72f93040c00422d0a33fd32aec86e9ebab033371 100644
---- a/client/src/hooks/Messages/useMessageScrolling.ts
-+++ b/client/src/hooks/Messages/useMessageScrolling.ts
-@@ -1,472 +1,375 @@
+diff --git a/packages/chat/src/react/messages/useMessageScrolling.ts b/packages/chat/src/react/messages/useMessageScrolling.ts
+index d84b20dd770ade2a6a886bbdbd585375ab3be791..93df10e950532abb71d40b9065708a29471043ca 100644
+--- a/packages/chat/src/react/messages/useMessageScrolling.ts
++++ b/packages/chat/src/react/messages/useMessageScrolling.ts
+@@ -1,62 +1,43 @@
 -import { useRef, useCallback, useEffect } from 'react';
 +import { useRef, useMemo, useCallback, useLayoutEffect, useEffect } from 'react';
- import { useAtomValue } from 'jotai';
  import { Constants } from 'librechat-data-provider';
-+import type { ScrollNavigation } from '@librechat/chat/react';
+-import type { Dispatch, MouseEvent, RefObject, SetStateAction } from 'react';
++import type { Dispatch, MouseEventHandler, RefObject, SetStateAction } from 'react';
  import type { TMessage } from 'librechat-data-provider';
-+import type { MouseEventHandler } from 'react';
- import { useMessagesConversation, useMessagesSubmission } from '~/Providers';
+-import type { ThrottledFunction } from './throttle';
  import { reconcileMessageContentLayout } from './messageLayout';
--import useScrollToRef from '~/hooks/useScrollToRef';
- import { autoScrollAtom } from '~/store/autoScroll';
+-import useScrollToRef from './useScrollToRef';
+ 
+-/** What the list's scrolling follows: the rendered thread, its conversation, the pane's
+- *  submission state and the viewer's auto-scroll preference. */
++export type ScrollNavigation = {
++  conversationKey: string | undefined;
++  ready: boolean;
++  /** Only an explicit send, never a restored resume submission. */
++  explicitSendId?: string;
++  targetMessageId?: string;
++};
++
+ export type MessageScrollingInput = {
+   messagesTree?: TMessage[] | null;
+   conversationId?: string | null;
+   isSubmitting: boolean;
+-  /** Whether the reader vetoed riding the stream for the current turn. */
+   abortScroll: boolean;
+   setAbortScroll: Dispatch<SetStateAction<boolean>>;
+-  /** Whether opening a conversation lands the reader on its newest message. */
+   autoScroll: boolean;
++  navigation?: ScrollNavigation;
+ };
+ 
+-/** The scroll machinery of the message list. */
+ export type MessageScrolling = {
+-  /** Wraps the rendered thread. */
+   contentRef: RefObject<HTMLDivElement>;
+-  /** The scroll container. */
+   scrollableRef: RefObject<HTMLDivElement>;
+-  /** The zero-height marker after the last row. */
+   messagesEndRef: RefObject<HTMLDivElement>;
+-  /** Jumps to the end marker; absent until the target ref exists. */
+-  scrollToBottom?: ThrottledFunction;
+-  /** Scrolls smoothly to the end, from the scroll-to-bottom control. */
+-  handleSmoothToRef: (event: MouseEvent<HTMLButtonElement>) => void;
+-  /** The container's scroll listener. */
++  scrollToBottom: () => void;
++  handleSmoothToRef: MouseEventHandler<HTMLButtonElement>;
+   debouncedHandleScroll: () => void;
+-  /** Reports whether the end marker is in view. */
+   handleNearBottomChange: (isNearBottom: boolean) => void;
++  detachFromBottom: () => void;
+ };
  
  const resizeFollowThreshold = 120;
 -
@@ -1132,23 +1482,25 @@ index cd5ae9df63f8d04983291363c85145b8018a7c41..72f93040c00422d0a33fd32aec86e9eb
 - *  departure means they can never quite catch it. */
  const attachThreshold = 150;
 -const detachThreshold = 24;
-+/** Fallback for browsers that do not report scrollend. */
-+const glideTimeout = 700;
- 
+-
 -const prefersReducedMotion = () =>
 -  typeof window !== 'undefined' &&
 -  typeof window.matchMedia === 'function' &&
 -  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-+export type { ScrollNavigation } from '@librechat/chat/react';
++/** Fallback for browsers that do not report scrollend. */
++const glideTimeout = 700;
  
--export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
-+export default function useMessageScrolling(
-+  messagesTree?: TMessage[] | null,
-+  navigation?: ScrollNavigation,
-+) {
-   const autoScroll = useAtomValue(autoScrollAtom);
-+  const { conversation, conversationId } = useMessagesConversation();
-+  const { setAbortScroll, isSubmitting, abortScroll } = useMessagesSubmission();
+-/** Follows the stream, lands on a conversation's end once its rows mount, and keeps the
+- *  reader's position when they scroll away. */
+ export default function useMessageScrolling({
+   messagesTree,
+   conversationId,
+@@ -64,444 +45,356 @@ export default function useMessageScrolling({
+   abortScroll,
+   setAbortScroll,
+   autoScroll,
++  navigation,
+ }: MessageScrollingInput): MessageScrolling {
 +  const conversationKey = navigation?.conversationKey ?? conversationId;
 +  const treeId = messagesTree?.[0]?.conversationId ?? conversationKey;
 +  const ready =
@@ -1156,7 +1508,7 @@ index cd5ae9df63f8d04983291363c85145b8018a7c41..72f93040c00422d0a33fd32aec86e9eb
 +    conversationKey === conversationId &&
 +    treeId === conversationKey &&
 +    !!messagesTree?.length;
- 
++
    const scrollableRef = useRef<HTMLDivElement | null>(null);
    const contentRef = useRef<HTMLDivElement | null>(null);
    const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -1193,8 +1545,6 @@ index cd5ae9df63f8d04983291363c85145b8018a7c41..72f93040c00422d0a33fd32aec86e9eb
 -  /** The conversation whose newest message has already been landed on, so the
 -   *  stream deltas that follow cannot re-take a reader who scrolled away. */
 -  const landedConversationRef = useRef<string | null>(null);
--  const { conversation, conversationId } = useMessagesConversation();
--  const { setAbortScroll, isSubmitting, abortScroll } = useMessagesSubmission();
 +  const cancelGlideRef = useRef<(() => void) | null>(null);
  
 -  const getIsNearBottom = useCallback(() => {
@@ -1366,7 +1716,7 @@ index cd5ae9df63f8d04983291363c85145b8018a7c41..72f93040c00422d0a33fd32aec86e9eb
 -         *  `Message` raises this on every wheel tick, downward ones included, so
 -         *  it is set again on the way here; and the value this closure can see is
 -         *  a render behind, so a conditional clear loses the race and leaves the
--         *  ride vetoed for the rest of the answer. Recoil no-ops an unchanged
+-         *  ride vetoed for the rest of the answer. The setter no-ops an unchanged
 -         *  write, so repeating it costs nothing. */
 -        setAbortScroll(false);
 -      }
@@ -1810,7 +2160,7 @@ index cd5ae9df63f8d04983291363c85145b8018a7c41..72f93040c00422d0a33fd32aec86e9eb
 +    content.addEventListener('keydown', suppress, true);
      return () => {
 -      if (abortScroll === true) {
--        scrollToBottom && scrollToBottom.cancel();
+-        scrollToBottom?.cancel();
 -      }
 +      if (frame != null) cancelAnimationFrame(frame);
 +      el.removeEventListener('wheel', onWheel);
@@ -1829,7 +2179,7 @@ index cd5ae9df63f8d04983291363c85145b8018a7c41..72f93040c00422d0a33fd32aec86e9eb
 -   * Keyed on the conversation whose rows are actually MOUNTED, not on the id
 -   * alone. The id reaches this hook a commit or more before the tree does, and
 -   * firing on it scrolled the outgoing thread to its end and then never ran
--   * again — the reader was left wherever that put them, which on a long thread
+-   * again: the reader was left wherever that put them, which on a long thread
 -   * is the top. Waiting for the rendered tree to name the same conversation
 -   * costs nothing and is the only moment `messages-end` is where the reader
 -   * expects it.
@@ -1879,264 +2229,11 @@ index cd5ae9df63f8d04983291363c85145b8018a7c41..72f93040c00422d0a33fd32aec86e9eb
 +  }, [detach, isCurrent, setAbortScroll]);
  
    return {
-     conversation,
-@@ -477,5 +380,6 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
+     contentRef,
+@@ -511,5 +404,6 @@ export default function useMessageScrolling({
      handleSmoothToRef,
      debouncedHandleScroll,
      handleNearBottomChange,
 +    detachFromBottom: detach,
    };
  }
-diff --git a/e2e/setup/fake-model.js b/e2e/setup/fake-model.js
-index df796c9a752b208ae11f22bb59b16851b199ba3b..d66ae31d9c870c26515ea9201a5a5f4e9b6a77e0 100644
---- a/e2e/setup/fake-model.js
-+++ b/e2e/setup/fake-model.js
-@@ -10,6 +10,7 @@
-  * from the conversation and the agents' advertised tools.
-  */
- const { FakeChatModel } = require('@librechat/agents');
-+const { setTimeout: delay } = require('node:timers/promises');
- const { ChatGenerationChunk } = require('@langchain/core/outputs');
- const { AIMessageChunk } = require('@langchain/core/messages');
- const { tryBindReplay } = require('./model-replay');
-@@ -47,6 +48,7 @@ const RETAINED_PREFIX_MARKER = 'E2E_RETAINED_PREFIX:';
- const COUNTED_REPLY_MARKER = 'E2E_COUNTED_REPLY:';
- const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
- const SLOW_REPLY_MARKER = 'E2E_SLOW_REPLY:';
-+const RUNNING_REPLY_MARKER = 'E2E_RUNNING_REPLY:';
- const EMPTY_SLOW_REPLY_MARKER = 'E2E_EMPTY_SLOW_REPLY:';
- const PRE_TOKEN_REPLY_MARKER = 'E2E_PRE_TOKEN_REPLY:';
- /** A run that completes having produced no content at all: the shape a
-@@ -814,6 +816,15 @@ function replyResponses(text) {
-     };
-   }
- 
-+  const runningName = getMarkerValue(text, RUNNING_REPLY_MARKER);
-+  if (runningName) {
-+    return {
-+      responses: [''],
-+      sleep: SLOW_CHUNK_DELAY_MS,
-+      resolveInvocation: async () => ({ runningReply: runningName }),
-+    };
-+  }
-+
-   const slowName = getMarkerValue(text, SLOW_REPLY_MARKER);
-   if (slowName) {
-     return slowReplyResponses(slowName);
-@@ -894,6 +905,20 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
-     this.streamSleep = sleep ?? CHUNK_DELAY_MS;
-   }
- 
-+  /** Navigation tests need a live run until Stop, not a finite timing window. */
-+  async *streamRunningResponseChunks(label, signal, runManager) {
-+    yield* this.streamScriptedResponseChunks({
-+      response: `E2E running reply ${label}`,
-+      runManager,
-+    });
-+    for (let index = 0; ; index++) {
-+      await delay(this.streamSleep, undefined, { signal });
-+      const text = index % 2 === 0 ? ' ' : `chunk-${String((index - 1) / 2).padStart(3, '0')}`;
-+      yield this._createResponseChunk(text);
-+      void runManager?.handleLLMNewToken(text);
-+    }
-+  }
-+
-   async *streamScriptedResponseChunks({
-     response,
-     toolCalls,
-@@ -990,7 +1015,13 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
-       ? null
-       : await this.resolveOnStream?.(messages, options, runManager);
-     let chunkStream;
--    if (scriptedResponse) {
-+    if (scriptedResponse?.runningReply) {
-+      chunkStream = this.streamRunningResponseChunks(
-+        scriptedResponse.runningReply,
-+        options.signal,
-+        runManager,
-+      );
-+    } else if (scriptedResponse) {
-       chunkStream = this.streamScriptedResponseChunks({
-         response: scriptedResponse.response ?? '',
-         toolCalls: scriptedResponse.toolCalls,
-diff --git a/e2e/specs/mock/running-autoscroll.spec.ts b/e2e/specs/mock/running-autoscroll.spec.ts
-new file mode 100644
-index 0000000000000000000000000000000000000000..d1483c529a7522097e804518a0055a237dae00e2
---- /dev/null
-+++ b/e2e/specs/mock/running-autoscroll.spec.ts
-@@ -0,0 +1,175 @@
-+import { randomUUID } from 'node:crypto';
-+import { expect, test } from '@playwright/test';
-+import type { Page, Route } from '@playwright/test';
-+import { seedConversations, seedMessages } from './db';
-+import { getE2EUser } from '../../setup/user';
-+import { MOCK_ENDPOINTS, selectMockEndpoint, sendMessage } from './helpers';
-+
-+const scroller = (page: Page) => page.locator('[data-chat-pane="0"] .scrollbar-gutter-stable');
-+const gap = (page: Page) =>
-+  scroller(page).evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
-+const row = (page: Page, id: string) => page.locator(`nav [data-conversation-id="${id}"]`);
-+const output = (page: Page) =>
-+  page.locator('[data-testid="screenshot-target"] .message-render').last();
-+
-+async function setAutoScroll(page: Page, enabled: boolean) {
-+  await page.getByTestId('nav-user').click();
-+  await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
-+  await page.getByRole('tab', { name: 'Chat', exact: true }).click();
-+  const toggle = page.getByRole('switch', { name: 'Auto-Scroll to latest message on chat open' });
-+  await toggle.setChecked(enabled);
-+  await expect(toggle).toBeChecked({ checked: enabled });
-+  await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
-+  await expect
-+    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('autoScroll') ?? 'true')))
-+    .toBe(enabled);
-+}
-+
-+async function seedThread() {
-+  const id = randomUUID();
-+  const email = getE2EUser().email;
-+  await seedConversations(email, [
-+    { conversationId: id, title: `Scroll ${id}`, updatedAt: new Date() },
-+  ]);
-+  let parent = '00000000-0000-0000-0000-000000000000';
-+  await seedMessages(
-+    email,
-+    id,
-+    Array.from({ length: 50 }, (_, index) => {
-+      const messageId = randomUUID();
-+      const result = {
-+        messageId,
-+        parentMessageId: parent,
-+        text: `Navigation history row ${index}. This is synthetic scrolling test content.`,
-+        isCreatedByUser: index % 2 === 0,
-+        sender: index % 2 === 0 ? 'User' : 'Assistant',
-+      };
-+      parent = messageId;
-+      return result;
-+    }),
-+  );
-+  return id;
-+}
-+
-+test.describe('running conversation navigation scrolling', () => {
-+  test.use({ serviceWorkers: 'block', viewport: { width: 1100, height: 700 } });
-+
-+  for (const enabled of [false, true]) {
-+    test(`navigation and resumed output honor autoScroll=${enabled}`, async ({ page }) => {
-+      test.setTimeout(120_000);
-+      const id = await seedThread();
-+      const otherId = enabled ? await seedThread() : undefined;
-+      await page.goto(`/c/${id}`);
-+      await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
-+      // Exercise the existing control and persistence, including the default true.
-+      await setAutoScroll(page, !enabled);
-+      await setAutoScroll(page, enabled);
-+      await sendMessage(page, `E2E_RUNNING_REPLY:scroll-${enabled}`);
-+      await expect(output(page)).toContainText('chunk-005', { timeout: 30_000 });
-+      await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
-+      // Cold running load reads the stored preference before restoring submission.
-+      await page.reload();
-+      await expect(output(page)).toContainText('chunk-015', { timeout: 30_000 });
-+      if (enabled) await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
-+      else await expect.poll(() => gap(page)).toBeGreaterThan(200);
-+      await page.getByRole('link', { name: 'New chat', exact: true }).click();
-+      await expect(page).toHaveURL(/\/c\/new/);
-+      const resumed = page.waitForResponse(
-+        (response) =>
-+          response.url().includes(`/api/agents/chat/stream/${id}?`) &&
-+          response.url().includes('resume=true'),
-+      );
-+      await row(page, id).click();
-+      await resumed;
-+      await expect(output(page)).toContainText('chunk-020', { timeout: 30_000 });
-+      if (enabled) {
-+        await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
-+        const height = await scroller(page).evaluate((el) => el.scrollHeight);
-+        await expect
-+          .poll(() => scroller(page).evaluate((el) => el.scrollHeight))
-+          .toBeGreaterThan(height);
-+        await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
-+        await scroller(page).hover();
-+        await page.mouse.wheel(0, -600);
-+        await expect.poll(() => gap(page)).toBeGreaterThan(200);
-+        const top = await scroller(page).evaluate((el) => el.scrollTop);
-+        await expect(output(page)).toContainText('chunk-070', { timeout: 30_000 });
-+        await expect
-+          .poll(() => scroller(page).evaluate((el) => el.scrollTop))
-+          .toBeLessThanOrEqual(top + 2);
-+      } else {
-+        await expect.poll(() => gap(page)).toBeGreaterThan(200);
-+        const top = await scroller(page).evaluate((el) => el.scrollTop);
-+        await expect(output(page)).toContainText('chunk-070', { timeout: 30_000 });
-+        expect(await scroller(page).evaluate((el) => el.scrollTop)).toBeLessThanOrEqual(top + 2);
-+      }
-+      await page
-+        .getByRole('button', { name: 'Scroll to bottom', exact: true })
-+        .and(page.locator(':not([data-msg-id])'))
-+        .click();
-+      await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
-+      await expect(output(page)).toContainText('chunk-090', { timeout: 30_000 });
-+      await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
-+
-+      // Sidebar navigation preserves the outgoing cache; New chat clears it.
-+      // Keep both chats running while the return visit revalidates that cache.
-+      if (otherId) {
-+        await row(page, otherId).click();
-+        await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
-+        await sendMessage(page, 'E2E_RUNNING_REPLY:scroll-other');
-+        await expect(output(page)).toContainText('chunk-005', { timeout: 30_000 });
-+        let release!: () => void;
-+        const historyGate = new Promise<void>((resolve) => {
-+          release = resolve;
-+        });
-+        let requested!: (route: Route) => void;
-+        const historyRequested = new Promise<Route>((resolve) => {
-+          requested = resolve;
-+        });
-+        await page.route(
-+          (url) => url.pathname === `/api/messages/${id}`,
-+          async (route) => {
-+            const response = await route.fetch();
-+            requested(route);
-+            await historyGate;
-+            await route.fulfill({ response });
-+          },
-+          { times: 1 },
-+        );
-+        try {
-+          await row(page, id).click();
-+          const historyRoute = await historyRequested;
-+          await expect.poll(() => gap(page)).toBeLessThanOrEqual(2);
-+          await scroller(page).hover();
-+          await page.mouse.wheel(0, -600);
-+          await expect.poll(() => gap(page)).toBeGreaterThan(200);
-+          const top = await scroller(page).evaluate((el) => el.scrollTop);
-+          const historyReturned = page.waitForResponse(
-+            (response) => response.request() === historyRoute.request(),
-+          );
-+          release();
-+          expect(await (await historyReturned).finished()).toBeNull();
-+          await expect(output(page)).toContainText('chunk-130', { timeout: 30_000 });
-+          expect(await scroller(page).evaluate((el) => el.scrollTop)).toBeLessThanOrEqual(top + 2);
-+          await expect.poll(() => gap(page)).toBeGreaterThan(200);
-+        } finally {
-+          release();
-+        }
-+      } else {
-+        await page.getByRole('link', { name: 'New chat', exact: true }).click();
-+        await row(page, id).click();
-+        await expect(output(page)).toContainText('chunk-100', { timeout: 30_000 });
-+        await expect.poll(() => gap(page)).toBeGreaterThan(200);
-+      }
-+      await page.getByRole('button', { name: 'Stop generating', exact: true }).click();
-+      await expect(page.getByRole('button', { name: 'Stop generating', exact: true })).toBeHidden();
-+      if (otherId) {
-+        await row(page, otherId).click();
-+        await page.getByRole('button', { name: 'Stop generating', exact: true }).click();
-+        await expect(
-+          page.getByRole('button', { name: 'Stop generating', exact: true }),
-+        ).toBeHidden();
-+      }
-+    });
-+  }
-+});

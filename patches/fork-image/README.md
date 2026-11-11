@@ -1,6 +1,6 @@
 # Fork 镜像发布入口
 
-状态：`local`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`local`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
 载荷保存现有 rickyhao/dev → GHCR 入口：准确 SHA checkout、fork/ref guard、amd64、branch/SHA tags、OCI labels 与 branch cache。
 
@@ -29,4 +29,4 @@ python3 tools/patchset.py test --target /path/to/application --only fork-image -
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。静态检查不执行镜像发布。
+2026-11-11：workflow 静态合同通过，核实仅 `rickyhao/dev` 的 push 可进入发布任务。未运行镜像发布或部署。项目门禁汇总见[根 README](../../README.md#验证)。

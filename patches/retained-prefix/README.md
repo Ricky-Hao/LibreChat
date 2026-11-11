@@ -1,6 +1,6 @@
 # 编辑前缀、fold 决策与恢复
 
-状态：`keep`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
 一起保留服务端 capture/admission、provenance、恰好一次投影、fold 三态和 multipart/index/phase 语义；覆盖正常 final、断线、prefix-only、stop/error 和 approval continuation。
 
@@ -19,6 +19,8 @@
 
 上游 reducers 与传输设施不足以替代 capture 和 fold 合同。不可只保留 UI 合并而丢掉服务端信任边界。
 
+本基线保留上游 manual compaction 恢复：先在 generation-local 快照执行 `restoreSummaryState`，再合并保留前缀，避免索引偏移丢失 `summarizing`。上游已移除 activity path 高亮调用，本组不恢复失去调用方的 boundary-offset helper。
+
 ## 维护与验证
 
 先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
@@ -31,4 +33,4 @@ python3 tools/patchset.py test --target /path/to/application --only retained-pre
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。
+2026-11-11：本组 5 项 focused、4 项 types 与 3 个浏览器用例通过，覆盖编辑前缀、恢复与 fold。项目门禁汇总见[根 README](../../README.md#验证)。

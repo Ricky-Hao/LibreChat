@@ -29,7 +29,7 @@ index c6ffa08c1c35a260ed1a5d7a407841727b338d3c..79e53e67bbfe9634bf66f884abd1c7f8
      "name": "Stable Diffusion",
      "pluginKey": "stable-diffusion",
 diff --git a/api/app/clients/tools/util/handleTools.js b/api/app/clients/tools/util/handleTools.js
-index 27af41b89cfb83a9b1818c9462c7c22552d0b170..135b7df02d407aa8ff9b1da791d6fcd17043869f 100644
+index 9bba962364edb25af5916252bd20bcabdac7a7ef..d38b7da6c51a351502c57ac40f876c45be76db25 100644
 --- a/api/app/clients/tools/util/handleTools.js
 +++ b/api/app/clients/tools/util/handleTools.js
 @@ -23,8 +23,10 @@ const {
@@ -45,7 +45,7 @@ index 27af41b89cfb83a9b1818c9462c7c22552d0b170..135b7df02d407aa8ff9b1da791d6fcd1
    resolveWebSearchSSRFAgents,
    buildWebSearchDynamicContext,
    codeExecutionAuthHeaders,
-@@ -425,8 +427,15 @@ const loadTools = async ({
+@@ -427,8 +429,15 @@ const loadTools = async ({
          });
        };
        continue;
@@ -207,7 +207,7 @@ index ed99ccab28542d5a70e0f6dd18956ab3801d1d41..335c9abdc856d51a676582986325104c
  
    it('injects the configured background completion batch size', async () => {
 diff --git a/api/server/services/ToolService.js b/api/server/services/ToolService.js
-index 16bdb21fec548ef7f766d680129ba0eea397a03b..022da82069fbd880e37aa4d14b14c8f5333e1044 100644
+index b6b9f4c96a086f0c4b09bc8d5a9f8bdfc0a5d4f2..6847f8cf6bcd5403ff9b2b1b26ca90bb81e72c39 100644
 --- a/api/server/services/ToolService.js
 +++ b/api/server/services/ToolService.js
 @@ -44,7 +44,7 @@ const {
@@ -219,7 +219,7 @@ index 16bdb21fec548ef7f766d680129ba0eea397a03b..022da82069fbd880e37aa4d14b14c8f5
    splitMCPToolKey,
    buildServerNameAliases,
    findShadowedServerNames,
-@@ -928,8 +928,8 @@ async function loadToolDefinitionsWrapper({
+@@ -935,8 +935,8 @@ async function loadToolDefinitionsWrapper({
      if (tool === Tools.memory) {
        return checkCapability(AgentCapabilities.memory);
      }
@@ -230,7 +230,7 @@ index 16bdb21fec548ef7f766d680129ba0eea397a03b..022da82069fbd880e37aa4d14b14c8f5
      }
      if (isActionTool(tool)) {
        return actionsEnabled;
-@@ -1775,8 +1775,8 @@ async function loadAgentTools({
+@@ -1784,8 +1784,8 @@ async function loadAgentTools({
        return includesWebSearch;
      } else if (tool === Tools.memory) {
        return checkCapability(AgentCapabilities.memory);
@@ -364,7 +364,7 @@ index 521549ab1e13c8033faf5150af58fa1f648f7e86..fead6aa213f7c9a5dc411a2536e6e2d7
    const { isSubmitting = false } = useMessage();
    const smoothStreaming = useSmoothStreaming();
 diff --git a/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts b/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts
-index a131a5224159afbceb422dc741596c2917ec2377..8f2ee784d6a0d4071d9545eba19986ea243d1759 100644
+index 96e70c5e7347214f1102fd1894b6df71eb19f69f..9a8368cc73e968e1663205e5f4f64c3f8496b9c6 100644
 --- a/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts
 +++ b/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts
 @@ -72,6 +72,25 @@ describe('buildCatalog', () => {
@@ -394,7 +394,7 @@ index a131a5224159afbceb422dc741596c2917ec2377..8f2ee784d6a0d4071d9545eba19986ea
      const askPlugin = makePlugin({ pluginKey: 'ask_user_question', name: 'Ask User' });
      const items = buildCatalog({ ...askInputs, regularTools: [askPlugin] });
 diff --git a/client/src/components/SidePanel/Agents/Tools/items/catalog.ts b/client/src/components/SidePanel/Agents/Tools/items/catalog.ts
-index 0b2b62e5936d4dd830877d01d4103848d348910b..6d2a85678831b11fdc8bd5ef902fa0d0e960327c 100644
+index a4f95b90a5c35dcfcefdf911128c8fc835ee6d2d..413ae2880a09447f34da7e900abd5a02d86e572a 100644
 --- a/client/src/components/SidePanel/Agents/Tools/items/catalog.ts
 +++ b/client/src/components/SidePanel/Agents/Tools/items/catalog.ts
 @@ -180,6 +180,19 @@ export function buildCatalog(inputs: BuildCatalogInputs): AgentItem[] {
@@ -506,11 +506,12 @@ index 4353d4048caed7f426fc1235cefb0c0068c7493f..a6c0dec45ad9e60fbb972cfe8bd8b5cd
        parts.push(partText);
      }
 diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
-index 587b1f3f310e060d6289f38c8aecbac71bf27fea..0a0714d143930539c8922683e1affa066c89a71c 100644
+index d304109c41c3b281cfafc5846c72a33cfb6be3aa..b30400f4f72905b8f7c2ee12082b05881968d958 100644
 --- a/client/src/locales/en/translation.json
 +++ b/client/src/locales/en/translation.json
-@@ -1,4 +1,6 @@
+@@ -1,5 +1,7 @@
  {
+   "com_ui_chat_target_failed": "Unable to load this chat’s model or agent.",
 +  "com_ui_task_callback": "External Task Callback",
 +  "com_agents_task_callback_info": "Resume this conversation automatically when an external executor delivers its task result.",
    "com_ui_pr_account_checking": "Checking connection",
@@ -793,10 +794,10 @@ index 0000000000000000000000000000000000000000..2083adbccf278873a4a37d7c59e8bd27
 +while its pending callback deliveries remain. Live Agent/Skill configuration,
 +publication, deployments and production webhooks are separate operator actions.
 diff --git a/librechat.example.yaml b/librechat.example.yaml
-index 832dedec57ff781dd4a21ffbb22d0b6c300ce5db..e325df6adc0c44a0b2ba080d02de318cd8112e9a 100644
+index d500db8375ffa19fd9cde3a5b86602416f3568b0..cd3af21ceab69967f0cfb0b1dd9e0af239ab866e 100644
 --- a/librechat.example.yaml
 +++ b/librechat.example.yaml
-@@ -1015,6 +1015,19 @@ endpoints:
+@@ -1020,6 +1020,19 @@ endpoints:
    #   # uses its own bound listener; override only for an internal TLS/front-door route.
    #   eventDriven:
    #     # selfUrl: 'https://librechat.internal'
@@ -2452,10 +2453,10 @@ index 0000000000000000000000000000000000000000..ae603a926396680c8fcddee3da985e3b
 +  };
 +}
 diff --git a/packages/api/src/agents/index.ts b/packages/api/src/agents/index.ts
-index 49d025314cab05545f01003911162dd0bdde47a5..1fb91a53f7494983518e133a1397b4d35434d714 100644
+index 2db7e028efcdac95a8b99d911077712840ba9fa5..900e1903d8cbe64e8b3542a13df403d726e8bc18 100644
 --- a/packages/api/src/agents/index.ts
 +++ b/packages/api/src/agents/index.ts
-@@ -103,1 +103,2 @@ export * from './queuedTurns';
+@@ -105 +105,2 @@ export * from './initialization';
 +export * from './callbacks';
  export { captureAuthoredSkills, restoreAuthoredSkills } from './authored';
 diff --git a/packages/api/src/agents/ptc.ts b/packages/api/src/agents/ptc.ts
@@ -2751,7 +2752,7 @@ index 10e626ed79ac96b155331f5d756ebf6c97064262..0121bf70e7dbafd18ad4d5d80b233e46
    const traceUserId = resolveLangfuseTraceUserId(config?.trace, user);
    if (traceUserId != null) {
 diff --git a/packages/api/src/tools/classification.ts b/packages/api/src/tools/classification.ts
-index 6f9439a35cd9b15a8132a231283eb8fdf8d5349d..62159549a5a3b9500c11cbb3e4841c9ececadaae 100644
+index 9ef234809bfde9a2786eff7d60f86c6eb35a4d92..0227fc365317d182e4d14ea5ca1fc6711c7356ba 100644
 --- a/packages/api/src/tools/classification.ts
 +++ b/packages/api/src/tools/classification.ts
 @@ -36,6 +36,7 @@ import { supportsProgrammaticCodeExecution } from '~/code/capabilities';
@@ -2762,7 +2763,7 @@ index 6f9439a35cd9b15a8132a231283eb8fdf8d5349d..62159549a5a3b9500c11cbb3e4841c9e
  
  export type { LCTool, LCToolRegistry, AllowedCaller, JsonSchemaType };
  
-@@ -414,7 +415,8 @@ export async function buildToolClassification(
+@@ -431,7 +432,8 @@ export async function buildToolClassification(
    const additionalTools: GenericTool[] = [];
  
    const mcpTools = loadedTools.filter(isMCPTool);
@@ -2772,7 +2773,7 @@ index 6f9439a35cd9b15a8132a231283eb8fdf8d5349d..62159549a5a3b9500c11cbb3e4841c9e
      return {
        additionalTools,
        toolDefinitions: [],
-@@ -428,6 +430,18 @@ export async function buildToolClassification(
+@@ -445,6 +447,18 @@ export async function buildToolClassification(
    const mcpToolAliases = collectMCPToolAliases(mcpToolDefs);
    aliasMCPToolOptions(mcpToolAliases, agentToolOptions);
    const toolRegistry: LCToolRegistry = buildToolRegistry(mcpToolDefs, agentToolOptions);
@@ -2919,10 +2920,10 @@ index 846a4268816986fe32e66ef09bf2e99cc3f5e3a8..8d5979005951e6cc71d95d746ff3b03d
  
  export function getToolDefinition(toolName: string): ToolRegistryDefinition | undefined {
 diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
-index df875c20fc67e76a7cabedce0d133a97cce9b4fe..54c0550ae71a00ad4f813a8eaebf6c6fedfbb9d0 100644
+index 318aabae6a457c358fdb3b4cf4c12574027ed3ea..b8aab527824df2c3d4daf4cc0b8cd5a9c829eab0 100644
 --- a/packages/data-provider/src/config.ts
 +++ b/packages/data-provider/src/config.ts
-@@ -39,6 +39,7 @@ import {
+@@ -40,6 +40,7 @@ import {
    scheduledMCPResourceBindingSchema,
    scheduledMCPReadOnlyPolicySchema,
  } from './types/scheduleConsent';
@@ -2930,7 +2931,7 @@ index df875c20fc67e76a7cabedce0d133a97cce9b4fe..54c0550ae71a00ad4f813a8eaebf6c6f
  import { partialWithoutDefaults } from './zod';
  
  export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_DEFAULT = 24 * 1024;
-@@ -861,6 +862,7 @@ export enum AgentCapabilities {
+@@ -877,6 +878,7 @@ export enum AgentCapabilities {
    skills = 'skills',
    memory = 'memory',
    ask_user_question = 'ask_user_question',
@@ -2938,7 +2939,7 @@ index df875c20fc67e76a7cabedce0d133a97cce9b4fe..54c0550ae71a00ad4f813a8eaebf6c6f
    tools = 'tools',
    /** @deprecated Retained for legacy configuration. Chain authoring is retired. */
    chain = 'chain',
-@@ -2171,6 +2173,7 @@ export const agentsEndpointSchema = baseEndpointSchema
+@@ -2197,6 +2199,7 @@ export const agentsEndpointSchema = baseEndpointSchema
            sharedCacheSlots: z.number().int().min(64).max(1_000_000).optional().default(65_536),
          })
          .optional(),
@@ -3096,10 +3097,10 @@ index e65ba823857ac50853be88c804964d27b6e6748f..8931fe83f33237b27df0e9352d18cc58
  
  /**
 diff --git a/packages/data-schemas/src/index.ts b/packages/data-schemas/src/index.ts
-index dbd5b35728f45e3fbaa2ad9de6202a29a69594ce..f9e256fd402492e09612c0c0e3c6e7807472906a 100644
+index 5e32607dcc5b9b32a6a56351fe448611058842be..306020302f3a7f6c8099006509cf65d231c57b81 100644
 --- a/packages/data-schemas/src/index.ts
 +++ b/packages/data-schemas/src/index.ts
-@@ -83,6 +83,7 @@ export {
+@@ -84,6 +84,7 @@ export {
    AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
    AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
    AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
@@ -3107,7 +3108,7 @@ index dbd5b35728f45e3fbaa2ad9de6202a29a69594ce..f9e256fd402492e09612c0c0e3c6e780
  } from './types/triggerDelivery';
  export type * from './types';
  export type * from './methods';
-@@ -120,6 +121,12 @@ export {
+@@ -121,6 +122,12 @@ export {
    backfillSearchTokens,
    warnOnMissingSearchTokens,
  } from './migrations';
@@ -3121,7 +3122,7 @@ index dbd5b35728f45e3fbaa2ad9de6202a29a69594ce..f9e256fd402492e09612c0c0e3c6e780
  
  export { createBrowserSetupStore, createBrowserSetupBackend } from './methods/browserSetup';
 diff --git a/packages/data-schemas/src/methods/index.ts b/packages/data-schemas/src/methods/index.ts
-index 65db79867b79c36bb863bfae67abb0e126ba6359..7d1ee4138f4279f024c8d64e5319b9ff0893cad3 100644
+index cf4096bd8ab4f256d6243a0fe3fd5e81985f2008..e7ade546f0d6db76a7151792d601c432f81217a9 100644
 --- a/packages/data-schemas/src/methods/index.ts
 +++ b/packages/data-schemas/src/methods/index.ts
 @@ -8,10 +8,12 @@ export type {
@@ -3137,7 +3138,7 @@ index 65db79867b79c36bb863bfae67abb0e126ba6359..7d1ee4138f4279f024c8d64e5319b9ff
  export { createScheduleMCPConsentStorage } from './scheduleConsent';
  export type { ScheduleMCPConsentStorage, ScheduleConsentSnapshot } from './scheduleConsent';
  import type {
-@@ -320,6 +322,7 @@ export type AllMethods = SubagentContentMethods &
+@@ -322,6 +324,7 @@ export type AllMethods = SubagentContentMethods &
    SkillLifecycleMethods &
    AgentTriggerDeliveryMethods &
    AgentQueuedTurnMethods &
@@ -3145,7 +3146,7 @@ index 65db79867b79c36bb863bfae67abb0e126ba6359..7d1ee4138f4279f024c8d64e5319b9ff
    ScheduleMCPConsentStorage &
    ScheduleMethods &
    AgentMethods &
-@@ -380,12 +383,15 @@ export function createMethods(
+@@ -382,12 +385,15 @@ export function createMethods(
    });
  
    const agentQueuedTurnMethods = createAgentQueuedTurnMethods(mongoose);
@@ -3164,7 +3165,7 @@ index 65db79867b79c36bb863bfae67abb0e126ba6359..7d1ee4138f4279f024c8d64e5319b9ff
    });
  
    const conversationMethods = createConversationMethods(mongoose, {
-@@ -397,6 +403,10 @@ export function createMethods(
+@@ -399,6 +405,10 @@ export function createMethods(
      prepareAgentTriggerConversationResultErasure:
        agentTriggerDeliveryMethods.prepareAgentTriggerConversationResultErasure,
      deleteAgentQueuedTurns: async (user, conversations) => {
@@ -3175,7 +3176,7 @@ index 65db79867b79c36bb863bfae67abb0e126ba6359..7d1ee4138f4279f024c8d64e5319b9ff
        /** Queued-turn ownership is ObjectId-backed. Conversation methods also
         * support synthetic/non-ObjectId owners in embedded integrations and
         * tests; those owners cannot have queued-turn rows to retire. */
-@@ -570,6 +580,7 @@ export function createMethods(
+@@ -572,6 +582,7 @@ export function createMethods(
      ...createSkillLifecycleMethods(mongoose),
      ...agentTriggerDeliveryMethods,
      ...agentQueuedTurnMethods,

@@ -1,87 +1,10 @@
-diff --git a/e2e/specs/mock/activity-fold.spec.ts b/e2e/specs/mock/activity-fold.spec.ts
-index af16f15a2d5a459dab19e8118fe9249fad31642b..ebb069f158e222a0392b0c19b85253cff9516cbd 100644
---- a/e2e/specs/mock/activity-fold.spec.ts
-+++ b/e2e/specs/mock/activity-fold.spec.ts
-@@ -458,11 +458,34 @@ test.describe('activity fold', () => {
-     });
-     await failedCall.scrollIntoViewIfNeeded();
-     await failedCall.hover();
-+    /** A reader gesture releases bottom-follow before the earlier message grows. */
-+    await Promise.all([
-+      transcript.evaluate(
-+        (content) =>
-+          new Promise<void>((resolve) => {
-+            content
-+              .closest('.scrollbar-gutter-stable')!
-+              .addEventListener(
-+                'wheel',
-+                () => requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-+                { once: true },
-+              );
-+          }),
-+      ),
-+      page.mouse.wheel(0, -100),
-+    ]);
-+    await failedCall.hover();
-     await expect(groupRail).toHaveAttribute('data-fold-lit');
--    const shift = await failedCall.evaluate((row) => {
-+    const headerCenter = await groupHeader.evaluate((element) => {
-+      const rect = element.getBoundingClientRect();
-+      return rect.top + rect.height / 2;
-+    });
-+    const shift = await failedCall.evaluate(async (row, headerY) => {
-       const fold = row.closest<HTMLElement>('[data-testid="activity-phase-card"]')!;
-       const message = row.closest<HTMLElement>('.message-render')!;
-       const scroll = row.closest<HTMLElement>('.scrollbar-gutter-stable')!;
-+      const rect = row.getBoundingClientRect();
-+      const distance = rect.top + rect.height / 2 - headerY;
-       const measure = () => ({
-         top: fold.getBoundingClientRect().top,
-         foldHeight: fold.getBoundingClientRect().height,
-@@ -470,15 +493,30 @@ test.describe('activity fold', () => {
-         scrollTop: scroll.scrollTop,
-       });
-       const before = measure();
--      document.getElementById('fold-layout-predecessor')!.style.height = '32px';
--      return { before, after: measure() };
--    });
--    expect(shift.after.top - shift.before.top).toBeCloseTo(32);
-+      document.getElementById('fold-layout-predecessor')!.style.height = `${distance}px`;
-+      await new Promise<void>((resolve) =>
-+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-+      );
-+      return {
-+        before,
-+        after: measure(),
-+        distance,
-+        pointer: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
-+      };
-+    }, headerCenter);
-+    expect(shift.distance).toBeGreaterThan(0);
-+    expect(shift.after.top - shift.before.top).toBeCloseTo(shift.distance);
-     expect(shift.after.foldHeight).toBe(shift.before.foldHeight);
-     expect(shift.after.messageHeight).toBe(shift.before.messageHeight);
-     expect(shift.after.scrollTop).toBe(shift.before.scrollTop);
--    /** 32px further down, the pointer is over the group's header: the path is hit-tested
--     *  again and now ends in that header's branch of the phase. */
-+    expect(
-+      await groupHeader.evaluate(
-+        (element, point) => element.contains(document.elementFromPoint(point.x, point.y)),
-+        shift.pointer,
-+      ),
-+    ).toBe(true);
-+    /** Align the group's header with the still pointer even when error text wraps.
-+     *  The path is hit-tested again and ends in that header's branch of the phase. */
-     await expect(groupRail).not.toHaveAttribute('data-fold-lit');
-     await endsAt(litBranch(phaseRail), groupHeader);
-     await transcript.evaluate((content, anchor) => {
 diff --git a/e2e/specs/mock/content-filters.persisted.spec.ts b/e2e/specs/mock/content-filters.persisted.spec.ts
-index f328ae7d7a1a64ec5f029b6dbe279da9e9c1132b..7ef222554b9cf810901ffeeb63b3ba2df57128c7 100644
+index f9d9d391ff1ec939c9d92001d9b13b6a516da024..42dc22b984c47ffc8183ae5e98c010553cd3a6d3 100644
 --- a/e2e/specs/mock/content-filters.persisted.spec.ts
 +++ b/e2e/specs/mock/content-filters.persisted.spec.ts
-@@ -2030,6 +2030,27 @@ test.describe('persisted source-aware content filters', () => {
-       );
+@@ -2052,6 +2052,27 @@ test.describe('persisted source-aware content filters', () => {
        fixtures.conversationIds.push(fixtures.messageConversationId);
+       await waitForSeedRead(fixtures.messageConversationId);
  
 +      // Rendering the seeded reply acknowledges it asynchronously. Finish that
 +      // lastSeenAt/unread-marker write before taking the filter's no-write snapshot.
@@ -108,7 +31,7 @@ index f328ae7d7a1a64ec5f029b6dbe279da9e9c1132b..7ef222554b9cf810901ffeeb63b3ba2d
          request,
          token,
 diff --git a/e2e/specs/mock/scenarios/pinned-drag-rules.spec.ts b/e2e/specs/mock/scenarios/pinned-drag-rules.spec.ts
-index fdadc8e73813237e2c7e12b441f3b4c2188c0308..c270c3d5a3b4f11dc3850a7cb630f88dc1da2019 100644
+index 43dd3901bcd1624c6082054d1a9dc466c029276f..703e5b9597b6b4eeaa7a6476072946102a6b1e0d 100644
 --- a/e2e/specs/mock/scenarios/pinned-drag-rules.spec.ts
 +++ b/e2e/specs/mock/scenarios/pinned-drag-rules.spec.ts
 @@ -106,25 +106,67 @@ test.describe('pinned drag rules', () => {
@@ -181,15 +104,20 @@ index fdadc8e73813237e2c7e12b441f3b4c2188c0308..c270c3d5a3b4f11dc3850a7cb630f88d
 +    await expect(pinnedConvoRow(page, plainTitle)).toBeVisible();
    });
  
-   test('a pinned chat cannot be dragged through a pinned model @scenario:a-pinned-chat-cannot-be-dragged-through-a-pinned-model', async ({
+   test('a chat below the sidebar fold can be dragged onto a pinned row @scenario:a-chat-below-the-fold-can-be-pinned-by-drag', async ({
 diff --git a/e2e/specs/mock/scenarios/pinned.helpers.ts b/e2e/specs/mock/scenarios/pinned.helpers.ts
-index 252e66b0d43f54d7fdb83b6e3abbeac975af17de..ca75d3c8fc53cfac58697d06077584a05d065009 100644
+index d87a18584b627ebd22dd183ce9522f768b758ffc..79a5fe99577cb9ceb221a3d9703b846d9fe8b105 100644
 --- a/e2e/specs/mock/scenarios/pinned.helpers.ts
 +++ b/e2e/specs/mock/scenarios/pinned.helpers.ts
-@@ -123,24 +123,42 @@ export async function dragRowOnto(
+@@ -123,29 +123,43 @@ export async function dragRowOnto(
    target: Locator,
    fraction: number,
  ): Promise<void> {
+-  /* A row below the sidebar's fold is visible to Playwright but has no pixel the
+-   * mouse can press: the press lands outside the page and selects text instead of
+-   * starting a drag. A person scrolls to it first, and only as far as it takes, so
+-   * the row they are dropping on stays on screen. */
+   await source.evaluate((row) => row.scrollIntoView({ block: 'nearest' }));
 -  const from = await source.boundingBox();
 -  const to = await target.boundingBox();
 -  if (!from || !to) {
@@ -240,24 +168,8 @@ index 252e66b0d43f54d7fdb83b6e3abbeac975af17de..ca75d3c8fc53cfac58697d06077584a0
    await page.mouse.move(endX, endY, { steps: 24 });
    /** The list shifts rows under the pointer as it reorders, and the hover that
     *  decides a swap reads the offset at the moment it fires. A pointer that
-diff --git a/e2e/specs/mock/scenarios/sidebar-single-scroll.spec.ts b/e2e/specs/mock/scenarios/sidebar-single-scroll.spec.ts
-index 008107d301f9bb3d5b5479974ab54f3a222f4141..939fefdaf85dcdd39da4028e5f98346fd079d453 100644
---- a/e2e/specs/mock/scenarios/sidebar-single-scroll.spec.ts
-+++ b/e2e/specs/mock/scenarios/sidebar-single-scroll.spec.ts
-@@ -83,7 +83,10 @@ async function openSidebar(page: Page): Promise<void> {
-   await expect(historyRegion(page)).toBeVisible({ timeout: 30_000 });
-   const placement = async () => {
-     const box = await historyRegion(page).boundingBox();
--    return box === null ? 'unlaid' : box.x >= 0 ? 'on-screen' : 'off-screen';
-+    if (box === null) {
-+      return 'unlaid';
-+    }
-+    return box.x >= 0 ? 'on-screen' : 'off-screen';
-   };
-   await expect.poll(placement, { timeout: 30_000 }).not.toBe('unlaid');
-   for (let attempt = 0; attempt < 3 && (await placement()) === 'off-screen'; attempt++) {
 diff --git a/e2e/specs/mock/scenarios/unseen-replies.spec.ts b/e2e/specs/mock/scenarios/unseen-replies.spec.ts
-index 25cfea4c7b859a13963e206f06a1c587ba8526a7..7309abdc3dad5494521185a7eb9acb3e9fb3ceda 100644
+index 2e394626afe5354ea30704032266618f0f982644..7309abdc3dad5494521185a7eb9acb3e9fb3ceda 100644
 --- a/e2e/specs/mock/scenarios/unseen-replies.spec.ts
 +++ b/e2e/specs/mock/scenarios/unseen-replies.spec.ts
 @@ -461,7 +461,7 @@ test.describe('unseen replies', () => {
@@ -287,19 +199,16 @@ index 25cfea4c7b859a13963e206f06a1c587ba8526a7..7309abdc3dad5494521185a7eb9acb3e
                  .__notificationPermissionCalls,
            ),
          )
-@@ -569,15 +569,25 @@ test.describe('unseen replies', () => {
-         await selectMockEndpoint(second, MOCK_ENDPOINTS[0]);
-         await second.bringToFront();
-         await unfocus(page);
-+        const acknowledged = second.waitForResponse(
-+          (response) =>
-+            new URL(response.url()).pathname === '/api/convos/seen' &&
-+            response.request().method() === 'POST',
-+        );
+@@ -575,18 +575,19 @@ test.describe('unseen replies', () => {
+             response.request().method() === 'POST',
+         );
          await sendMessageAndWaitForCompletion(second, `E2E_REPLY:withheld-${id.slice(0, 8)}`);
+-        /* The reply tab acknowledges the reply it just rendered. Restoring the unread baseline
+-         * before that write lands is overwritten by it, and the first tab then polls a
+-         * conversation the server considers read, so its dot never appears. */
 +        /* Let the sender acknowledge its rendered reply and leave the conversation before
 +         * restoring unread state, so a late seen write cannot overwrite the fixture. */
-+        await acknowledged;
+         await acknowledged;
 +        await second.goto(NEW_CHAT_PATH);
          const completed = await readConversation(id);
          if (completed?.lastResponseAt == null) throw new Error('Reply timestamp was not saved');
@@ -315,7 +224,7 @@ index 25cfea4c7b859a13963e206f06a1c587ba8526a7..7309abdc3dad5494521185a7eb9acb3e
        /* The reply tab may collapse the shared sidebar; observe the arrival before granting. */
        await openSidebar(page);
        await expect(row.locator('span[aria-hidden="true"].bg-status-info')).toBeVisible({
-@@ -587,7 +597,7 @@ test.describe('unseen replies', () => {
+@@ -596,7 +597,7 @@ test.describe('unseen replies', () => {
          .poll(() =>
            page.evaluate(
              () =>
@@ -324,7 +233,7 @@ index 25cfea4c7b859a13963e206f06a1c587ba8526a7..7309abdc3dad5494521185a7eb9acb3e
                  .__notificationConstructions,
            ),
          )
-@@ -595,7 +605,7 @@ test.describe('unseen replies', () => {
+@@ -604,7 +605,7 @@ test.describe('unseen replies', () => {
  
        await page.evaluate(() => {
          (
@@ -333,7 +242,7 @@ index 25cfea4c7b859a13963e206f06a1c587ba8526a7..7309abdc3dad5494521185a7eb9acb3e
          ).__grantNotificationPermission();
        });
        await restoreUnreadBaseline(id, completedReplyAt, replyAt);
-@@ -605,7 +615,7 @@ test.describe('unseen replies', () => {
+@@ -614,7 +615,7 @@ test.describe('unseen replies', () => {
            page.evaluate(
              (conversationId) =>
                (

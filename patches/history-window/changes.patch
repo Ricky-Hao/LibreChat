@@ -679,35 +679,27 @@ index 0000000000000000000000000000000000000000..d6c9d10278dd78dd237fe0ed628bd4cc
 +/** The shell supplies the preference/config policy to every message-cache observer. */
 +export const HistoryWindowContext = createContext<number | undefined>(undefined);
 diff --git a/client/src/Providers/MessagesHostContext.tsx b/client/src/Providers/MessagesHostContext.tsx
-index 7a6b7f20d88d72950253ff8a110e161ffa960dfc..74d1c9660ba49a8a47715112cf00795585558f97 100644
+index c9b5a759931835c592e1d9b2c4bc58bfe9cd19a1..9bd9c344d39be209e4acd5608862f78a560c479c 100644
 --- a/client/src/Providers/MessagesHostContext.tsx
 +++ b/client/src/Providers/MessagesHostContext.tsx
-@@ -8,10 +8,13 @@ import type {
-   ForkPreferences,
-   ForkConversation,
-   MessagesScrolling,
-+  ScrollNavigation,
- } from '@librechat/chat/react';
- import type { TMessage } from 'librechat-data-provider';
- import useConversationSeen from '~/hooks/Conversations/useConversationSeen';
- import useMessageScrolling from '~/hooks/Messages/useMessageScrolling';
+@@ -1,6 +1,7 @@
+ import { useCallback, useMemo, useRef } from 'react';
+ import { useAtomValue } from 'jotai';
+ import { useRecoilState, useRecoilValue } from 'recoil';
++import { focusHistory, focusHistoryTree } from '@librechat/chat';
+ import { EventSubagentActivityGroup } from '@librechat/chat/components';
+ import { useUpdateFeedbackMutation } from 'librechat-data-provider/react-query';
+ import {
+@@ -35,6 +36,7 @@ import { PrivateText } from '~/components/Chat/Messages/PrivateText';
+ import MessageAudio from '~/components/Chat/Messages/MessageAudio';
+ import { useAssistantsMapContext } from './AssistantsMapContext';
+ import MessageIcon from '~/components/Chat/Messages/MessageIcon';
 +import useHistoryPaging from '~/hooks/Messages/useHistoryPaging';
-+import { focusHistory, focusHistoryTree } from '~/utils/history';
+ import Wakeup from '~/components/Chat/Messages/Content/Wakeup';
+ import { useFileMapContext } from '~/Providers/FileMapContext';
  import Files from '~/components/Chat/Messages/Content/Files';
- import { useScreenshot } from '~/hooks/ScreenshotContext';
- import { useForkConvoMutation } from '~/data-provider';
-@@ -59,11 +62,34 @@ function useAppForkConversation(): ForkConversation {
- }
- 
- /** The app's scrolling hook, as the message list reads it. */
--function useScrolling(messagesTree: TMessage[] | null | undefined): MessagesScrolling {
--  const { conversation, ...scrolling } = useMessageScrolling(messagesTree);
-+function useScrolling(
-+  messagesTree: TMessage[] | null | undefined,
-+  navigation?: ScrollNavigation,
-+): MessagesScrolling {
-+  const { conversation, ...scrolling } = useMessageScrolling(messagesTree, navigation);
-   return { ...scrolling, conversationId: conversation?.conversationId };
+@@ -132,6 +134,26 @@ function AppMessageAudio(props: MessageAudioProps) {
+   return <MessageAudio {...props} />;
  }
  
 +const useHistory: MessagesHost['useHistory'] = ({
@@ -731,69 +723,43 @@ index 7a6b7f20d88d72950253ff8a110e161ffa960dfc..74d1c9660ba49a8a47715112cf007955
 +};
 +
  /** What the message list reads from the app: the viewer's clock format and fork defaults, the
-  *  fork request, its scrolling, screenshot and seen reporting, and the row pieces that still live
-  *  here. Registered as the default when this module loads, so rows read it on every route, the
-@@ -75,6 +101,7 @@ export const appMessagesHost: MessagesHost = {
+  *  fork request, the rich-text copy, its auto-scroll preference, screenshot and seen reporting, the thread's
+  *  file map, and the row pieces that still live here: the message body, wake-up card, owner's text, step
+@@ -142,6 +164,7 @@ export const appMessagesHost: MessagesHost = {
+   renderFiles: (message) => <Files message={message} />,
+   useForkPreferences: useAppForkPreferences,
    useForkConversation: useAppForkConversation,
- 
-   useScrolling,
 +  useHistory,
-   useScreenshotTarget: () => useScreenshot().screenshotTargetRef,
-   useAutoScroll: () => useAtomValue(autoScrollAtom),
-   useConversationSeen,
+   useMessageCopy: useAppMessageCopy,
+   useGetMessages: useAppGetMessages,
+   useHasPendingTurn: useAppHasPendingTurn,
 diff --git a/client/src/components/Chat/ChatView.tsx b/client/src/components/Chat/ChatView.tsx
-index e1504af643fc0961dc775a5a52841a4cdbb0594e..e5e355fe49e31947e46c8edb8388a7063da0865f 100644
+index aefce03e252c3a251ba1f67b8251e8c1707d3b9e..b297f24d5f4dd206aadf1764dbe6b4fc38ea6d03 100644
 --- a/client/src/components/Chat/ChatView.tsx
 +++ b/client/src/components/Chat/ChatView.tsx
-@@ -2,7 +2,7 @@ import { memo, useMemo } from 'react';
+@@ -2,8 +2,8 @@ import { memo, useMemo } from 'react';
  import { useAtomValue } from 'jotai';
  import { useRecoilValue } from 'recoil';
  import { useForm } from 'react-hook-form';
 -import { useParams } from 'react-router-dom';
+ import { Constants } from 'librechat-data-provider';
 +import { useLocation, useParams } from 'react-router-dom';
- import { Constants, buildTree } from 'librechat-data-provider';
- import { ChatPane, getChatPaneView, QueuedTurnPortalProvider } from '@librechat/chat/components';
+ import { ChatScreen, QueuedTurnPortalProvider } from '@librechat/chat/components';
  import {
-@@ -77,6 +77,10 @@ function ChatViewPane({
-   });
- 
-   const fileMap = useFileMapContext();
+   submissionByIndex,
+@@ -82,7 +82,9 @@ function ChatViewPane({
+   messages: TMessage[] | null;
+   isLoading: boolean;
+ }) {
+-  const { targetMessageId } = useParams();
 +  const location = useLocation();
-+  // A target navigation must retain access to the full tree, including search links.
 +  const targetMessageId =
 +    new URLSearchParams(location.search).get('messageId') || location.hash.slice(1) || undefined;
- 
-   const messagesTree = useMemo(() => {
-     const dataTree = buildTree({ messages, fileMap });
-@@ -140,7 +144,25 @@ function ChatViewPane({
-                         />
-                       }
-                       badge={chatProjectId ? <ProjectBadge projectId={chatProjectId} /> : null}
--                      messages={<MessagesView messagesTree={messagesTree} messages={messages} />}
-+                      messages={
-+                        <MessagesView
-+                          messagesTree={messagesTree}
-+                          messages={messages}
-+                          scrollNavigation={{
-+                            conversationKey: conversationId,
-+                            targetMessageId,
-+                            ready: !routePending,
-+                            explicitSendId:
-+                              rootSubmission &&
-+                              !('resumeStreamId' in rootSubmission) &&
-+                              (rootSubmission.conversation?.conversationId == null ||
-+                                rootSubmission.conversation?.conversationId === conversationId)
-+                                ? (rootSubmission.clientRequestId ??
-+                                  rootSubmission.initialResponse?.messageId)
-+                                : undefined,
-+                          }}
-+                        />
-+                      }
-                       landing={<Landing centerFormOnLanding={centerFormOnLanding} />}
-                       renderColumn={(column) => (
-                         <OwnerTextProvider
+   const rootSubmission = useAtomValue(submissionByIndex(index));
+   const { saveDrafts } = useChatSettings();
+   const enterToSend = useRecoilValue(store.enterToSend);
 diff --git a/client/src/components/Chat/Messages/Content/EditContentParts.tsx b/client/src/components/Chat/Messages/Content/EditContentParts.tsx
-index 538a573c953aa58e253ec9c08be3e0cea9ddde43..aec0f33b6b519e7206261a646769ef11e17b5f49 100644
+index ee00c3ac280b38b0d4e0bc0bb5ea033eced87f2d..8de1948f902a61f0853e5fb6a5ce4a933817f628 100644
 --- a/client/src/components/Chat/Messages/Content/EditContentParts.tsx
 +++ b/client/src/components/Chat/Messages/Content/EditContentParts.tsx
 @@ -11,6 +11,7 @@ import type { TMessageContentParts } from 'librechat-data-provider';
@@ -864,17 +830,17 @@ index 538a573c953aa58e253ec9c08be3e0cea9ddde43..aec0f33b6b519e7206261a646769ef11
        <div className="flex min-w-0 flex-col gap-3">
          {content.map((part, localIndex) => {
 diff --git a/client/src/components/Chat/Messages/Content/EditMessage.tsx b/client/src/components/Chat/Messages/Content/EditMessage.tsx
-index 10af467c3241e2aed04be5e9335281b030f88eb8..0fad67141b710a674676141b758a2b5c428122fa 100644
+index fc0cd2dbc517d070d60215051b6ad8542f28b24c..0f2f88dd012a28f22220019527f5b412a31c949c 100644
 --- a/client/src/components/Chat/Messages/Content/EditMessage.tsx
 +++ b/client/src/components/Chat/Messages/Content/EditMessage.tsx
-@@ -6,6 +6,7 @@ import { useUpdateMessageMutation } from 'librechat-data-provider/react-query';
+@@ -7,6 +7,7 @@ import { useUpdateMessageMutation } from 'librechat-data-provider/react-query';
  import type { TEditProps } from '~/common';
  import { useMessagePartsHost } from '~/Providers/MessagePartsHostContext';
  import useGetAddedConvo from '~/hooks/Conversations/useGetAddedConvo';
 +import { useRerunParent, ParentError } from './parent';
  import { cn, isSubmittableMessage } from '~/utils';
  import { useLocalize } from '~/hooks';
- import Container from './Container';
+ import EditFiles from './EditFiles';
 @@ -36,7 +37,12 @@ const EditMessage = ({
     *  user turn behind it — chained onto another model turn, or left at the root by an
     *  import — has none. The action is withheld rather than offered and silently
@@ -920,7 +886,7 @@ index 10af467c3241e2aed04be5e9335281b030f88eb8..0fad67141b710a674676141b758a2b5c
            <EditFiles
              files={keptFiles ?? []}
 diff --git a/client/src/components/Chat/Messages/Content/Parts/Attachment.tsx b/client/src/components/Chat/Messages/Content/Parts/Attachment.tsx
-index 2fcc84cdbe081dc25829e8eec75ed3c32a385bed..2ddc1444dbbdebccc786019c1ac7159d9effc1f7 100644
+index 544afb8864ae7212dd1e2fb6d5ed9c8b996523f1..00c85cf5513d6ac14e31763573910a0c0d2ea35c 100644
 --- a/client/src/components/Chat/Messages/Content/Parts/Attachment.tsx
 +++ b/client/src/components/Chat/Messages/Content/Parts/Attachment.tsx
 @@ -16,6 +16,7 @@ import {
@@ -1434,7 +1400,7 @@ index 34acadf14447e0c69b792d6850497c6ae6bda6c2..89150babf50ba266f5e7f2a221e26f31
   * Empty-folder placeholders the bash executor drops in the stateless
   * sandbox so a `mkdir` survives across runs. The user has no reason to
 diff --git a/client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx b/client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx
-index 34364f09abb450599f5cefcda86c0c609d7e179a..5280f24323ff7016853d95c8d9a8b9fe085dcccf 100644
+index 7f7227b15b5316052c20cb778a6c9c102eae2127..1866d3db15da2b947e674528e3204f41f8df6d7a 100644
 --- a/client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx
 +++ b/client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx
 @@ -1,7 +1,8 @@
@@ -1507,7 +1473,7 @@ index 34364f09abb450599f5cefcda86c0c609d7e179a..5280f24323ff7016853d95c8d9a8b9fe
    it('uses one editor footer and keeps non-editable parts visible', () => {
      render(
 diff --git a/client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx b/client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx
-index 06348c7abadcb49dcd93a9c848283d20fa25a856..e8ed51472be91e7e690ff0c619b0030a446cc541 100644
+index 9d00a5df4fc6bc47943d66fbaa82cefc7f0dc0ab..23816d6688aaac10a950da01ff465c24166524bd 100644
 --- a/client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx
 +++ b/client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx
 @@ -1,13 +1,18 @@
@@ -1530,7 +1496,7 @@ index 06348c7abadcb49dcd93a9c848283d20fa25a856..e8ed51472be91e7e690ff0c619b0030a
  
  jest.mock('recoil', () => ({
    useRecoilValue: () => 'ltr',
-@@ -78,17 +83,23 @@ function renderEditor({
+@@ -77,17 +82,23 @@ function renderEditor({
    ask = jest.fn(),
    setSiblingIdx = jest.fn(),
    editedMessage = message,
@@ -1563,7 +1529,7 @@ index 06348c7abadcb49dcd93a9c848283d20fa25a856..e8ed51472be91e7e690ff0c619b0030a
    );
    return { ask, enterEdit, setSiblingIdx };
  }
-@@ -100,6 +111,24 @@ describe('EditMessage', () => {
+@@ -99,6 +110,24 @@ describe('EditMessage', () => {
      mockMutateAsync.mockResolvedValue({});
    });
  
@@ -1588,7 +1554,7 @@ index 06348c7abadcb49dcd93a9c848283d20fa25a856..e8ed51472be91e7e690ff0c619b0030a
    it('sizes the editor from the configured message font rather than pinning it', () => {
      renderEditor();
  
-@@ -509,17 +538,7 @@ describe('EditMessage file removal', () => {
+@@ -508,17 +537,7 @@ describe('EditMessage file removal', () => {
    });
  
    it('disables file removal while the editor is locked', () => {
@@ -1648,145 +1614,8 @@ index 0000000000000000000000000000000000000000..bd5e60518f2e0480ca33c956e6ec4ec3
 +    </Alert>
 +  );
 +}
-diff --git a/client/src/components/Chat/Messages/MessagesView.tsx b/client/src/components/Chat/Messages/MessagesView.tsx
-index 1a41e87a1fd9c4f4aace228dbd291519e3db7028..f0bdb55ab858e482ef3f708d513f8bfad0ff867a 100644
---- a/client/src/components/Chat/Messages/MessagesView.tsx
-+++ b/client/src/components/Chat/Messages/MessagesView.tsx
-@@ -1,5 +1,6 @@
- import { MessagesView as MessagesList } from '@librechat/chat/components';
- import type { MessagesThreadProps } from '@librechat/chat/components';
-+import type { ScrollNavigation } from '@librechat/chat/react';
- import type { TMessage } from 'librechat-data-provider';
- import { MessagePartsHostProvider, appMessagePartsHost } from '~/Providers/MessagePartsHostContext';
- import { MessagesViewProvider, useFileMapContext } from '~/Providers';
-@@ -44,15 +45,18 @@ function Thread({
- function MessagesViewContent({
-   messagesTree,
-   messages,
-+  scrollNavigation,
- }: {
-   messagesTree?: TMessage[] | null;
-   messages?: TMessage[] | null;
-+  scrollNavigation?: ScrollNavigation;
- }) {
-   const { showScrollButton, maximizeChatSpace } = useChatSurface();
-   return (
-     <MessagesList
-       messagesTree={messagesTree}
-       messages={messages}
-+      scrollNavigation={scrollNavigation}
-       showScrollButton={showScrollButton}
-       maximizeChatSpace={maximizeChatSpace}
-       renderThread={(props) => <Thread {...props} />}
-@@ -73,14 +77,20 @@ function MessagesViewContent({
- export default function MessagesView({
-   messagesTree,
-   messages,
-+  scrollNavigation,
- }: {
-   messagesTree?: TMessage[] | null;
-   messages?: TMessage[] | null;
-+  scrollNavigation?: ScrollNavigation;
- }) {
-   return (
-     <MessagesViewProvider>
-       <MessagePartsHostProvider host={appMessagePartsHost}>
--        <MessagesViewContent messagesTree={messagesTree} messages={messages} />
-+        <MessagesViewContent
-+          messagesTree={messagesTree}
-+          messages={messages}
-+          scrollNavigation={scrollNavigation}
-+        />
-       </MessagePartsHostProvider>
-     </MessagesViewProvider>
-   );
-diff --git a/client/src/components/Chat/Messages/MultiMessage.tsx b/client/src/components/Chat/Messages/MultiMessage.tsx
-index ea0cd43a1bc02abd7761c2e3b32e427facd0649a..a861292df7908e34a199d94371a132fc2f77ca94 100644
---- a/client/src/components/Chat/Messages/MultiMessage.tsx
-+++ b/client/src/components/Chat/Messages/MultiMessage.tsx
-@@ -8,6 +8,7 @@ import type { TMessageProps } from '~/common';
- import EventSubagentActivityGroup from '~/components/Chat/Subagents/EventSubagentActivityGroup';
- import MessageContent from '~/components/Messages/MessageContent';
- import { siblingIdxFamily, siblingKey } from './Thread/state';
-+import { historySiblingFocus } from '~/utils/history';
- import { hasParallelLanes } from '~/utils/lanes';
- import MessageParts from './MessageParts';
- import Message from './Message';
-@@ -40,6 +41,9 @@ function MultiMessage({
-   const displayedRef = useRef<{ newestId?: string; viewedId?: string }>({});
-   const treeRef = useRef<typeof messagesTree | null>(null);
-   const parentRef = useRef<string | null | undefined | typeof UNBOUND_PARENT>(UNBOUND_PARENT);
-+  const pageFocus =
-+    treeRef.current !== messagesTree ? historySiblingFocus(messagesTree) : undefined;
-+  const effectiveSiblingIdx = pageFocus ?? siblingIdx;
- 
-   /**
-    * Sibling selection is positional (reversed index), so a change to the
-@@ -76,6 +80,14 @@ function MultiMessage({
-     }
-     const newestId = messagesTree[length - 1]?.messageId;
-     const currentIdx = siblingIdxRef.current;
-+    if (treeChanged && pageFocus != null) {
-+      setSiblingIdx(pageFocus);
-+      displayedRef.current = {
-+        newestId,
-+        viewedId: messagesTree[length - pageFocus - 1]?.messageId,
-+      };
-+      return;
-+    }
- 
-     if (parentChanged) {
-       /** Recursive instances are deliberately unkeyed and get REUSED across
-@@ -133,13 +145,13 @@ function MultiMessage({
-       newestId,
-       viewedId: messagesTree[length - nextSiblingIdx - 1]?.messageId,
-     };
--  }, [messageId, messagesTree, siblingIdx, setSiblingIdx]);
-+  }, [messageId, messagesTree, siblingIdx, setSiblingIdx, pageFocus]);
- 
-   if (!(messagesTree && messagesTree.length)) {
-     return null;
-   }
- 
--  const currentSiblingIdx = messagesTree.length - siblingIdx - 1;
-+  const currentSiblingIdx = messagesTree.length - effectiveSiblingIdx - 1;
-   const message = messagesTree[currentSiblingIdx] as TMessage | undefined;
- 
-   if (!message) {
-diff --git a/client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx b/client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx
-index 7d0c6bdc80438f6b39a8bb4cfcec05dc86e2d607..f7210a3897373b8af55e4e9dfd2cd63d10a2844b 100644
---- a/client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx
-+++ b/client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx
-@@ -1,7 +1,8 @@
- import React from 'react';
- import { Provider, createStore } from 'jotai';
- import { ChatContext } from '@librechat/chat/react';
--import { render, screen } from '@testing-library/react';
-+import { render as renderView, screen } from '@testing-library/react';
-+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
- import type { ChatContract } from '@librechat/chat/react';
- import type { TMessage } from 'librechat-data-provider';
- import type { ReactElement } from 'react';
-@@ -92,6 +93,17 @@ jest.mock('../MessageNav', () => {
- 
- import MessagesView from '../MessagesView';
- 
-+function render(ui: React.ReactElement) {
-+  const client = new QueryClient({
-+    defaultOptions: { queries: { retry: false, cacheTime: 0 } },
-+  });
-+  return renderView(ui, {
-+    wrapper: ({ children }) => (
-+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
-+    ),
-+  });
-+}
-+
- /** The pane's chat contract, as far as the list reads it: the pane and the routed key. */
- const withChat = (ui: ReactElement) => (
-   <ChatContext.Provider
 diff --git a/client/src/components/Chat/__tests__/ChatView.spec.tsx b/client/src/components/Chat/__tests__/ChatView.spec.tsx
-index a2bac59ab647b38b03cf1b2ada14388568d93adf..b568dcbec53e0bd4612bd4627345ee7916307f94 100644
+index 0cb260f34f9707df6a23fd848070d5629d3f5602..f30cacdf520fd3fe6072f895a699b46fea828e85 100644
 --- a/client/src/components/Chat/__tests__/ChatView.spec.tsx
 +++ b/client/src/components/Chat/__tests__/ChatView.spec.tsx
 @@ -1,5 +1,8 @@
@@ -1814,35 +1643,61 @@ index a2bac59ab647b38b03cf1b2ada14388568d93adf..b568dcbec53e0bd4612bd4627345ee79
  jest.mock('react-router-dom', () => ({
    ...jest.requireActual('react-router-dom'),
    useParams: () => mockParams(),
-@@ -36,10 +46,10 @@ jest.mock('@librechat/chat/react', () => {
+@@ -41,11 +51,26 @@ jest.mock('@librechat/chat/react', () => {
      ChatSessionProvider: ({
        children,
      }: {
 -      children: (session: { messages: null; isLoading: boolean }) => React.ReactNode;
 +      children: (session: { messages: TMessage[] | null; isLoading: boolean }) => React.ReactNode;
      }) => (
-       <actual.ChatContext.Provider value={{ conversation: mockConversation() }}>
+-      <actual.ChatContext.Provider value={{ conversation: mockConversation() }}>
 -        {children({ messages: null, isLoading: false })}
-+        {children({ messages: mockSessionMessages, isLoading: false })}
-       </actual.ChatContext.Provider>
+-      </actual.ChatContext.Provider>
++      <actual.ChatSurfaceProvider
++        value={{
++          enterToSend: true,
++          maximizeChatSpace: false,
++          showScrollButton: true,
++          composerBindings: {
++            shortcutsEnabled: true,
++            submitOverride: undefined,
++            yieldedChords: new Set<string>(),
++          },
++          claimForeground: () => undefined,
++          handOffComposerText: () => undefined,
++        }}
++      >
++        <actual.ChatContext.Provider value={{ conversation: mockConversation() }}>
++          {children({ messages: mockSessionMessages, isLoading: false })}
++        </actual.ChatContext.Provider>
++      </actual.ChatSurfaceProvider>
      ),
    };
-@@ -67,7 +77,13 @@ jest.mock('../Footer', () => ({
+ });
+@@ -71,7 +96,22 @@ jest.mock('../Footer', () => ({
+   useLandingFooter: () => mockLandingFooter,
  }));
  jest.mock('../Landing', () => ({ __esModule: true, default: () => <div /> }));
- jest.mock('~/components/Lia', () => ({ __esModule: true, default: () => null }));
--jest.mock('../Messages/MessagesView', () => ({ __esModule: true, default: () => <div /> }));
-+jest.mock('../Messages/MessagesView', () => ({
++/** The session is stubbed above; pending steer actions belong to the full session host. */
++jest.mock('../Messages/Content/Parts/PendingSteers', () => ({
 +  __esModule: true,
-+  default: (props: Record<string, unknown>) => {
-+    mockMessagesViewProps(props);
-+    return <div />;
-+  },
++  default: () => null,
 +}));
+ jest.mock('~/components/Lia', () => ({ __esModule: true, default: () => null }));
++jest.mock('@librechat/chat/components', () => {
++  const actual = jest.requireActual('@librechat/chat/components');
++  return {
++    ...actual,
++    ChatScreen: (props: React.ComponentProps<typeof actual.ChatScreen>) => {
++      mockMessagesViewProps(props.messagesSlots);
++      return <actual.ChatScreen {...props} />;
++    },
++  };
++});
  jest.mock('../Input/ChatForm', () => ({
    __esModule: true,
    default: (props: Record<string, unknown>) => {
-@@ -213,6 +229,46 @@ describe('ChatView composer column', () => {
+@@ -217,6 +257,47 @@ describe('ChatView composer column', () => {
    });
  });
  
@@ -1878,6 +1733,7 @@ index a2bac59ab647b38b03cf1b2ada14388568d93adf..b568dcbec53e0bd4612bd4627345ee79
 +          scrollNavigation: {
 +            conversationKey: 'convo-1',
 +            ready: false,
++            targetMessageId: undefined,
 +            explicitSendId: kind === 'explicit' ? 'request' : undefined,
 +          },
 +        }),
@@ -1923,27 +1779,27 @@ index f5824aeee696ed790aeffc2c4ede1353509ee2d3..d2b50a3ac54bb0f0222e997a446a6301
      expect(mockGetMessageById).not.toHaveBeenCalled();
    });
 diff --git a/client/src/data-provider/Messages/__tests__/queries.test.ts b/client/src/data-provider/Messages/__tests__/queries.test.ts
-index f2d03217bc800fbedae1f19f8e6e582b0ce829ae..3639a55b8848866541199331d0a4458c8a2ee30d 100644
+index 129faf3a0e916d993921b650180512f43ffc3308..60fc7aec71b190ed45415aa03088255aad60d00c 100644
 --- a/client/src/data-provider/Messages/__tests__/queries.test.ts
 +++ b/client/src/data-provider/Messages/__tests__/queries.test.ts
-@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
- import { act, renderHook, waitFor } from '@testing-library/react';
- import { Constants, QueryKeys, dataService } from 'librechat-data-provider';
- import { QueryClient, focusManager, QueryClientProvider } from '@tanstack/react-query';
+@@ -8,7 +8,7 @@ import {
+   useQueryClient,
+   QueryClientProvider,
+ } from '@tanstack/react-query';
 -import type { TMessage } from 'librechat-data-provider';
 +import type { HistoryPage, TMessage } from 'librechat-data-provider';
  import type { ReactNode } from 'react';
  import {
-   getStableMessages,
-@@ -11,6 +11,7 @@ import {
-   useSubagentAttachmentCallsQueries,
-   useGetMessagesByConvoId,
+   useCachedMessages,
+@@ -22,6 +22,7 @@ import {
+   usePrefetchConversationMessages,
  } from '../queries';
+ import { clearMessagesCache, hasServerFetchedReply, logger } from '~/utils';
 +import { HistoryWindowContext } from '~/Providers/HistoryWindowContext';
- import { clearMessagesCache, logger } from '~/utils';
  
  jest.mock('librechat-data-provider', () => {
-@@ -20,6 +21,7 @@ jest.mock('librechat-data-provider', () => {
+   const actual = jest.requireActual('librechat-data-provider');
+@@ -30,6 +31,7 @@ jest.mock('librechat-data-provider', () => {
      dataService: {
        ...actual.dataService,
        getMessagesByConvoId: jest.fn(),
@@ -1951,7 +1807,7 @@ index f2d03217bc800fbedae1f19f8e6e582b0ce829ae..3639a55b8848866541199331d0a4458c
        getSubagentAttachmentCalls: jest.fn(),
      },
    };
-@@ -319,6 +321,62 @@ describe('shouldPreserveMessagesOnNotFound', () => {
+@@ -329,6 +331,62 @@ describe('shouldPreserveMessagesOnNotFound', () => {
  });
  
  describe('useGetMessagesByConvoId', () => {
@@ -2014,7 +1870,7 @@ index f2d03217bc800fbedae1f19f8e6e582b0ce829ae..3639a55b8848866541199331d0a4458c
    it('observes optimistic new-chat messages without requesting them from the API', async () => {
      const queryClient = new QueryClient({
        defaultOptions: { queries: { retry: false } },
-@@ -374,7 +432,10 @@ describe('useGetMessagesByConvoId', () => {
+@@ -384,7 +442,10 @@ describe('useGetMessagesByConvoId', () => {
        expect(result.current.data).toEqual(serverMessages);
      });
      expect(mockGetMessagesByConvoId).toHaveBeenCalledTimes(1);
@@ -2026,7 +1882,7 @@ index f2d03217bc800fbedae1f19f8e6e582b0ce829ae..3639a55b8848866541199331d0a4458c
  
      unmount();
    });
-@@ -399,7 +460,10 @@ describe('useGetMessagesByConvoId', () => {
+@@ -409,7 +470,10 @@ describe('useGetMessagesByConvoId', () => {
      });
  
      await waitFor(() => {
@@ -2038,7 +1894,7 @@ index f2d03217bc800fbedae1f19f8e6e582b0ce829ae..3639a55b8848866541199331d0a4458c
      });
  
      act(() => {
-@@ -445,7 +509,10 @@ describe('useGetMessagesByConvoId', () => {
+@@ -455,7 +519,10 @@ describe('useGetMessagesByConvoId', () => {
      const refetchPromise = result.current.refetch();
  
      await waitFor(() => {
@@ -2050,7 +1906,7 @@ index f2d03217bc800fbedae1f19f8e6e582b0ce829ae..3639a55b8848866541199331d0a4458c
      });
  
      act(() => {
-@@ -522,7 +589,10 @@ describe('useGetMessagesByConvoId', () => {
+@@ -532,7 +599,10 @@ describe('useGetMessagesByConvoId', () => {
      const refetchPromise = result.current.refetch();
  
      await waitFor(() => {
@@ -2062,7 +1918,7 @@ index f2d03217bc800fbedae1f19f8e6e582b0ce829ae..3639a55b8848866541199331d0a4458c
      });
  
      act(() => {
-@@ -583,6 +653,7 @@ describe('useGetMessagesByConvoId', () => {
+@@ -593,6 +663,7 @@ describe('useGetMessagesByConvoId', () => {
      });
      expect(dataService.getMessagesByConvoId).toHaveBeenCalledWith(conversationId, {
        toolPreviews: true,
@@ -2070,7 +1926,7 @@ index f2d03217bc800fbedae1f19f8e6e582b0ce829ae..3639a55b8848866541199331d0a4458c
      });
      expect(queryClient.getQueryData([QueryKeys.messages, conversationId])).toBe(currentMessages);
  
-@@ -629,6 +700,7 @@ describe('useGetMessagesByConvoId', () => {
+@@ -639,6 +710,7 @@ describe('useGetMessagesByConvoId', () => {
      });
      expect(dataService.getMessagesByConvoId).toHaveBeenCalledWith(conversationId, {
        toolPreviews: true,
@@ -2078,6 +1934,18 @@ index f2d03217bc800fbedae1f19f8e6e582b0ce829ae..3639a55b8848866541199331d0a4458c
      });
      expect(queryClient.getQueryData([QueryKeys.messages, conversationId])).toBe(currentMessages);
      expect(logger.warn).toHaveBeenCalledWith(
+@@ -769,7 +841,10 @@ describe('usePrefetchConversationMessages', () => {
+       await Promise.resolve();
+     });
+     expect(mockGet).toHaveBeenCalledTimes(1);
+-    expect(mockGet).toHaveBeenCalledWith(conversationId, { toolPreviews: true });
++    expect(mockGet).toHaveBeenCalledWith(conversationId, {
++      toolPreviews: true,
++      lazyAttachments: true,
++    });
+   });
+ 
+   it('keeps the prefetch for the view when another observer of the conversation mounts inside it', async () => {
 diff --git a/client/src/data-provider/Messages/__tests__/window.test.ts b/client/src/data-provider/Messages/__tests__/window.test.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..557beb7444f33c9fbf21b29f5c37a841094eed14
@@ -2171,22 +2039,24 @@ index 0000000000000000000000000000000000000000..557beb7444f33c9fbf21b29f5c37a841
 +  expect(merged[1]).toBe(live);
 +});
 diff --git a/client/src/data-provider/Messages/queries.ts b/client/src/data-provider/Messages/queries.ts
-index 030c97a2cd3c94fe9dac239c0600f231842ffbcd..5079f146b12e20b69f9893d55b8c07f726bd4470 100644
+index 3767f6b201c132b710b757dc0bc21f4484e92738..4a7c8f06723d057ba7e45578187c13be66e68ee6 100644
 --- a/client/src/data-provider/Messages/queries.ts
 +++ b/client/src/data-provider/Messages/queries.ts
-@@ -1,9 +1,10 @@
--import { useLayoutEffect, useRef } from 'react';
+@@ -1,4 +1,4 @@
+-import { useEffect, useLayoutEffect, useRef } from 'react';
 +import { useContext, useEffect, useLayoutEffect, useRef } from 'react';
  import { useLocation } from 'react-router-dom';
  import { Constants, QueryKeys, dataService } from 'librechat-data-provider';
  import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
- import type { UseQueryOptions, QueryObserverResult, QueryClient } from '@tanstack/react-query';
+@@ -9,6 +9,7 @@ import type {
+   QueryObserverResult,
+ } from '@tanstack/react-query';
  import type * as t from 'librechat-data-provider';
 +import type { HistoryWindow } from './window';
  import {
    beginMessagesReplyFetch,
    completeMessagesReplyFetch,
-@@ -11,6 +12,8 @@ import {
+@@ -17,6 +18,8 @@ import {
    isNotFoundError,
    logger,
  } from '~/utils';
@@ -2195,7 +2065,7 @@ index 030c97a2cd3c94fe9dac239c0600f231842ffbcd..5079f146b12e20b69f9893d55b8c07f7
  
  type StableMessagesParams = {
    pathname: string;
-@@ -85,8 +88,34 @@ export function shouldPreserveMessagesOnNotFound({
+@@ -91,8 +94,34 @@ export function shouldPreserveMessagesOnNotFound({
   * as bounded previews. Every writer of that cache uses this, so the cache never flips between
   * preview and full payloads; a reader that needs every byte (export) asks for a full load.
   */
@@ -2232,7 +2102,54 @@ index 030c97a2cd3c94fe9dac239c0600f231842ffbcd..5079f146b12e20b69f9893d55b8c07f7
  }
  
  /**
-@@ -176,12 +205,22 @@ function hasActiveJob(queryClient: QueryClient, id: string) {
+@@ -202,7 +231,15 @@ const prefetched = new Set<string>();
+ export async function loadConversationMessages(
+   queryClient: QueryClient,
+   id: string,
+-  { pathname, isStreaming }: { pathname: string; isStreaming: () => boolean },
++  {
++    pathname,
++    isStreaming,
++    windowSize,
++  }: {
++    pathname: string;
++    isStreaming: () => boolean;
++    windowSize?: number;
++  },
+ ): Promise<t.TMessage[]> {
+   const queryKey = [QueryKeys.messages, id];
+   const messagesAtRequestStart = queryClient.getQueryData<t.TMessage[]>(queryKey);
+@@ -218,7 +255,7 @@ export async function loadConversationMessages(
+   );
+   let result: t.TMessage[];
+   try {
+-    result = await fetchConversationMessages(id);
++    result = await fetchConversationMessages(id, queryClient, windowSize);
+   } catch (error) {
+     const currentMessages = queryClient.getQueryData<t.TMessage[]>(queryKey);
+     if (
+@@ -254,6 +291,20 @@ export async function loadConversationMessages(
+   }
+ 
+   const currentMessages = queryClient.getQueryData<t.TMessage[]>(queryKey);
++  const window = queryClient.getQueryData<HistoryWindow>([QueryKeys.historyWindow, id]);
++  if (
++    window &&
++    messagesAtRequestStart == null &&
++    currentMessages?.length &&
++    (isStreaming() || hasActiveJob(queryClient, id))
++  ) {
++    queryClient.setQueryData<HistoryWindow>([QueryKeys.historyWindow, id], {
++      ...window,
++      focusId: currentMessages[currentMessages.length - 1].messageId,
++    });
++    completeMessagesReplyFetch(queryClient, id, request, false);
++    return prependHistory(result, currentMessages);
++  }
+   if (
+     messagesAtRequestStart != null &&
+     currentMessages != null &&
+@@ -286,12 +337,22 @@ export async function loadConversationMessages(
  export const useGetMessagesByConvoId = <TData = t.TMessage[]>(
    id: string,
    config?: UseQueryOptions<t.TMessage[], unknown, TData>,
@@ -2256,36 +2173,36 @@ index 030c97a2cd3c94fe9dac239c0600f231842ffbcd..5079f146b12e20b69f9893d55b8c07f7
  
    useLayoutEffect(() => {
      isStreamingRef.current = isStreaming;
-@@ -204,7 +243,7 @@ export const useGetMessagesByConvoId = <TData = t.TMessage[]>(
-       );
-       let result: t.TMessage[];
-       try {
--        result = await fetchConversationMessages(id);
-+        result = await fetchConversationMessages(id, queryClient, windowSize);
-       } catch (error) {
-         const currentMessages = queryClient.getQueryData<t.TMessage[]>(queryKey);
-         if (
-@@ -240,6 +279,20 @@ export const useGetMessagesByConvoId = <TData = t.TMessage[]>(
-       }
+@@ -303,6 +364,7 @@ export const useGetMessagesByConvoId = <TData = t.TMessage[]>(
+       loadConversationMessages(queryClient, id, {
+         pathname: location.pathname,
+         isStreaming: () => isStreamingRef.current,
++        windowSize,
+       }),
+     {
+       refetchOnWindowFocus: false,
+@@ -336,6 +398,7 @@ export const useGetMessagesByConvoId = <TData = t.TMessage[]>(
+ export function usePrefetchConversationMessages(conversationId: string, enabled: boolean) {
+   const queryClient = useQueryClient();
+   const { pathname } = useLocation();
++  const windowSize = useContext(HistoryWindowContext);
+   const pathnameRef = useRef(pathname);
  
-       const currentMessages = queryClient.getQueryData<t.TMessage[]>(queryKey);
-+      const window = queryClient.getQueryData<HistoryWindow>([QueryKeys.historyWindow, id]);
-+      if (
-+        window &&
-+        messagesAtRequestStart == null &&
-+        currentMessages?.length &&
-+        (isStreamingRef.current || hasActiveJob(queryClient, id))
-+      ) {
-+        queryClient.setQueryData<HistoryWindow>([QueryKeys.historyWindow, id], {
-+          ...window,
-+          focusId: currentMessages[currentMessages.length - 1].messageId,
-+        });
-+        completeMessagesReplyFetch(queryClient, id, request, false);
-+        return prependHistory(result, currentMessages);
-+      }
-       if (
-         messagesAtRequestStart != null &&
-         currentMessages != null &&
+   useLayoutEffect(() => {
+@@ -360,11 +423,12 @@ export function usePrefetchConversationMessages(conversationId: string, enabled:
+           loadConversationMessages(queryClient, conversationId, {
+             pathname: pathnameRef.current,
+             isStreaming: () => false,
++            windowSize,
+           }),
+         { retry: retryPrefetch },
+       );
+     }
+-  }, [conversationId, enabled, queryClient]);
++  }, [conversationId, enabled, queryClient, windowSize]);
+ }
+ 
+ /**
 diff --git a/client/src/data-provider/Messages/retention.ts b/client/src/data-provider/Messages/retention.ts
 index 210e9eafddba8ce381fbb9091b7542fc124c822c..1a6d133a0f906bde4617cd64601bc965b6a8b135 100644
 --- a/client/src/data-provider/Messages/retention.ts
@@ -2372,10 +2289,10 @@ index 0000000000000000000000000000000000000000..1744920efe18e577fd8f1e27741846e2
 +  return [...older.filter((message) => !existing.has(message.messageId)), ...current];
 +}
 diff --git a/client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx b/client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx
-index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01f6fbf829 100644
+index 2c8140522840b9b92cbc9c31009606d010e8e0ac..470b9103795aa4376c1dea63def3d44eebb2b400 100644
 --- a/client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx
 +++ b/client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx
-@@ -1,18 +1,22 @@
+@@ -1,6 +1,9 @@
 -import { renderHook, act } from '@testing-library/react';
 +import { createElement } from 'react';
 +import { MemoryRouter } from 'react-router-dom';
@@ -2383,28 +2300,18 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
 +import { renderHook, act, waitFor } from '@testing-library/react';
  import { pendingReasoningOverrideFamily } from '@librechat/chat/react';
 +import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-+import {
-+  revealedQueuedTurnFamily,
-+  submissionStartFamily,
-+  showStopButtonByIndex,
-+} from '@librechat/chat/react';
  import {
-   Constants,
-   ContentTypes,
+   revealedQueuedTurnFamily,
+   submissionStartFamily,
+@@ -14,6 +17,7 @@ import {
    EModelEndpoint,
-   QueryKeys,
    createPayload,
+   CODE_ENVIRONMENT_DECISION_VERSION,
 +  dataService,
  } from 'librechat-data-provider';
--import {
--  revealedQueuedTurnFamily,
--  submissionStartFamily,
--  showStopButtonByIndex,
--} from '@librechat/chat/react';
  import type {
    Agent,
-   CodeEnvironmentMode,
-@@ -30,6 +34,7 @@ import {
+@@ -32,6 +36,7 @@ import {
    pendingUsageFamily,
  } from '~/components/Chat/Input/TokenUsage/store';
  import { ChatSettingsContext, defaultChatSettings } from '~/Providers/ChatSettingsContext';
@@ -2412,7 +2319,7 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
  import useChatFunctions from '../useChatFunctions';
  import { isPasteSubmitted } from '~/utils';
  
-@@ -63,7 +68,10 @@ const mockGetQueryData = jest.fn((queryKey: readonly unknown[]) => {
+@@ -83,7 +88,10 @@ const mockGetQueryData = jest.fn((queryKey: readonly unknown[]) => {
    }
    return {};
  });
@@ -2422,8 +2329,8 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
 +const mockShowToast = jest.fn();
  const mockGetLatestConversation = jest.fn(() => null as TConversation | null);
  const mockSetConversation = jest.fn();
- const mockResolveCodeWorkspaceSubmission = jest.fn<
-@@ -77,16 +85,37 @@ const mockCodeWorkspace = {
+ const mockReadWorkspaceInputs = jest.fn<CodeWorkspaceInputs, []>();
+@@ -94,16 +102,37 @@ const mockCodeWorkspace = {
  };
  
  jest.mock('react-router-dom', () => ({
@@ -2465,7 +2372,7 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
  jest.mock('recoil', () => ({
    useRecoilValue: () => false,
    useSetRecoilState: (atom: unknown) =>
-@@ -114,6 +143,7 @@ jest.mock('~/hooks/Conversations/useGetConversation', () => () => mockGetLatestC
+@@ -130,6 +159,7 @@ jest.mock('~/hooks/Conversations/useGetConversation', () => () => mockGetLatestC
  jest.mock('~/hooks/Conversations/useGetSender', () => () => mockGetSender);
  jest.mock('~/hooks/Input/useUserKey', () => () => ({ getExpiry: mockGetExpiry }));
  jest.mock('~/hooks', () => ({
@@ -2473,7 +2380,7 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
    useAuthContext: () => ({ user: null }),
  }));
  jest.mock('~/Providers/AgentsMapContext', () => ({
-@@ -506,6 +536,7 @@ describe('useChatFunctions ask', () => {
+@@ -608,6 +638,7 @@ describe('useChatFunctions ask', () => {
      expect(askResult!).toBe(false);
      expect(setMessages).not.toHaveBeenCalled();
      expect(setSubmission).not.toHaveBeenCalled();
@@ -2481,7 +2388,7 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
      expect(store.get(showStopButtonByIndex(0))).toBe(false);
      expect(store.get(submissionStartFamily(0))).toBeNull();
    });
-@@ -616,6 +647,7 @@ describe('useChatFunctions ask', () => {
+@@ -718,6 +749,7 @@ describe('useChatFunctions ask', () => {
  
      expect(setMessages).toHaveBeenCalled();
      expect(setSubmission).toHaveBeenCalled();
@@ -2489,7 +2396,7 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
    });
  
    it('allows explicit override messages before the cache exists', () => {
-@@ -965,12 +997,228 @@ describe('useChatFunctions ask', () => {
+@@ -1067,6 +1099,149 @@ describe('useChatFunctions ask', () => {
    });
  });
  
@@ -2501,6 +2408,8 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
 +    queryClient = new QueryClient({
 +      defaultOptions: { queries: { retry: 1, retryDelay: 100, cacheTime: Infinity } },
 +    });
++    queryClient.setQueryData([QueryKeys.endpoints], { [EModelEndpoint.agents]: {} });
++    queryClient.setQueryData([QueryKeys.agent, mockAgent.id], mockAgent);
 +    mockQueryClient = queryClient;
 +  });
 +
@@ -2637,8 +2546,9 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
  describe('useChatFunctions regenerate', () => {
    beforeEach(() => {
      jest.clearAllMocks();
-     mockAgentQueryData.current = undefined;
-   });
+@@ -1113,6 +1288,85 @@ describe('useChatFunctions regenerate', () => {
+     },
+   );
  
 +  it('loads one missing parent on request when the window starts at the selected reply', async () => {
 +    const parent = userMessage('parent-outside-window');
@@ -2646,6 +2556,8 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
 +    const client = new QueryClient({
 +      defaultOptions: { queries: { retry: false, cacheTime: Infinity } },
 +    });
++    client.setQueryData([QueryKeys.endpoints], { [EModelEndpoint.agents]: {} });
++    client.setQueryData([QueryKeys.agent, mockAgent.id], mockAgent);
 +    client.setQueryData([QueryKeys.historyWindow, 'conversation-1'], { limit: 24 });
 +    mockQueryClient = client;
 +    mockGetLatestConversation.mockReturnValue(conversation('conversation-1'));
@@ -2679,6 +2591,8 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
 +        defaultOptions: { queries: { retry: false, cacheTime: Infinity } },
 +        logger: { log: console.log, warn: console.warn, error: jest.fn() },
 +      });
++      client.setQueryData([QueryKeys.endpoints], { [EModelEndpoint.agents]: {} });
++      client.setQueryData([QueryKeys.agent, mockAgent.id], mockAgent);
 +      client.setQueryData([QueryKeys.historyWindow, 'conversation-1'], { limit: 24 });
 +      mockQueryClient = client;
 +      mockGetLatestConversation.mockReturnValue(conversation('conversation-1'));
@@ -2719,41 +2633,43 @@ index f0b301959f552947af45d8973f90833e0f532c17..3a383e19345b06f54cf89bcf4b446b01
      let messages = [
        userMessage('user-1'),
 diff --git a/client/src/hooks/Chat/services.ts b/client/src/hooks/Chat/services.ts
-index 6fdced9656ee92c85631f65eaf451ab8f99440d1..3a97300c571b0067b8bc8017301fb836409e6783 100644
+index 46d26b8229d34eeb470f10fdf296d34cd2fc89a3..5af8b361e3c214c7dd0fab51ae527f90425b1b66 100644
 --- a/client/src/hooks/Chat/services.ts
 +++ b/client/src/hooks/Chat/services.ts
-@@ -1,7 +1,8 @@
+@@ -1,8 +1,9 @@
+ import { useRef, useEffect } from 'react';
  import { useStore } from 'jotai';
  import { useNavigate } from 'react-router-dom';
 -import { QueryKeys } from 'librechat-data-provider';
 +import { useToastContext } from '@librechat/client';
  import { useQueryClient } from '@tanstack/react-query';
 +import { QueryKeys, dataService } from 'librechat-data-provider';
+ import { launchedConversationFamily } from '@librechat/chat/react';
  import type { ChatTurnsParams, TurnServices } from '@librechat/chat/react';
  import type { TEndpointsConfig } from 'librechat-data-provider';
- import {
-@@ -27,6 +28,8 @@ import useGetSender from '~/hooks/Conversations/useGetSender';
- import { resolveSubmittedReasoning } from './ask/reasoning';
- import { isHistoryRevalidating } from './ask/guards';
+@@ -22,7 +23,9 @@ import { useChatSettings } from '~/Providers/ChatSettingsContext';
+ import useCodeWorkspace from '~/hooks/Agents/useCodeWorkspace';
+ import { cancelUploads } from '~/hooks/Files/useFileHandling';
  import useUserKey from '~/hooks/Input/useUserKey';
 +import { NotificationSeverity } from '~/common';
+ import { isTargetReady } from './ask/guards';
 +import { useLocalize } from '~/hooks';
  
  /** The app's side of a pane's turns: its catalogs, router, composer files, code workspace and
   *  logger, for the package's `useTurns`. */
-@@ -38,6 +41,8 @@ export default function useTurnServices({
+@@ -32,6 +35,8 @@ export default function useTurnServices({
+ }: Pick<ChatTurnsParams, 'index' | 'conversation'>): TurnServices {
    const navigate = useNavigate();
-   const getSender = useGetSender();
    const queryClient = useQueryClient();
 +  const { showToast } = useToastContext();
 +  const localize = useLocalize();
+   const discardFiles = useDiscardPastedFiles(index, conversation?.conversationId);
    const setFilesToDelete = useSetFilesToDelete();
    const agentsMap = useAgentsMapContext();
-   const { isTemporary, config, auth, getEphemeralAgent, addedConversation } = useChatSettings();
-@@ -62,6 +67,30 @@ export default function useTurnServices({
+@@ -78,6 +83,30 @@ export default function useTurnServices({
+     getEphemeralAgent,
      getUserKey: getExpiry,
      getRouteProjectId: getRouteChatProjectId,
-     isHistoryRevalidating: (conversationId) => isHistoryRevalidating(queryClient, conversationId),
 +    cancelMessagesQuery: (conversationId) => {
 +      void queryClient.cancelQueries(
 +        { queryKey: [QueryKeys.messages, conversationId], exact: true },
@@ -2778,9 +2694,9 @@ index 6fdced9656ee92c85631f65eaf451ab8f99440d1..3a97300c571b0067b8bc8017301fb836
 +        });
 +      }
 +    },
-     resolveCode: (submitted) => {
-       const latest = getConversation();
-       const latestApprovalMode = latest?.codeApprovalMode;
+     canSubmit: (submitted) => {
+       const { config, addedConversation } = readiness.current;
+       return (
 diff --git a/client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx b/client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx
 index 715739472ccdd28d33a0fd599462dc93d38c72bc..57374daae266a9c63b1c8104cbb07c84a851776d 100644
 --- a/client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx
@@ -3013,88 +2929,21 @@ index 0000000000000000000000000000000000000000..9fee4bdd9f24a76dcf8346583c35e929
 +  );
 +  client.clear();
 +});
-diff --git a/client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx b/client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx
-index 358021380245ed15b5380da5dd04e0b3d5a9e748..846e5d99f1f67a58c741ae46eaab0a04c0bff986 100644
---- a/client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx
-+++ b/client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx
-@@ -1,8 +1,58 @@
--import React from 'react';
--import { Provider, createStore } from 'jotai';
--import { renderHook } from '@testing-library/react';
--import type { TMessage } from 'librechat-data-provider';
-+import React, { createElement } from 'react';
-+import { createStore, Provider } from 'jotai';
-+import { act, renderHook } from '@testing-library/react';
-+import type { TMessage, TFile } from 'librechat-data-provider';
-+import type { ReactNode } from 'react';
-+import { siblingIdxFamily } from '~/components/Chat/Messages/Thread/state';
-+import { focusHistory } from '~/utils/history';
- import useThreadRows from '../useThreadRows';
-+
-+const message = (id: string, parent: string): TMessage => ({
-+  messageId: id,
-+  parentMessageId: parent,
-+  conversationId: 'chat',
-+  sender: 'Assistant',
-+  text: id,
-+  isCreatedByUser: false,
-+});
-+
-+test('renders the newest reply in a partial forest and preserves the chosen branch as parents arrive', () => {
-+  const store = createStore();
-+  const partial = [
-+    message('a', 'parent-a'),
-+    message('a-child', 'a'),
-+    message('b', 'parent-b'),
-+    message('b-child', 'b'),
-+    message('newest-reply', 'a-child'),
-+  ];
-+  focusHistory(partial, 'newest-reply');
-+  const wrapper = ({ children }: { children: ReactNode }) =>
-+    createElement(Provider, { store }, children);
-+  const { result, rerender } = renderHook<
-+    ReturnType<typeof useThreadRows>,
-+    { messages: TMessage[]; fileMap?: Record<string, TFile> }
-+  >(
-+    ({ messages, fileMap }: { messages: TMessage[]; fileMap?: Record<string, TFile> }) =>
-+      useThreadRows(messages, 'chat', fileMap),
-+    { wrapper, initialProps: { messages: partial } },
-+  );
-+  expect(result.current?.map((row) => row.source.messageId)).toEqual([
-+    'a',
-+    'a-child',
-+    'newest-reply',
-+  ]);
-+  act(() => store.set(siblingIdxFamily('chat'), 0));
-+  expect(result.current?.at(-1)?.source.messageId).toBe('b-child');
-+  const full = [message('parent-a', 'none'), message('parent-b', 'none'), ...partial];
-+  focusHistory(full, 'b-child');
-+  rerender({ messages: full });
-+  expect(result.current?.map((row) => row.source.messageId)).toEqual(['parent-b', 'b', 'b-child']);
-+  act(() => store.set(siblingIdxFamily('chat'), 1));
-+  expect(result.current?.at(-1)?.source.messageId).toBe('newest-reply');
-+  rerender({ messages: full, fileMap: {} });
-+  expect(result.current?.at(-1)?.source.messageId).toBe('newest-reply');
-+});
-+
- import * as thread from '~/utils/thread';
- 
- function history(conversationId: string, count: number): TMessage[] {
 diff --git a/client/src/hooks/Messages/useHistoryPaging.ts b/client/src/hooks/Messages/useHistoryPaging.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..84edd0aa7875c4aac4d5adf749df0b0eb75abfbc
+index 0000000000000000000000000000000000000000..5d3f28926885ed83abd9be1b23f177a8f29602fa
 --- /dev/null
 +++ b/client/src/hooks/Messages/useHistoryPaging.ts
 @@ -0,0 +1,114 @@
 +import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 +import { useStore } from 'jotai';
 +import { dataService, QueryKeys } from 'librechat-data-provider';
++import { buildThreadIndex, resolveThreadRows } from '@librechat/chat';
 +import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 +import type { TMessage } from 'librechat-data-provider';
 +import type { RefObject } from 'react';
 +import type { HistoryWindow } from '~/data-provider/Messages/window';
 +import { siblingIdxFamily } from '~/components/Chat/Messages/Thread/state';
-+import { buildThreadIndex, resolveThreadRows } from '~/utils/thread';
 +import { prependHistory } from '~/data-provider/Messages/window';
 +
 +export default function useHistoryPaging(
@@ -3200,76 +3049,6 @@ index 0000000000000000000000000000000000000000..84edd0aa7875c4aac4d5adf749df0b0e
 +    isError: mutation.isError,
 +  };
 +}
-diff --git a/client/src/hooks/Messages/useThreadRows.ts b/client/src/hooks/Messages/useThreadRows.ts
-index e119aa7b533fd8516850ea7f2a60b87ff38788cc..527b014dbfdcb086f2750df323aac5b0126d2056 100644
---- a/client/src/hooks/Messages/useThreadRows.ts
-+++ b/client/src/hooks/Messages/useThreadRows.ts
-@@ -14,6 +14,7 @@ import {
-   siblingKey,
-   useSiblingIndexes,
- } from '~/components/Chat/Messages/Thread/state';
-+import { historyFocusIndexes } from '~/utils/history';
- 
- const EMPTY_KEYS: string[] = [];
- 
-@@ -46,6 +47,15 @@ export default function useThreadRows(
-     [index, rootSiblingKey],
-   );
-   const siblingIndexes = useSiblingIndexes(branchKeys);
-+  const previousIndexRef = useRef<{
-+    rootKey: string;
-+    index: ThreadIndex;
-+    messages: typeof messages;
-+  } | null>(null);
-+  const focus = useMemo(
-+    () => (messages ? historyFocusIndexes(messages, rootSiblingKey) : new Map<string, number>()),
-+    [messages, rootSiblingKey],
-+  );
- 
-   const previousRowsRef = useRef<{ rootKey: string; rows: ThreadRow[] } | null>(null);
-   const rows = useMemo(() => {
-@@ -57,22 +67,28 @@ export default function useThreadRows(
-     const next = resolveThreadRows(
-       index,
-       rootSiblingKey,
--      (key) => siblingIndexes[key] ?? 0,
-+      (key) =>
-+        (previousIndexRef.current?.messages !== messages ? focus.get(key) : undefined) ??
-+        siblingIndexes[key] ??
-+        0,
-       previous?.rootKey === rootSiblingKey ? previous.rows : null,
-     );
-     previousRowsRef.current = { rootKey: rootSiblingKey, rows: next };
-     return next;
--  }, [index, rootSiblingKey, siblingIndexes]);
-+  }, [index, rootSiblingKey, siblingIndexes, focus, messages]);
- 
--  const previousIndexRef = useRef<{ rootKey: string; index: ThreadIndex } | null>(null);
-   useEffect(() => {
-     if (!index) {
-       previousIndexRef.current = null;
-       return;
-     }
-     const previous = previousIndexRef.current;
--    previousIndexRef.current = { rootKey: rootSiblingKey, index };
-+    previousIndexRef.current = { rootKey: rootSiblingKey, index, messages };
-     const previousIndex = previous && previous.rootKey === rootSiblingKey ? previous.index : null;
-+    if (focus.size && previous?.messages !== messages) {
-+      for (const [key, value] of focus) jotaiStore.set(siblingIdxFamily(key), value);
-+      return;
-+    }
-     for (const key of changedParentKeys(previousIndex, index)) {
-       const atom = siblingIdxFamily(key === ROOT_KEY ? rootSiblingKey : key);
-       const nextIdx = reconcileSiblingIdx(
-@@ -84,7 +100,7 @@ export default function useThreadRows(
-         jotaiStore.set(atom, nextIdx);
-       }
-     }
--  }, [index, rootSiblingKey, jotaiStore]);
-+  }, [index, rootSiblingKey, jotaiStore, focus, messages]);
- 
-   return rows;
- }
 diff --git a/client/src/hooks/SSE/cache.ts b/client/src/hooks/SSE/cache.ts
 index d6fd920c72b170766b92c82d67b7e2db30af2fb6..049cc27703bddfbdcbdaf256eb1670afc4bf3cfb 100644
 --- a/client/src/hooks/SSE/cache.ts
@@ -3291,10 +3070,10 @@ index d6fd920c72b170766b92c82d67b7e2db30af2fb6..049cc27703bddfbdcbdaf256eb1670af
          queryClient.invalidateQueries({
            queryKey: [QueryKeys.conversation, conversationId],
 diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
-index 0a0714d143930539c8922683e1affa066c89a71c..e7fea5c0c706201d62fd17278f40c6fb23d7c87d 100644
+index b30400f4f72905b8f7c2ee12082b05881968d958..ebf1167088addee9a5aa92fefd489d7a8073a02a 100644
 --- a/client/src/locales/en/translation.json
 +++ b/client/src/locales/en/translation.json
-@@ -4,3 +4,7 @@
+@@ -5,3 +5,7 @@
 +  "com_ui_history_older": "Load older messages",
 +  "com_ui_history_loading": "Loading older messages…",
 +  "com_ui_history_retry": "Could not load older messages. Retry",
@@ -3332,18 +3111,18 @@ index 0000000000000000000000000000000000000000..b172eb697d9c794246a4564b2a14cb4b
 +  );
 +}
 diff --git a/client/src/routes/Root.tsx b/client/src/routes/Root.tsx
-index 6bb7687e132b7c2518a0b2732a0f813d71f80777..ce6485678c3f9c303bc7d81e17d8b37638075233 100644
+index 7b06af944202c8b0bf775bca56c71eb7f7fefd24..02b2fac66cf4b9e1a8ebdf03a87cf8bfa05d1fc2 100644
 --- a/client/src/routes/Root.tsx
 +++ b/client/src/routes/Root.tsx
-@@ -52,6 +52,7 @@ import ChatSettingsProvider from './ChatSettings';
- import { useHealthCheck } from '~/data-provider';
+@@ -53,6 +53,7 @@ import { useHealthCheck } from '~/data-provider';
  import Settings from '~/components/Nav/Settings';
  import { Banner } from '~/components/Banners';
+ import ChatRecord from './Record';
 +import History from './History';
  import store from '~/store';
  
  /** Isolates the unseen-reply subscription so its updates re-render only this node, not `Root`. */
-@@ -224,7 +225,9 @@ function RootLayout() {
+@@ -225,7 +226,9 @@ function RootLayout() {
                          ready={isConfigReady && configError == null}
                          userId={user?.id}
                        >
@@ -3354,72 +3133,19 @@ index 6bb7687e132b7c2518a0b2732a0f813d71f80777..ce6485678c3f9c303bc7d81e17d8b376
                        </MCPAppsPolicyProvider>
                      </div>
                      {/* Without the strip the scrim exists only for the travel:
-diff --git a/client/src/utils/history.ts b/client/src/utils/history.ts
-new file mode 100644
-index 0000000000000000000000000000000000000000..be4a0b86acc23bfb7d96b36383484ace2ccf8a09
---- /dev/null
-+++ b/client/src/utils/history.ts
-@@ -0,0 +1,47 @@
-+import type { TMessage } from 'librechat-data-provider';
-+import { buildThreadIndex, ROOT_KEY } from './thread';
-+
-+const focusedHistories = new WeakMap<TMessage[], string>();
-+const focusedSiblings = new WeakMap<TMessage[], number>();
-+
-+/** One-commit hint when a page changes the roots of a partial tree. User selections then own it. */
-+export function focusHistory(messages: TMessage[], messageId?: string): void {
-+  if (messageId) focusedHistories.set(messages, messageId);
-+}
-+
-+export function historyFocusIndexes(messages: TMessage[], rootKey: string): Map<string, number> {
-+  const result = new Map<string, number>();
-+  let id = focusedHistories.get(messages);
-+  if (!id) return result;
-+  const index = buildThreadIndex(messages);
-+  if (!index.messages.has(id)) return result;
-+  const visited = new Set<string>();
-+  while (id && !visited.has(id)) {
-+    visited.add(id);
-+    const parent = index.messages.get(id)?.parentMessageId;
-+    const key = parent && index.messages.has(parent) && parent !== id ? parent : ROOT_KEY;
-+    const siblings = index.children.get(key) ?? [];
-+    result.set(key === ROOT_KEY ? rootKey : key, siblings.length - siblings.indexOf(id) - 1);
-+    id = key || undefined;
-+  }
-+  return result;
-+}
-+
-+/** Supplies the same one-commit hint to the recursive fallback renderer. */
-+export function focusHistoryTree(messages: TMessage[] | null, tree: TMessage[] | null): void {
-+  if (!messages || !tree || !focusedHistories.has(messages)) return;
-+  const indexes = historyFocusIndexes(messages, ROOT_KEY);
-+  let siblings = tree;
-+  let key = ROOT_KEY;
-+  while (siblings.length) {
-+    const selected = indexes.get(key);
-+    if (selected == null) break;
-+    focusedSiblings.set(siblings, selected);
-+    const node = siblings[siblings.length - selected - 1];
-+    key = node.messageId;
-+    siblings = node.children ?? [];
-+  }
-+}
-+
-+export const historySiblingFocus = (tree?: TMessage[] | null): number | undefined =>
-+  tree ? focusedSiblings.get(tree) : undefined;
 diff --git a/client/test/turnServices.ts b/client/test/turnServices.ts
-index 93da3f75de182f56bf48ec2055e45b49d2447b82..119530d9a41271f7892f5cd1b7b6584701beb273 100644
+index 13e1be5253b048470ef7c21ab7cc4b76338088d8..9ecfe25c7eea23582ad7870865e53cd7c67f6fc9 100644
 --- a/client/test/turnServices.ts
 +++ b/client/test/turnServices.ts
-@@ -11,6 +11,8 @@ export const createTestTurnServices = (): TurnServices => ({
+@@ -9,6 +9,8 @@ export const createTestTurnServices = (): TurnServices => ({
+   getEphemeralAgent: () => null,
    getUserKey: () => undefined,
    getRouteProjectId: () => null,
-   isHistoryRevalidating: () => false,
 +  cancelMessagesQuery: jest.fn(),
-+  loadRegenerateParent: async () => undefined,
-   resolveCode: () => null,
-   resolveReasoning: () => ({ reasoningOverride: undefined, retryable: false }),
-   openNewChat: jest.fn(),
++  loadRegenerateParent: jest.fn(async () => undefined),
+   readCodeInputs: () => ({
+     workspace: {
+       conversation: null,
 diff --git a/docs/history-window-patch.md b/docs/history-window-patch.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..95be6cfe8008dbbecdff8db3fdb34a38f87e0cb8
@@ -3864,31 +3590,87 @@ index 0000000000000000000000000000000000000000..1d7e76c4600a91cb1119c0894ab85094
 +  }
 +});
 diff --git a/e2e/specs/mock/export.spec.ts b/e2e/specs/mock/export.spec.ts
-index 10fe1f778a4762cc5e920d5ad36d1d9c92dbb1b0..0b26c4d4e1adc3973f4c3b680ca6339ede5ff8f5 100644
+index 26c32ce212a7db0ef3f346ca7d9fc0dbe33e9579..1f2e5ac40c2b56edb2a7003df119ad42a6a9b43b 100644
 --- a/e2e/specs/mock/export.spec.ts
 +++ b/e2e/specs/mock/export.spec.ts
-@@ -177,15 +177,11 @@ test.describe('conversation export', () => {
+@@ -30,8 +30,8 @@ const MIN_PIXEL_RATIO = 0.5;
+ 
+ const OVERSIZED_TITLE = 'Oversized export fixture';
+ const OVERSIZED_PARAGRAPH = 'Oversized export fixture paragraph';
+-/** Keep 4,000 unclipped paragraphs in a shallow thread. */
+-const OVERSIZED_MESSAGES = 8;
++/** Keep 4,000 unclipped paragraphs before the initial 24-message window. */
++const OVERSIZED_MESSAGES = 32;
+ const OVERSIZED_PARAGRAPHS_PER_MESSAGE = 1000;
+ 
+ const userEmail = getE2EUser().email;
+@@ -93,11 +93,12 @@ function buildOversizedMessages(): SeedMessage[] {
+   let parentMessageId = NO_PARENT;
+   for (let i = 0; i < OVERSIZED_MESSAGES; i++) {
+     const messageId = randomUUID();
++    const reply = i < 8 ? text : 'Export fixture reply';
+     messages.push({
+       messageId,
+       parentMessageId,
+       /** Long user messages collapse by default; keep the oversized content in replies. */
+-      text: i % 2 === 0 ? 'Export fixture prompt' : text,
++      text: i % 2 === 0 ? 'Export fixture prompt' : reply,
+       isCreatedByUser: i % 2 === 0,
+       sender: i % 2 === 0 ? 'User' : 'Assistant',
+     });
+@@ -178,37 +179,24 @@ test.describe('conversation export', () => {
+     await seedMessages(userEmail, conversationId, buildOversizedMessages());
+ 
+     await page.goto(`/c/${conversationId}`, { timeout: 30000 });
+-    await expect(messagesView(page).getByText(`${OVERSIZED_PARAGRAPH} 0.`).first()).toBeVisible({
++    await expect(
++      messagesView(page).getByText('Export fixture reply', { exact: true }).first(),
++    ).toBeVisible({
+       timeout: 60000,
      });
  
      const target = page.getByTestId('screenshot-target');
--    /** Long threads mount progressively from the scroll anchor, so the full
--     *  area lands a few frames after first paint — poll until it converges.
--     *  (The capture path itself force-completes the mount; this precondition
--     *  samples the DOM directly and must wait on its own.) */
+-    await expect(target.getByTestId('message-body')).toHaveCount(OVERSIZED_MESSAGES, {
+-      timeout: 60_000,
+-    });
+-    /** Both area and edge limits can make the fixture too large to capture. */
 -    await expect
--      .poll(() => target.evaluate((node) => node.scrollWidth * node.scrollHeight), {
--        timeout: 60_000,
--      })
--      .toBeGreaterThan(ABORT_CSS_AREA * 1.15);
-+    /** The initial window fits. Export must fetch every row before applying the guard. */
-+    await expect(target.locator('.message-render')).toHaveCount(24);
-+    expect(await target.evaluate((node) => node.scrollWidth * node.scrollHeight)).toBeLessThan(
-+      ABORT_CSS_AREA,
-+    );
+-      .poll(
+-        () =>
+-          page.evaluate(
+-            ({ maxArea, maxEdge }) => {
+-              const target = document.querySelector<HTMLElement>(
+-                '[data-testid="screenshot-target"]',
+-              );
+-              if (!target) {
+-                return Number.POSITIVE_INFINITY;
+-              }
+-              const { scrollWidth: width, scrollHeight: height } = target;
+-              return Math.min(
+-                Math.sqrt(maxArea / (width * height)),
+-                maxEdge / Math.max(width, height),
+-              );
+-            },
+-            { maxArea: MAX_CAPTURE_AREA, maxEdge: MAX_CANVAS_EDGE },
+-          ),
+-        { timeout: 60_000 },
+-      )
+-      .toBeLessThan(MIN_PIXEL_RATIO);
++    const captureRatio = () =>
++      target.evaluate(
++        (node, { maxArea, maxEdge }) => {
++          const { scrollWidth: width, scrollHeight: height } = node;
++          return Math.min(Math.sqrt(maxArea / (width * height)), maxEdge / Math.max(width, height));
++        },
++        { maxArea: MAX_CAPTURE_AREA, maxEdge: MAX_CANVAS_EDGE },
++      );
++    /** The initial window fits. Export fetches every row before applying the guard. */
++    await expect(target.getByTestId('message-body')).toHaveCount(24);
++    expect(await captureRatio()).toBeGreaterThanOrEqual(MIN_PIXEL_RATIO);
  
      const dialog = await openExportModal(page);
      await selectExportType(page, dialog, 'screenshot (.png)');
-@@ -194,7 +190,18 @@ test.describe('conversation export', () => {
+@@ -217,7 +205,16 @@ test.describe('conversation export', () => {
      page.on('download', () => {
        downloadFired = true;
      });
@@ -3900,15 +3682,13 @@ index 10fe1f778a4762cc5e920d5ad36d1d9c92dbb1b0..0b26c4d4e1adc3973f4c3b680ca6339e
 +    const exported = await fullHistory;
 +    expect(exported.ok()).toBe(true);
 +    expect(await exported.json()).toHaveLength(OVERSIZED_MESSAGES);
-+    await expect(target.locator('.message-render')).toHaveCount(OVERSIZED_MESSAGES);
-+    expect(await target.evaluate((node) => node.scrollWidth * node.scrollHeight)).toBeGreaterThan(
-+      ABORT_CSS_AREA * 1.15,
-+    );
++    await expect(target.getByTestId('message-body')).toHaveCount(OVERSIZED_MESSAGES);
++    await expect.poll(captureRatio, { timeout: 60_000 }).toBeLessThan(MIN_PIXEL_RATIO);
  
      await expect(page.getByText('too large to export as a screenshot').first()).toBeVisible({
        timeout: 15000,
 diff --git a/e2e/specs/mock/helpers.ts b/e2e/specs/mock/helpers.ts
-index 397c02aefd2095dcca468b42b3152b94660b2043..331f4e7c2099827269336dbab2f0226359ef05fe 100644
+index 7bf3f98749a06252f3d778cb0d77521ae52f936d..1f770aa0323cecc04ec5029dd0fe61feb4fc7b46 100644
 --- a/e2e/specs/mock/helpers.ts
 +++ b/e2e/specs/mock/helpers.ts
 @@ -1,6 +1,6 @@
@@ -3919,7 +3699,7 @@ index 397c02aefd2095dcca468b42b3152b94660b2043..331f4e7c2099827269336dbab2f02263
  import type { Page, Response } from '@playwright/test';
  
  /** Substring of the reply emitted by the mock LLM server. */
-@@ -117,6 +117,31 @@ export async function enableFileSearch(page: Page) {
+@@ -120,6 +120,31 @@ export async function enableFileSearch(page: Page) {
  /** The conversation messages container. */
  export const messagesView = (page: Page) => page.getByTestId('messages-view');
  
@@ -3952,21 +3732,25 @@ index 397c02aefd2095dcca468b42b3152b94660b2043..331f4e7c2099827269336dbab2f02263
  export const replyPrompt = (label: string) => `E2E_REPLY:${label}`;
  export const replyText = (label: string) => `E2E reply ${label}`;
 diff --git a/e2e/specs/mock/scenarios/long-conversation-mount.spec.ts b/e2e/specs/mock/scenarios/long-conversation-mount.spec.ts
-index 2a758b99f432be57eb5b267edd62a1b53d1fd085..f13e40608f584b97ff08db1fc3f8dd137d959c68 100644
+index 33a31d6a395df9b8c0666695a1e0f2e1775af304..63a4c2416dc8cde63c3d0769bd819dfd084ec088 100644
 --- a/e2e/specs/mock/scenarios/long-conversation-mount.spec.ts
 +++ b/e2e/specs/mock/scenarios/long-conversation-mount.spec.ts
-@@ -7,8 +7,9 @@ import {
-   seedMessages,
- } from '../db';
+@@ -10,12 +10,13 @@ import {
+   replyText,
+   replyPrompt,
+   sendMessage,
++  loadAllHistory,
+   MOCK_ENDPOINTS,
+   selectMockEndpoint,
+ } from '../helpers';
  import { getE2EUser } from '../../../setup/user';
-+import { loadAllHistory } from '../helpers';
  
 -/** Past the row count at which the thread mounts progressively instead of all at once. */
 +/** Spans multiple history windows and progressive row mounts. */
  const TURNS = 60;
  
  async function seedLongChat(): Promise<string> {
-@@ -52,7 +53,12 @@ test.describe('long conversations', () => {
+@@ -59,7 +60,12 @@ test.describe('long conversations', () => {
    }) => {
      await page.goto(`/c/${conversationId}`);
  
@@ -3980,7 +3764,7 @@ index 2a758b99f432be57eb5b267edd62a1b53d1fd085..f13e40608f584b97ff08db1fc3f8dd13
      await expect(
        thread.getByText('Turn 1 of the long conversation', { exact: true }),
      ).toBeVisible();
-@@ -68,8 +74,8 @@ test.describe('long conversations', () => {
+@@ -75,8 +81,8 @@ test.describe('long conversations', () => {
    }) => {
      await page.goto(`/c/${conversationId}`);
  
@@ -3991,6 +3775,38 @@ index 2a758b99f432be57eb5b267edd62a1b53d1fd085..f13e40608f584b97ff08db1fc3f8dd13
      const latest = thread.getByText(`Turn ${TURNS} of the long conversation`, { exact: true });
      await thread
        .getByText('Turn 1 of the long conversation', { exact: true })
+@@ -100,7 +106,7 @@ test.describe('long conversations', () => {
+     await page.goto(`/c/${conversationId}`);
+ 
+     const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
+-    await expect(thread.locator('.message-render')).toHaveCount(TURNS);
++    await expect(thread.locator('.message-render')).toHaveCount(24);
+ 
+     await expect(
+       thread.getByText(`Turn ${TURNS} of the long conversation`, { exact: true }),
+@@ -116,7 +122,7 @@ test.describe('long conversations', () => {
+     await page.goto(`/c/${conversationId}`);
+ 
+     const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
+-    await expect(thread.locator('.message-render')).toHaveCount(TURNS);
++    await loadAllHistory(page, conversationId, TURNS);
+     await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
+     const first = thread.getByText('Turn 1 of the long conversation', { exact: true });
+     await first.scrollIntoViewIfNeeded();
+@@ -140,10 +146,12 @@ test.describe('long conversations', () => {
+       await page.goto(`/c/${conversationId}`);
+ 
+       const thread = page.locator(`[data-conversation-id="${conversationId}"]`);
+-      await expect(thread.locator('.message-render')).toHaveCount(TURNS);
++      await expect(thread.locator('.message-render')).toHaveCount(24);
+       const first = thread.getByText('Turn 1 of the long conversation', { exact: true });
+       const latest = thread.getByText(`Turn ${TURNS} of the long conversation`, { exact: true });
+       await expect(latest).toBeInViewport();
++      await loadAllHistory(page, conversationId, TURNS);
++      await latest.scrollIntoViewIfNeeded();
+ 
+       const rail = page.getByRole('navigation', { name: 'Message navigation' });
+       await expect(rail.getByRole('button', { name: 'Navigate to next message' })).toBeDisabled();
 diff --git a/e2e/specs/mock/scenarios/mobile-drawer-large-chat.spec.ts b/e2e/specs/mock/scenarios/mobile-drawer-large-chat.spec.ts
 index c0fbe7394e28592b91910685f026cecdbb751840..7e9d5c69f377cc7fcc84d357e0479896ee97e2cd 100644
 --- a/e2e/specs/mock/scenarios/mobile-drawer-large-chat.spec.ts
@@ -4047,10 +3863,10 @@ index b177f7c89845f7cf0636007046467377c165140e..2fdf9aa999acb6c7aa8e242f70be4201
    const stamp = await methods.stampConvoLastResponse(userId, conversationId, hidden);
    let seenRequests = 0;
 diff --git a/librechat.example.yaml b/librechat.example.yaml
-index df1975dd1139c2c13196761aa86c5c26bedc70ef..c3742f139e5a4de6a01e4ae59b20ff8326d6d2a8 100644
+index 8054ad41b9d475f43979f991c631a790f31710fc..c5d06695c1def24ed548afb6d5d3ea5837bb6ba8 100644
 --- a/librechat.example.yaml
 +++ b/librechat.example.yaml
-@@ -225,6 +225,9 @@ interface:
+@@ -230,6 +230,9 @@ interface:
    # and how many of the most recently left conversations keep that grace (default: 1). Older ones are refetched.
    # historyCacheTtlMs: 60000
    # historyCacheRecent: 1
@@ -4383,15 +4199,13 @@ index 2793738989895779b08569a80ca17170c87d9872..465f393019242d930a2cf6c770ffa6ed
 +export * from './history';
  export * from './page';
 diff --git a/packages/chat/src/__fixtures__/messagesHost.ts b/packages/chat/src/__fixtures__/messagesHost.ts
-index 7918fe485c802e6b39ce887868c31b5c4c6553f4..6dab16395ed3545072ae2936d144168b6a22eca5 100644
+index 26b8fbda3f8ec0b820888a6214f9c30bd325abdb..fd320825acb6a8cd0bd73c4f065d0c871bf54b04 100644
 --- a/packages/chat/src/__fixtures__/messagesHost.ts
 +++ b/packages/chat/src/__fixtures__/messagesHost.ts
-@@ -22,6 +22,15 @@ export function createMessagesHost(overrides: Partial<MessagesHost> = {}): Messa
-       handleSmoothToRef: () => undefined,
-       debouncedHandleScroll: () => undefined,
-       handleNearBottomChange: () => undefined,
-+      detachFromBottom: () => undefined,
-+    }),
+@@ -15,6 +15,14 @@ export function createMessagesHost(overrides: Partial<MessagesHost> = {}): Messa
+       setRememberOption: () => undefined,
+     }),
+     useForkConversation: () => null,
 +    useHistory: () => ({
 +      hasOlder: false,
 +      isWindowed: false,
@@ -4399,11 +4213,12 @@ index 7918fe485c802e6b39ce887868c31b5c4c6553f4..6dab16395ed3545072ae2936d144168b
 +      isError: false,
 +      load: () => undefined,
 +      onScroll: () => undefined,
-     }),
-     useScreenshotTarget: () => undefined,
-     useAutoScroll: () => false,
++    }),
+     useMessageCopy: () => ({ copyToClipboard: () => undefined, canCopy: false }),
+     useGetMessages: () => () => undefined,
+     useHasPendingTurn: () => false,
 diff --git a/packages/chat/src/components/messages/MessagesView.tsx b/packages/chat/src/components/messages/MessagesView.tsx
-index 1440efce8fe91d01253b66d41fc7493f3053fc4f..5518900277f307be4f24e628798b3a40c9625a59 100644
+index b63057e9cf96c7781300492b0525a563075b4df3..fe0daec3f7eea18e42c27a34c89b58861e69f40c 100644
 --- a/packages/chat/src/components/messages/MessagesView.tsx
 +++ b/packages/chat/src/components/messages/MessagesView.tsx
 @@ -1,6 +1,6 @@
@@ -4411,44 +4226,18 @@ index 1440efce8fe91d01253b66d41fc7493f3053fc4f..5518900277f307be4f24e628798b3a40
  import { Constants } from 'librechat-data-provider';
 -import { cn, useLocalize } from '@librechat/client';
 +import { cn, Button, useLocalize } from '@librechat/client';
- import type {
-   Dispatch,
-   RefObject,
-@@ -10,6 +10,7 @@ import type {
-   SetStateAction,
- } from 'react';
+ import type { RefObject, ReactNode, ReactElement } from 'react';
  import type { TMessage } from 'librechat-data-provider';
-+import type { ScrollNavigation } from '../../react/messages/host';
- import {
-   RowMountProvider,
-   useProgressiveRowMount,
-@@ -41,6 +42,7 @@ export type MessagesScrollButtonProps = {
- };
- 
- export type MessagesViewProps = {
-+  scrollNavigation?: ScrollNavigation;
-   messagesTree?: TMessage[] | null;
-   messages?: TMessage[] | null;
-   /** The viewer's preference for the scroll-to-bottom control. */
-@@ -78,6 +80,7 @@ export type MessagesViewProps = {
- export default function MessagesView({
-   messagesTree,
-   messages,
-+  scrollNavigation,
-   showScrollButton,
-   maximizeChatSpace,
-   renderThread,
-@@ -100,7 +103,8 @@ export default function MessagesView({
+ import type { ScrollNavigation } from '../../react/messages/useMessageScrolling';
+@@ -110,6 +110,7 @@ export default function MessagesView({
      handleSmoothToRef,
      debouncedHandleScroll,
      handleNearBottomChange,
--  } = host.useScrolling(messagesTree);
 +    detachFromBottom,
-+  } = host.useScrolling(messagesTree, scrollNavigation);
- 
-   useScrollbarGutter(scrollableRef);
- 
-@@ -111,6 +115,14 @@ export default function MessagesView({
+   } = useMessageScrolling({
+     messagesTree,
+     conversationId,
+@@ -127,6 +128,14 @@ export default function MessagesView({
     *  unwindowed, then narrow it after the fact, visibly unmounting rows the user is already
     *  reading. An empty tree has no message to name its owner, so the route's key stands in. */
    const treeConversationId = messagesTree?.[0]?.conversationId ?? (messagesKey || conversationId);
@@ -4460,19 +4249,10 @@ index 1440efce8fe91d01253b66d41fc7493f3053fc4f..5518900277f307be4f24e628798b3a40
 +    detachFromBottom,
 +    targetMessageId: scrollNavigation?.targetMessageId,
 +  });
-   const autoScroll = host.useAutoScroll();
  
    /** Direct measurement for the one trigger the observer cannot serve: after a messages
-@@ -161,7 +173,7 @@ export default function MessagesView({
-   );
- 
-   const mountWindow = useProgressiveRowMount({
--    tailDepth: latestMessageDepth,
-+    tailDepth: scrollNavigation?.targetMessageId ? undefined : latestMessageDepth,
-     anchorBottom: autoScroll || isSubmitting,
-     isSubmitting,
-     conversationId: treeConversationId,
-@@ -179,6 +191,13 @@ export default function MessagesView({
+    *  revalidation commits, the end marker may sit where no threshold was crossed, so no
+@@ -195,6 +204,13 @@ export default function MessagesView({
       height. Composer panels that do float (an answer popover, a tool-approval review) are
       handled by the scroll control through `composerOverlayCountFamily`. */
    const overlayConversationId = conversationId ?? Constants.NEW_CONVO;
@@ -4486,7 +4266,7 @@ index 1440efce8fe91d01253b66d41fc7493f3053fc4f..5518900277f307be4f24e628798b3a40
    return (
      <div className="relative flex-1 overflow-hidden overflow-y-auto">
        <div className="relative h-full">
-@@ -187,12 +206,27 @@ export default function MessagesView({
+@@ -203,12 +219,27 @@ export default function MessagesView({
          <div
            className={cn(
              'h-full w-full scrollbar-gutter-stable overflow-y-auto',
@@ -4516,18 +4296,121 @@ index 1440efce8fe91d01253b66d41fc7493f3053fc4f..5518900277f307be4f24e628798b3a40
              {messagesTree === null || messagesTree?.length === 0 ? (
                <div
                  className={cn(
-diff --git a/packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx b/packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx
-index 298d02ef5a597ab46cb0ce281b12a05d75583daf..7d938e0e11537c6af7e3e92a525db390a231b70b 100644
---- a/packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx
-+++ b/packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx
-@@ -41,6 +41,7 @@ function createHost(overrides: Partial<MessagesHost> = {}) {
-         handleSmoothToRef: jest.fn(),
-         debouncedHandleScroll: jest.fn(),
-         handleNearBottomChange: jest.fn(),
-+        detachFromBottom: jest.fn(),
-       };
-       return scrolling.current;
-     },
+diff --git a/packages/chat/src/components/messages/thread/MultiMessage.tsx b/packages/chat/src/components/messages/thread/MultiMessage.tsx
+index 7756dd77a4e059cef403859ee6d44fdad2cb010e..a518496f594299ccf7a15256c570356624826c5c 100644
+--- a/packages/chat/src/components/messages/thread/MultiMessage.tsx
++++ b/packages/chat/src/components/messages/thread/MultiMessage.tsx
+@@ -7,6 +7,7 @@ import { useRowMountWindow } from '../../../react/messages/useProgressiveRowMoun
+ import { siblingIdxFamily, siblingKey } from '../../../react/thread';
+ import { activityParentMessageIds } from '../../../core/activity';
+ import { useMessagesHost } from '../../../react/messages/host';
++import { historySiblingFocus } from '../../../core/history';
+ import { hasParallelLanes } from '../../../core/lanes';
+ import ThreadMessage from './Message';
+ 
+@@ -45,6 +46,9 @@ function MultiMessage({
+   const displayedRef = useRef<{ newestId?: string; viewedId?: string }>({});
+   const treeRef = useRef<typeof messagesTree | null>(null);
+   const parentRef = useRef<string | null | undefined | typeof UNBOUND_PARENT>(UNBOUND_PARENT);
++  const pageFocus =
++    treeRef.current !== messagesTree ? historySiblingFocus(messagesTree) : undefined;
++  const effectiveSiblingIdx = pageFocus ?? siblingIdx;
+ 
+   /**
+    * Sibling selection is positional (reversed index), so a change to the
+@@ -81,6 +85,14 @@ function MultiMessage({
+     }
+     const newestId = messagesTree[length - 1]?.messageId;
+     const currentIdx = siblingIdxRef.current;
++    if (treeChanged && pageFocus != null) {
++      setSiblingIdx(pageFocus);
++      displayedRef.current = {
++        newestId,
++        viewedId: messagesTree[length - pageFocus - 1]?.messageId,
++      };
++      return;
++    }
+ 
+     if (parentChanged) {
+       /** Recursive instances are deliberately unkeyed and get REUSED across
+@@ -138,13 +150,13 @@ function MultiMessage({
+       newestId,
+       viewedId: messagesTree[length - nextSiblingIdx - 1]?.messageId,
+     };
+-  }, [messageId, messagesTree, siblingIdx, setSiblingIdx]);
++  }, [messageId, messagesTree, siblingIdx, setSiblingIdx, pageFocus]);
+ 
+   if (!(messagesTree && messagesTree.length)) {
+     return null;
+   }
+ 
+-  const currentSiblingIdx = messagesTree.length - siblingIdx - 1;
++  const currentSiblingIdx = messagesTree.length - effectiveSiblingIdx - 1;
+   const message = messagesTree[currentSiblingIdx] as TMessage | undefined;
+ 
+   if (!message) {
+diff --git a/packages/chat/src/core/history.ts b/packages/chat/src/core/history.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..23315d4178497c2ab482a021ce2a1ed0e515c97d
+--- /dev/null
++++ b/packages/chat/src/core/history.ts
+@@ -0,0 +1,47 @@
++import type { TMessage } from 'librechat-data-provider';
++import { buildThreadIndex, ROOT_KEY } from './thread';
++
++const focusedHistories = new WeakMap<TMessage[], string>();
++const focusedSiblings = new WeakMap<TMessage[], number>();
++
++/** One-commit hint when a page changes the roots of a partial tree. User selections then own it. */
++export function focusHistory(messages: TMessage[], messageId?: string): void {
++  if (messageId) focusedHistories.set(messages, messageId);
++}
++
++export function historyFocusIndexes(messages: TMessage[], rootKey: string): Map<string, number> {
++  const result = new Map<string, number>();
++  let id = focusedHistories.get(messages);
++  if (!id) return result;
++  const index = buildThreadIndex(messages);
++  if (!index.messages.has(id)) return result;
++  const visited = new Set<string>();
++  while (id && !visited.has(id)) {
++    visited.add(id);
++    const parent: TMessage['parentMessageId'] | undefined = index.messages.get(id)?.parentMessageId;
++    const key: string = parent && index.messages.has(parent) && parent !== id ? parent : ROOT_KEY;
++    const siblings = index.children.get(key) ?? [];
++    result.set(key === ROOT_KEY ? rootKey : key, siblings.length - siblings.indexOf(id) - 1);
++    id = key || undefined;
++  }
++  return result;
++}
++
++/** Supplies the same one-commit hint to the recursive fallback renderer. */
++export function focusHistoryTree(messages: TMessage[] | null, tree: TMessage[] | null): void {
++  if (!messages || !tree || !focusedHistories.has(messages)) return;
++  const indexes = historyFocusIndexes(messages, ROOT_KEY);
++  let siblings = tree;
++  let key = ROOT_KEY;
++  while (siblings.length) {
++    const selected = indexes.get(key);
++    if (selected == null) break;
++    focusedSiblings.set(siblings, selected);
++    const node = siblings[siblings.length - selected - 1];
++    key = node.messageId;
++    siblings = node.children ?? [];
++  }
++}
++
++export const historySiblingFocus = (tree?: TMessage[] | null): number | undefined =>
++  tree ? focusedSiblings.get(tree) : undefined;
+diff --git a/packages/chat/src/core/index.ts b/packages/chat/src/core/index.ts
+index 06a6dd350dc2192f5d2479de4afc6d1cec5155b6..d05b5431c7e47f92915fb2b91ec6baf2bdbb2421 100644
+--- a/packages/chat/src/core/index.ts
++++ b/packages/chat/src/core/index.ts
+@@ -31,3 +31,4 @@ export * from './thread';
+ export * from './lanes';
+ export * from './activity';
+ export * from './code';
++export * from './history';
 diff --git a/packages/chat/src/core/parts/rerunParent.ts b/packages/chat/src/core/parts/rerunParent.ts
 index 9626a92625f7d6f0015df7f6e417563875ad80ca..17908b631767865fdde38ad5c39368cacababf3e 100644
 --- a/packages/chat/src/core/parts/rerunParent.ts
@@ -4620,52 +4503,51 @@ index 846f608051c456c16b3d2db95da8939e80fac2f8..8bd403ad46977ea19bc81845b0dccaeb
 +    submitParent(parentMessage);
    };
 diff --git a/packages/chat/src/react.ts b/packages/chat/src/react.ts
-index 2d0d51e367a1d22d1e70d694be5e13ab9571e184..a2f400cb7ec533622856af4d4a0f54a5a6f3b071 100644
+index 1687295ae723e423dfcad1bf65053f712ac9d0ed..3d4292ab5e4787073997d05cc0e80356ccb13617 100644
 --- a/packages/chat/src/react.ts
 +++ b/packages/chat/src/react.ts
-@@ -134,6 +134,8 @@ export type {
+@@ -155,6 +155,7 @@ export type {
    ForkPreferences,
    ForkConversation,
-   MessagesScrolling,
+   ActivitySlotProps,
 +  MessagesHistory,
-+  ScrollNavigation,
    ReportNearBottom,
- } from './react/messages/host';
- export {
+   SeenReply,
+   ReplyProofSource,
 diff --git a/packages/chat/src/react/chat/__fixtures__/services.ts b/packages/chat/src/react/chat/__fixtures__/services.ts
-index bdd94cc09d730648168ffe11c607017a08cf2f5f..a564fe181ece4566ff9587890125e02c68e49130 100644
+index 281af3c366a50df99d9b63b691c9511b30321599..1f975115d1b382a8fcb2aa6de51434153e404a45 100644
 --- a/packages/chat/src/react/chat/__fixtures__/services.ts
 +++ b/packages/chat/src/react/chat/__fixtures__/services.ts
-@@ -10,6 +10,8 @@ export const createTurnServices = (overrides: Partial<TurnServices> = {}): TurnS
+@@ -28,6 +28,8 @@ export const createTurnServices = (overrides: Partial<TurnServices> = {}): TurnS
+   getEphemeralAgent: () => null,
    getUserKey: () => undefined,
    getRouteProjectId: () => null,
-   isHistoryRevalidating: () => false,
 +  cancelMessagesQuery: jest.fn(),
 +  loadRegenerateParent: jest.fn(async () => undefined),
-   resolveCode: () => ({
-     code: { approvalMode: undefined, environmentMode: undefined, workspaces: undefined },
-     apply: (conversation) => conversation,
+   readCodeInputs: () => createTurnCodeInputs(),
+   openNewChat: jest.fn(),
+   releaseFiles: jest.fn(),
 diff --git a/packages/chat/src/react/chat/host.tsx b/packages/chat/src/react/chat/host.tsx
-index 52234780ab247d4b6864867e73852615b09969ca..e47e349bcdaee5beeebf4f2fa84a29a57dfc4116 100644
+index 05023c258dc2e34290f8ae5bdbceea831edfcb89..799fd45ff822412e0e4994616b9261a11b9b9df6 100644
 --- a/packages/chat/src/react/chat/host.tsx
 +++ b/packages/chat/src/react/chat/host.tsx
-@@ -92,6 +92,11 @@ export type TurnServices = {
-   getRouteProjectId: () => string | null;
-   /** Whether cached history is mid-refetch and old enough that a send could fork from it. */
-   isHistoryRevalidating: (conversationId: string | null) => boolean;
+@@ -86,6 +86,11 @@ export type TurnServices = {
+   getEphemeralAgent: (conversationId: string) => TEphemeralAgent | null;
+   /** The stored user key expiry of the pane's endpoint, sent with non-agent endpoints. */
+   getUserKey: () => string | undefined;
 +  /** Cancels history refetching without reverting newer optimistic cache writes. */
 +  cancelMessagesQuery: (conversationId: string) => void;
 +  /** Loads a regenerate parent outside the current history window. Handles fetch errors in the UI
 +   * and returns no parent after navigation away from the conversation. */
 +  loadRegenerateParent: (messageId: string) => Promise<TMessage | undefined>;
-   /** The send's code decision; `null` refuses the send. */
-   resolveCode: (conversation: TConversation | null) => TurnCodeDecision | null;
+   /** The project the route scopes a new chat to. */
+   getRouteProjectId: () => string | null;
    /**
 diff --git a/packages/chat/src/react/chat/turns.ts b/packages/chat/src/react/chat/turns.ts
-index 26688e490084e99fe2917e106c0f691e899c9145..0e3b3c28efe40c7fb7424205d6b205378c56e4ab 100644
+index d3ee7bdea44be0d8154927e541548d1d83638b2e..a75835d110d55cd43ff5cc344fa761b31ce81ed9 100644
 --- a/packages/chat/src/react/chat/turns.ts
 +++ b/packages/chat/src/react/chat/turns.ts
-@@ -196,6 +196,9 @@ export function useTurns(
+@@ -221,6 +221,9 @@ export function useTurns(
        return false;
      }
  
@@ -4675,31 +4557,98 @@ index 26688e490084e99fe2917e106c0f691e899c9145..0e3b3c28efe40c7fb7424205d6b20537
      setShowStopButton(false);
  
      const convoKey = conversationId ?? Constants.NEW_CONVO;
-@@ -332,5 +335,5 @@ export function useTurns(
+@@ -377,5 +380,5 @@ export function useTurns(
      });
    };
  
 -  return { ask, regenerate: createRegenerate(ask, getMessages) };
 +  return { ask, regenerate: createRegenerate(ask, getMessages, services.loadRegenerateParent) };
  }
+diff --git a/packages/chat/src/react/messages/__tests__/rows.spec.tsx b/packages/chat/src/react/messages/__tests__/rows.spec.tsx
+index 4b2df01bd517d6d8c404a3f1d2edef198230d12f..7d68771e24dca7d4de1d82f4803c75ca5fc6abd7 100644
+--- a/packages/chat/src/react/messages/__tests__/rows.spec.tsx
++++ b/packages/chat/src/react/messages/__tests__/rows.spec.tsx
+@@ -1,11 +1,14 @@
+ /**
+  * @jest-environment jsdom
+  */
+-import React from 'react';
++import React, { createElement } from 'react';
+ import { Provider, createStore } from 'jotai';
+-import { renderHook } from '@testing-library/react';
+-import type { TMessage } from 'librechat-data-provider';
++import { act, renderHook } from '@testing-library/react';
++import type { TMessage, TFile } from 'librechat-data-provider';
++import type { ReactNode } from 'react';
+ import { resolveThreadRows } from '../../../core/thread';
++import { focusHistory } from '../../../core/history';
++import { siblingIdxFamily } from '../../thread';
+ import useThreadRows from '../rows';
+ 
+ /** Wrap the real resolver so calls are recorded and rows still resolve. */
+@@ -81,3 +84,49 @@ describe('useThreadRows ownership', () => {
+     expect(resolve.mock.calls[resolve.mock.calls.length - 1][3]).toBeNull();
+   });
+ });
++
++const message = (id: string, parent: string): TMessage => ({
++  messageId: id,
++  parentMessageId: parent,
++  conversationId: 'chat',
++  sender: 'Assistant',
++  text: id,
++  isCreatedByUser: false,
++});
++
++test('renders the newest reply in a partial forest and preserves the chosen branch as parents arrive', () => {
++  const store = createStore();
++  const partial = [
++    message('a', 'parent-a'),
++    message('a-child', 'a'),
++    message('b', 'parent-b'),
++    message('b-child', 'b'),
++    message('newest-reply', 'a-child'),
++  ];
++  focusHistory(partial, 'newest-reply');
++  const wrapper = ({ children }: { children: ReactNode }) =>
++    createElement(Provider, { store }, children);
++  const { result, rerender } = renderHook<
++    ReturnType<typeof useThreadRows>,
++    { messages: TMessage[]; fileMap?: Record<string, TFile> }
++  >(
++    ({ messages, fileMap }: { messages: TMessage[]; fileMap?: Record<string, TFile> }) =>
++      useThreadRows(messages, 'chat', fileMap),
++    { wrapper, initialProps: { messages: partial } },
++  );
++  expect(result.current?.map((row) => row.source.messageId)).toEqual([
++    'a',
++    'a-child',
++    'newest-reply',
++  ]);
++  act(() => store.set(siblingIdxFamily('chat'), 0));
++  expect(result.current?.slice(-1)[0]?.source.messageId).toBe('b-child');
++  const full = [message('parent-a', 'none'), message('parent-b', 'none'), ...partial];
++  focusHistory(full, 'b-child');
++  rerender({ messages: full });
++  expect(result.current?.map((row) => row.source.messageId)).toEqual(['parent-b', 'b', 'b-child']);
++  act(() => store.set(siblingIdxFamily('chat'), 1));
++  expect(result.current?.slice(-1)[0]?.source.messageId).toBe('newest-reply');
++  rerender({ messages: full, fileMap: {} });
++  expect(result.current?.slice(-1)[0]?.source.messageId).toBe('newest-reply');
++});
 diff --git a/packages/chat/src/react/messages/host.tsx b/packages/chat/src/react/messages/host.tsx
-index 4f729e65ca1051026ab856750f25abc6343ade2b..fbb75af6e6d2628138fcb12d2ddae7ab5bafdb6f 100644
+index 0ff6257a9faea3f1d5d0272b0734871087ba28a8..23a5958c71b31a02e904113727bad7ddadef3bde 100644
 --- a/packages/chat/src/react/messages/host.tsx
 +++ b/packages/chat/src/react/messages/host.tsx
-@@ -1,6 +1,23 @@
- import { useRef, createContext, useContext } from 'react';
- import type { TMessage, TForkConvoRequest } from 'librechat-data-provider';
--import type { MouseEvent, ReactNode, RefObject } from 'react';
-+import type { UIEvent, MouseEvent, ReactNode, RefObject } from 'react';
-+
-+export type ScrollNavigation = {
-+  conversationKey: string | undefined;
-+  ready: boolean;
-+  /** Only an explicit send, never a restored resume submission. */
-+  explicitSendId?: string;
-+  targetMessageId?: string;
-+};
-+
+@@ -11,10 +11,19 @@ import type {
+   TUpdateFeedbackRequest,
+   TUpdateFeedbackResponse,
+ } from 'librechat-data-provider';
+-import type { Dispatch, ReactNode, MouseEvent, RefObject, SetStateAction } from 'react';
++import type { Dispatch, ReactNode, MouseEvent, RefObject, SetStateAction, UIEvent } from 'react';
+ import type { WakeupDisplay } from '../../core/parts/wakeup';
+ import type { TAskFunction } from '../../core';
+ 
 +export type MessagesHistory = {
 +  hasOlder: boolean;
 +  isWindowed: boolean;
@@ -4708,27 +4657,14 @@ index 4f729e65ca1051026ab856750f25abc6343ade2b..fbb75af6e6d2628138fcb12d2ddae7ab
 +  load: () => void;
 +  onScroll: (event: UIEvent<HTMLDivElement>) => void;
 +};
- 
- /** The scroll machinery of the message list, as the app's scrolling hook drives it. */
- export type MessagesScrolling = {
-@@ -18,6 +35,8 @@ export type MessagesScrolling = {
-   debouncedHandleScroll: () => void;
-   /** Reports whether the end marker is in view. */
-   handleNearBottomChange: (isNearBottom: boolean) => void;
-+  /** Releases bottom following before older history is inserted. */
-+  detachFromBottom: () => void;
- };
- 
- /** Reports, from the end marker's visibility, that the reader has seen the conversation. */
-@@ -70,7 +89,19 @@ export interface MessagesHost {
-    * @deprecated On arrival: a bridge to the app's `useMessageScrolling`, which reads the app's
-    * messages providers, until it moves into this package and the list runs it itself.
-    */
--  useScrolling: (messagesTree: TMessage[] | null | undefined) => MessagesScrolling;
-+  useScrolling: (
-+    messagesTree: TMessage[] | null | undefined,
-+    navigation?: ScrollNavigation,
-+  ) => MessagesScrolling;
++
+ /** What a row's text body renders from. */
+ export type MessageBodySlotProps = {
+   ask: TAskFunction;
+@@ -185,6 +194,15 @@ export type MessageAudioProps = {
+  * yet, by augmenting `@librechat/chat/react`.
+  */
+ export interface MessagesHost {
 +  /** Pages older history and selects the branch containing a navigation target. */
 +  useHistory: (options: {
 +    conversationId: string | undefined;
@@ -4738,21 +4674,13 @@ index 4f729e65ca1051026ab856750f25abc6343ade2b..fbb75af6e6d2628138fcb12d2ddae7ab
 +    detachFromBottom: () => void;
 +    targetMessageId?: string;
 +  }) => MessagesHistory;
-   /** The element the app's conversation screenshot captures; none outside a screenshot provider. */
-   useScreenshotTarget: () => RefObject<HTMLDivElement> | undefined;
-   /** Whether the viewer asked the thread to follow new content to the bottom. */
-@@ -108,6 +139,7 @@ function useInertScrolling(): MessagesScrolling {
-     handleSmoothToRef: () => undefined,
-     debouncedHandleScroll: () => undefined,
-     handleNearBottomChange: () => undefined,
-+    detachFromBottom: () => undefined,
-   };
- }
- 
-@@ -121,6 +153,14 @@ const fallbackHost: MessagesHost = {
-   useForkConversation: () => null,
- 
-   useScrolling: useInertScrolling,
+   /** The viewer's clock preference as `hour12`; `undefined` follows the locale's convention. */
+   useHour12: () => boolean | undefined;
+   /** Renders the files attached to a user message, above its text. */
+@@ -279,6 +297,14 @@ const noMessages = (): TMessage[] | undefined => undefined;
+ /** The host rows read outside any provider before an app registers one: locale clock, no slots,
+  *  no forking, no copying, no thread, no queued turn, no read-aloud, no read state. */
+ const fallbackHost: MessagesHost = {
 +  useHistory: () => ({
 +    hasOlder: false,
 +    isWindowed: false,
@@ -4761,20 +4689,87 @@ index 4f729e65ca1051026ab856750f25abc6343ade2b..fbb75af6e6d2628138fcb12d2ddae7ab
 +    load: noop,
 +    onScroll: noop,
 +  }),
-   useScreenshotTarget: () => useRef<HTMLDivElement>(null),
-   useAutoScroll: () => false,
-   useConversationSeen: () => ignoreNearBottom,
+   useHour12: () => undefined,
+   renderFiles: () => null,
+   useForkPreferences: () => fallbackForkPreferences,
+diff --git a/packages/chat/src/react/messages/rows.ts b/packages/chat/src/react/messages/rows.ts
+index 2634d6cfd323adcdf2c62ee4cf8cfd36c23e6c24..08b8047e0be152e78f3b66c600bb3db29255dbd8 100644
+--- a/packages/chat/src/react/messages/rows.ts
++++ b/packages/chat/src/react/messages/rows.ts
+@@ -10,6 +10,7 @@ import {
+   resolveThreadRows,
+ } from '../../core/thread';
+ import { siblingIdxFamily, siblingKey, useSiblingIndexes } from '../thread';
++import { historyFocusIndexes } from '../../core/history';
+ 
+ const EMPTY_KEYS: string[] = [];
+ 
+@@ -42,6 +43,15 @@ export default function useThreadRows(
+     [index, rootSiblingKey],
+   );
+   const siblingIndexes = useSiblingIndexes(branchKeys);
++  const previousIndexRef = useRef<{
++    rootKey: string;
++    index: ThreadIndex;
++    messages: typeof messages;
++  } | null>(null);
++  const focus = useMemo(
++    () => (messages ? historyFocusIndexes(messages, rootSiblingKey) : new Map<string, number>()),
++    [messages, rootSiblingKey],
++  );
+ 
+   const previousRowsRef = useRef<{ rootKey: string; rows: ThreadRow[] } | null>(null);
+   const rows = useMemo(() => {
+@@ -53,22 +63,28 @@ export default function useThreadRows(
+     const next = resolveThreadRows(
+       index,
+       rootSiblingKey,
+-      (key) => siblingIndexes[key] ?? 0,
++      (key) =>
++        (previousIndexRef.current?.messages !== messages ? focus.get(key) : undefined) ??
++        siblingIndexes[key] ??
++        0,
+       previous?.rootKey === rootSiblingKey ? previous.rows : null,
+     );
+     previousRowsRef.current = { rootKey: rootSiblingKey, rows: next };
+     return next;
+-  }, [index, rootSiblingKey, siblingIndexes]);
++  }, [index, rootSiblingKey, siblingIndexes, focus, messages]);
+ 
+-  const previousIndexRef = useRef<{ rootKey: string; index: ThreadIndex } | null>(null);
+   useEffect(() => {
+     if (!index) {
+       previousIndexRef.current = null;
+       return;
+     }
+     const previous = previousIndexRef.current;
+-    previousIndexRef.current = { rootKey: rootSiblingKey, index };
++    previousIndexRef.current = { rootKey: rootSiblingKey, index, messages };
+     const previousIndex = previous && previous.rootKey === rootSiblingKey ? previous.index : null;
++    if (focus.size && previous?.messages !== messages) {
++      for (const [key, value] of focus) jotaiStore.set(siblingIdxFamily(key), value);
++      return;
++    }
+     for (const key of changedParentKeys(previousIndex, index)) {
+       const atom = siblingIdxFamily(key === ROOT_KEY ? rootSiblingKey : key);
+       const nextIdx = reconcileSiblingIdx(
+@@ -80,7 +96,7 @@ export default function useThreadRows(
+         jotaiStore.set(atom, nextIdx);
+       }
+     }
+-  }, [index, rootSiblingKey, jotaiStore]);
++  }, [index, rootSiblingKey, jotaiStore, focus, messages]);
+ 
+   return rows;
+ }
 diff --git a/packages/chat/test/consumer.spec.tsx b/packages/chat/test/consumer.spec.tsx
-index 375b4816dd3fce1c4ce29c69ed00f4209310d199..441fe459e7a2c4a7c99cd51bb18be55d4169cd04 100644
+index 5c86e2d35d9e966764015ec1fe7abdf01fe18d29..df25ee5a673f7bcae970eeee17ae31dc85e20ae5 100644
 --- a/packages/chat/test/consumer.spec.tsx
 +++ b/packages/chat/test/consumer.spec.tsx
-@@ -200,8 +200,17 @@ const messagesHost: MessagesHost = {
-     handleSmoothToRef: () => undefined,
-     debouncedHandleScroll: () => undefined,
-     handleNearBottomChange: () => undefined,
-+    detachFromBottom: () => undefined,
+@@ -227,6 +227,14 @@ const messagesHost: MessagesHost = {
+     setRememberOption: () => undefined,
    }),
-   useScreenshotTarget: () => undefined,
+   useForkConversation: () => null,
 +  useHistory: () => ({
 +    hasOlder: false,
 +    isWindowed: false,
@@ -4783,11 +4778,11 @@ index 375b4816dd3fce1c4ce29c69ed00f4209310d199..441fe459e7a2c4a7c99cd51bb18be55d
 +    load: () => undefined,
 +    onScroll: () => undefined,
 +  }),
-   useAutoScroll: () => false,
-   useConversationSeen: () => () => undefined,
- };
+   useMessageCopy: () => ({ copyToClipboard: () => undefined, canCopy: false }),
+   useGetMessages: () => () => undefined,
+   useHasPendingTurn: () => false,
 diff --git a/packages/data-provider/src/api-endpoints.ts b/packages/data-provider/src/api-endpoints.ts
-index 9c386136d4b7711d378e6e4d2a6c769ba6dcf071..da380bfb593b40ecbb98b7089043ba65995b372f 100644
+index e9fc7086fb3010984172d92ec5520e6fa21997fb..7f0bf16dfa87bc4bc522e51f195cec09858d16b6 100644
 --- a/packages/data-provider/src/api-endpoints.ts
 +++ b/packages/data-provider/src/api-endpoints.ts
 @@ -69,17 +69,19 @@ export const messages = (params: q.MessagesListParams) => {
@@ -4813,15 +4808,15 @@ index 9c386136d4b7711d378e6e4d2a6c769ba6dcf071..da380bfb593b40ecbb98b7089043ba65
  /** The child calls of a stored message's subagent transcripts that the given files belong to. */
  export const messageSubagentAttachmentCalls = ({
 diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
-index 2be591214a4b37ccfbb52c8f09a5dd9fd2063085..1e9ffd7a98c01affe01f4c7393a8e93a50617b5f 100644
+index d2f15429e81fa6f6a33449b1b089b7955a8f9db5..fd80c9cb74ea06fa834bbca5da4f00ce74c35009 100644
 --- a/packages/data-provider/src/config.ts
 +++ b/packages/data-provider/src/config.ts
-@@ -39,3 +39,4 @@ import {
+@@ -40,3 +40,4 @@ import {
    scheduledMCPResourceBindingSchema,
    scheduledMCPReadOnlyPolicySchema,
  } from './types/scheduleConsent';
 +import { DEFAULT_HISTORY_WINDOW_SIZE, MAX_HISTORY_PAGE_SIZE } from './history';
-@@ -3396,6 +3397,14 @@ export const interfaceSchema = z
+@@ -3427,6 +3428,14 @@ export const interfaceSchema = z
      /** How many of the most recently left conversations keep that grace; older ones are
       *  released at the next conversation switch. */
      historyCacheRecent: z.number().int().min(0).max(20).default(DEFAULT_HISTORY_CACHE_RECENT),
@@ -4836,7 +4831,7 @@ index 2be591214a4b37ccfbb52c8f09a5dd9fd2063085..1e9ffd7a98c01affe01f4c7393a8e93a
      /** Aggregate estimated payload budget for histories kept during the grace period.
       *  Oversized histories reload on return; observed, running and Assistants histories stay.
       *  Zero disables the inactive-history grace. This is not a browser heap limit. */
-@@ -3495,6 +3504,7 @@ export const interfaceSchema = z
+@@ -3527,6 +3536,7 @@ export const interfaceSchema = z
      composerRecentFiles: DEFAULT_COMPOSER_RECENT_FILES,
      historyCacheTtlMs: DEFAULT_HISTORY_CACHE_TTL_MS,
      historyCacheRecent: DEFAULT_HISTORY_CACHE_RECENT,
@@ -4845,7 +4840,7 @@ index 2be591214a4b37ccfbb52c8f09a5dd9fd2063085..1e9ffd7a98c01affe01f4c7393a8e93a
    });
  
 diff --git a/packages/data-provider/src/data-service.ts b/packages/data-provider/src/data-service.ts
-index 506cc5fc4c61c99ed456156c22d9ea5f662e648b..0edd9737c8a19e2860ef9cac14990f6fe8865709 100644
+index a4d5b9f422dd17ec09fb02f12cb863308c5d71b7..932a147e427b51cb4c6262b2d809dd12e00f62bc 100644
 --- a/packages/data-provider/src/data-service.ts
 +++ b/packages/data-provider/src/data-service.ts
 @@ -8,6 +8,7 @@ import type {
@@ -4856,7 +4851,7 @@ index 506cc5fc4c61c99ed456156c22d9ea5f662e648b..0edd9737c8a19e2860ef9cac14990f6f
  import type { CodeSetupAttempt, CodeSetupApprovalRequest } from './codeSetup';
  import type { TFileConfig } from './file-config';
  import type * as tl from './types/tools';
-@@ -1221,7 +1222,7 @@ export function getOwnerMessageTexts(
+@@ -1227,7 +1228,7 @@ export function getOwnerMessageTexts(
   */
  export function getMessagesByConvoId(
    conversationId: string,
@@ -4865,7 +4860,7 @@ index 506cc5fc4c61c99ed456156c22d9ea5f662e648b..0edd9737c8a19e2860ef9cac14990f6f
  ): Promise<s.TMessage[]> {
    if (
      conversationId === config.Constants.NEW_CONVO ||
-@@ -1229,10 +1230,37 @@ export function getMessagesByConvoId(
+@@ -1235,10 +1236,37 @@ export function getMessagesByConvoId(
    ) {
      return Promise.resolve([]);
    }
@@ -5004,7 +4999,7 @@ index 9667fd5f025a90e305d933ca6692949c99d11f89..d56121c5bdfd1f0465f7aa2809397500
  export * from './messageReads';
  export * from './errors';
 diff --git a/packages/data-provider/src/keys.ts b/packages/data-provider/src/keys.ts
-index d41c2bcc30928fae8c4db15087943b486bac9da9..5909047eac5d6a2d6cbec624f3b1ceb95eeb3a9f 100644
+index 45b0c11dbac743a0da88dbd777317f3e0cb81d6d..29bf52379500eaa3f313ea9025a7e816a9c8f459 100644
 --- a/packages/data-provider/src/keys.ts
 +++ b/packages/data-provider/src/keys.ts
 @@ -1,4 +1,6 @@
@@ -5272,7 +5267,7 @@ index 0000000000000000000000000000000000000000..70d216379bccefffa79663e993a1c07e
 +  };
 +}
 diff --git a/packages/data-schemas/src/methods/index.ts b/packages/data-schemas/src/methods/index.ts
-index 7d1ee4138f4279f024c8d64e5319b9ff0893cad3..d57d90fcff9dc7a81679017f74f2de9c9008a87e 100644
+index e7ade546f0d6db76a7151792d601c432f81217a9..6a535fed694f5b63fde6ecaacb37782642220886 100644
 --- a/packages/data-schemas/src/methods/index.ts
 +++ b/packages/data-schemas/src/methods/index.ts
 @@ -27,6 +27,10 @@ import type {
@@ -5286,7 +5281,7 @@ index 7d1ee4138f4279f024c8d64e5319b9ff0893cad3..d57d90fcff9dc7a81679017f74f2de9c
  import {
    createOpenIDRefreshFlightMethods,
    type OpenIDRefreshFlightMethods,
-@@ -311,6 +315,7 @@ export type AllMethods = SubagentContentMethods &
+@@ -313,6 +317,7 @@ export type AllMethods = SubagentContentMethods &
    ConversationTagMethods &
    ConversationImportMethods &
    MessageMethods &
@@ -5294,7 +5289,7 @@ index 7d1ee4138f4279f024c8d64e5319b9ff0893cad3..d57d90fcff9dc7a81679017f74f2de9c
    ConversationMethods &
    ChatProjectMethods &
    TxMethods &
-@@ -568,6 +573,7 @@ export function createMethods(
+@@ -570,6 +575,7 @@ export function createMethods(
      ...createConversationTagMethods(mongoose),
      ...createConversationImportMethods(mongoose),
      ...messageMethods,
@@ -5302,3 +5297,79 @@ index 7d1ee4138f4279f024c8d64e5319b9ff0893cad3..d57d90fcff9dc7a81679017f74f2de9c
      ...conversationMethods,
      ...createChatProjectMethods(mongoose),
      /* Tier 3 */
+diff --git a/client/test/messagesHost.tsx b/client/test/messagesHost.tsx
+index 1f68c8e0ed4d792664d25294ef9ff11b95c5cc77..d47aeceb75def59d92d2a0b8cef36cbd1e1aa85d 100644
+--- a/client/test/messagesHost.tsx
++++ b/client/test/messagesHost.tsx
+@@ -6,6 +6,14 @@ import type { MessagesHost } from '@librechat/chat/react';
+ /** A messages host for specs whose subject is not the rows: inert scrolling, no forking,
+  *  copying or read-aloud, and rows that render nothing. */
+ export const testMessagesHost: MessagesHost = {
++  useHistory: () => ({
++    hasOlder: false,
++    isWindowed: false,
++    isLoading: false,
++    isError: false,
++    load: () => undefined,
++    onScroll: () => undefined,
++  }),
+   useHour12: () => undefined,
+   renderFiles: () => null,
+   useForkPreferences: () => ({
+diff --git a/packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx b/packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx
+index 7b42a90ad333733f7ebc33e702a34c99a84b0102..15274564dc05f71dd9cbeaf5a66c340f6b7de709 100644
+--- a/packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx
++++ b/packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx
+@@ -165,7 +165,7 @@ describe('MessagesView', () => {
+     expect(first.isConnected).toBe(false);
+   });
+ 
+-  it('wires the scroll control to the end marker and to both near-bottom listeners', () => {
++  it('wires the scroll control to the container bottom and to both near-bottom listeners', () => {
+     const { host } = createHost();
+     let button: MessagesScrollButtonProps | undefined;
+     const { container } = renderView(
+@@ -185,13 +185,18 @@ describe('MessagesView', () => {
+       container.querySelector('#messages-end')?.closest('.scrollbar-gutter-stable'),
+     );
+ 
+-    const end = container.querySelector<HTMLElement>('#messages-end');
+-    const scrollIntoView = jest.fn();
+-    if (end) {
+-      end.scrollIntoView = scrollIntoView;
+-    }
++    const scrollable = button!.scrollableRef.current!;
++    Object.defineProperties(scrollable, {
++      clientHeight: { value: 400, configurable: true },
++      scrollHeight: { value: 1000, configurable: true },
++    });
++    scrollable.scrollTop = 0;
++    const scrollTo = jest.fn();
++    scrollable.scrollTo = scrollTo;
+     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' });
++    expect(scrollTo).toHaveBeenCalledWith({ top: 600, behavior: 'smooth' });
++    fireEvent(scrollable, new Event('scrollend'));
++    expect(scrollable.scrollTop).toBe(600);
+   });
+ 
+   describe('seen reporting', () => {
+diff --git a/packages/chat/src/components/pane/__tests__/messages.spec.tsx b/packages/chat/src/components/pane/__tests__/messages.spec.tsx
+index 52b7bdb97f019c45fc92cc61661f060240f71dfd..ff28f916cd6b8ccf6c8e5672ba0f320ed8969cdb 100644
+--- a/packages/chat/src/components/pane/__tests__/messages.spec.tsx
++++ b/packages/chat/src/components/pane/__tests__/messages.spec.tsx
+@@ -84,6 +84,14 @@ function MessagesView({
+ 
+ /** Rows render as their message id, so a spec can tell which messages the thread rendered. */
+ const host: MessagesHost = {
++  useHistory: () => ({
++    hasOlder: false,
++    isWindowed: false,
++    isLoading: false,
++    isError: false,
++    load: () => undefined,
++    onScroll: () => undefined,
++  }),
+   useHour12: () => undefined,
+   renderFiles: () => null,
+   useForkPreferences: () => ({

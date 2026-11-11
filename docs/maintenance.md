@@ -48,6 +48,10 @@
 | browser | 实际 Playwright mock specs，单 worker、零重试、禁止 `.only` |
 | project | 对固定应用基线的 static-checks，及适用的 `npm run lighthouse` |
 
+执行 `project` 前，先审查并提交生成应用的改动。`static-checks --against <固定基线>` 从基线到已提交 HEAD 选择文件，不包含未提交的新改动；在刚应用补丁的暂存状态运行不能证明交付差异已受检。应用的 pre-push 还要求工作树干净，并通过 `LIBRECHAT_PRE_PUSH_BASE=<固定基线>` 固定检查范围。
+
+依赖安装后确认应用的 `.husky/_/pre-push` 存在且可执行；缺少时运行应用现有 `npm run prepare` 恢复本地入口。仅配置 `core.hooksPath=.husky/_` 不会生成入口文件。
+
 runner 按顺序执行，对完全相同的共享命令去重。没有所选 tier 时非零退出。Jest 必须精确发现全部合同文件，每个文件有实际断言且通过；pending/todo 非完整通过。Playwright 必须精确发现文件、报告非空成功，错误、跳过、重试或失败均非完整通过。命令异常和缺入口立即非零退出，不继续报告成功。`command` 的证据范围以实际命令为准，例如 workflow 静态断言不证明镜像发布。
 
 共享测试文件可能包含多个能力；单组选择通过入口校验不代表其业务可独立验收。优先用当前选择的完整合同验证，再按失败的调用关系处理真实依赖。不要为了通过合同删除有效断言或把测试永久跳过。重型 Jest、类型检查、构建和浏览器检查串行运行。

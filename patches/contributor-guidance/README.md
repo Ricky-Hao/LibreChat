@@ -1,6 +1,6 @@
 # 应用贡献与交付指引
 
-状态：`local`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`local`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
 保留应用 AGENTS.md 与 PR template 的最终净差异；补丁仓自身的根指引单独负责补丁维护。
 
@@ -28,4 +28,4 @@ python3 tools/patchset.py test --target /path/to/application --only contributor-
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。
+2026-11-11：贡献指引 Markdown 差异检查通过，内容和引用随本轮基线适配核对；本组无业务测试要求。

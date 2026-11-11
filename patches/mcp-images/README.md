@@ -1,6 +1,6 @@
 # 未知 provider 的 MCP 显示图片
 
-状态：`awaiting-upstream`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`awaiting-upstream`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
 保留未知 provider 的图片到附件持久化回调，避免 UI 图片丢失。
 
@@ -28,4 +28,4 @@ python3 tools/patchset.py test --target /path/to/application --only mcp-images -
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。
+2026-11-11：本组 2 项 focused 与 API 类型检查通过，覆盖 parser 和必要主机消费方。固定基线仍需本地载荷。项目门禁汇总见[根 README](../../README.md#验证)。

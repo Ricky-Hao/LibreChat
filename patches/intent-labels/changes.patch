@@ -1,5 +1,5 @@
 diff --git a/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx b/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx
-index 68636ddd8b5fb240812f2130db2e85526c663e43..bb4fbe6db385d8f6b0f8325e44755777954cd421 100644
+index 176732719bb9482de11f16d62fb7a7efcc1e1580..57c9b7d195f6d8afab24215d993ea5a36262126b 100644
 --- a/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx
 +++ b/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx
 @@ -48,7 +48,7 @@ export default function CodeAnalyze({
@@ -12,12 +12,12 @@ index 68636ddd8b5fb240812f2130db2e85526c663e43..bb4fbe6db385d8f6b0f8325e44755777
            phase={phase}
            onClick={handleToggleCode}
 diff --git a/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx b/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx
-index 42977d3759274702bff05e6f7207bce21494fe78..c9d3e7662c9f03e7c9417137f09c4f3c29c91f48 100644
+index ebc70a94832c0c29c968466509595aab476a6754..79893cb4afd4bce8b2d00406136c9a03ab987606 100644
 --- a/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx
 +++ b/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx
-@@ -85,7 +85,7 @@ export default function MemoryCall({
+@@ -73,7 +73,7 @@ export default function MemoryCall({
      <>
-       <BareStatus active={bare} text={finishedText} />
+       <BareStatus phase={phase} active={bare} text={finishedText} />
        {!bare && (
 -        <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
 +        <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
@@ -25,10 +25,10 @@ index 42977d3759274702bff05e6f7207bce21494fe78..c9d3e7662c9f03e7c9417137f09c4f3c
              phase={phase}
              onClick={toggleCode}
 diff --git a/client/src/components/Chat/Messages/Content/ProgressText.tsx b/client/src/components/Chat/Messages/Content/ProgressText.tsx
-index 6525002719366215a6d31e7f1da86b85c3f377ec..f1952bcf10b781f85f69092f44c9134ff89ce0a7 100644
+index 5808d169393fe2a70064084fc0d03ccd446440af..3aa0f67d0a6dc39c7d8010ba8624c8d1d1fd0666 100644
 --- a/client/src/components/Chat/Messages/Content/ProgressText.tsx
 +++ b/client/src/components/Chat/Messages/Content/ProgressText.tsx
-@@ -12,19 +12,16 @@ import { useFailedReveal } from './reveal';
+@@ -16,13 +16,11 @@ import { cn, getRunStepDurationLabels } from '~/utils';
  import { useLocalize } from '~/hooks';
  
  const wrapperClass =
@@ -44,24 +44,27 @@ index 6525002719366215a6d31e7f1da86b85c3f377ec..f1952bcf10b781f85f69092f44c9134f
 + *  Overflow remains visible for the disclosure's focus ring. */
 +const contentClass = 'progress-text-content max-w-full overflow-visible';
  
- /** A failed row is marked at its left edge, in the rail's column when the row
-  *  sits under a header and in the gutter when it stands alone, so a failure
-  *  is findable by shape before its text is read. A pseudo-element rather than
-- *  a border: the row's content is absolutely positioned against the padding
-- *  box, so a border would push it and change the row's geometry. It lies over
-+ *  a border keeps the glyph and label aligned with the other rows. It lies over
-  *  the rail's hit area, so it lets the pointer through to the rail. */
- const failedStripeClass =
-   "before:pointer-events-none before:absolute before:-left-3 before:top-0 before:h-full before:w-0.5 before:rounded-full before:bg-status-error before:content-['']";
-@@ -191,13 +188,15 @@ export default function ProgressText({
+ const Wrapper = ({
+   popover,
+@@ -157,7 +155,7 @@ export default function ProgressText({
+     toolExecutionDurationMs != null &&
+     Number.isFinite(toolExecutionDurationMs) &&
+     toolExecutionDurationMs >= 50;
+-  /** Pinned beside the chevron: "2.4s (prepared in 0.3s)". */
++  /** Compact intervals: "2.4s (prepared in 0.3s)". */
+   const durationParts =
+     phase !== 'completed'
+       ? []
+@@ -190,13 +188,16 @@ export default function ProgressText({
                ]
              : []),
          ];
 +  const showTimer = isRunning && phaseStartAt != null && localPhaseStart != null;
-+  const hasMetadata = subtitle || errorSuffix || showTimer || durationParts.length > 0;
++  const hasMetadata =
++    subtitle || errorSuffix || timer != null || showTimer || durationParts.length > 0;
  
    return (
-     <Wrapper popover={popover} failed={phase === 'failed'} rootRef={rootRef}>
+     <Wrapper popover={popover} rootRef={rootRef}>
        <Button
          type="button"
          variant="disclosure"
@@ -70,7 +73,7 @@ index 6525002719366215a6d31e7f1da86b85c3f377ec..f1952bcf10b781f85f69092f44c9134f
          disabled={!hasInput}
          tabIndex={hasInput ? 0 : -1}
          onClick={hasInput ? onClick : undefined}
-@@ -208,50 +207,35 @@ export default function ProgressText({
+@@ -207,69 +208,48 @@ export default function ProgressText({
              {icon}
            </span>
          )}
@@ -105,14 +108,18 @@ index 6525002719366215a6d31e7f1da86b85c3f377ec..f1952bcf10b781f85f69092f44c9134f
 +            <span className="text-text-secondary flex max-w-full min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 font-normal [overflow-wrap:anywhere]">
 +              {subtitle && <span>{subtitle}</span>}
 +              {errorSuffix && <span className="text-status-error">· {verdict || errorSuffix}</span>}
-+              {showTimer && <ElapsedTimer start={localPhaseStart} />}
-+              {durationParts.map(({ label, duration }) => (
-+                <span key={label}>
++              {timer}
++              {timer == null && showTimer && <ElapsedTimer start={localPhaseStart} />}
++              {durationParts.map(({ label, phrase, duration }) => (
++                <span key={label} className="text-xs tabular-nums">
 +                  <span aria-hidden="true">
-+                    · {label} {localize(duration.key, duration.values)}
++                    {phrase
++                      ? localize(phrase, { 0: localize(duration.key, duration.values) })
++                      : localize(duration.key, duration.values)}
 +                  </span>
 +                  <span className="sr-only">
-+                    {label} {localize(duration.announcedKey, duration.announcedValues)}
++                    {label && `${label} `}
++                    {localize(duration.announcedKey, duration.announcedValues)}
 +                  </span>
 +                </span>
 +              ))}
@@ -123,48 +130,76 @@ index 6525002719366215a6d31e7f1da86b85c3f377ec..f1952bcf10b781f85f69092f44c9134f
 -            so it replaces the generic word instead of following it. */}
 -        {errorSuffix && (
 -          <span className="text-status-error shrink-0 font-normal">· {verdict || errorSuffix}</span>
--        )}
--        {isRunning && phaseStartAt != null && localPhaseStart != null && (
--          <ElapsedTimer start={localPhaseStart} />
--        )}
--        {durationParts.map(({ label, duration }) => (
--          <span key={label} className="text-text-secondary shrink-0 font-normal">
--            <span aria-hidden="true">
--              · {label} {localize(duration.key, duration.values)}
++        {hasInput && (
++          <ChevronDown
++            className={cn(
++              disclosureChevronVariants({ expanded: isExpanded }),
++              'size-4 shrink-0 translate-y-[0.0625rem]',
++            )}
++            aria-hidden="true"
++          />
+         )}
+-        {/* Pinned to the row's end so every row's time and chevron line up. */}
+-        <span className="ms-auto flex shrink-0 items-center gap-2">
+-          {timer}
+-          {timer == null && isRunning && phaseStartAt != null && localPhaseStart != null && (
+-            <ElapsedTimer start={localPhaseStart} />
+-          )}
+-          {durationParts.map(({ label, phrase, duration }) => (
+-            <span
+-              key={label}
+-              className="text-text-secondary shrink-0 text-xs font-normal tabular-nums"
+-            >
+-              <span aria-hidden="true">
+-                {phrase
+-                  ? localize(phrase, { 0: localize(duration.key, duration.values) })
+-                  : localize(duration.key, duration.values)}
+-              </span>
+-              <span className="sr-only">
+-                {label && `${label} `}
+-                {localize(duration.announcedKey, duration.announcedValues)}
+-              </span>
 -            </span>
--            <span className="sr-only">
--              {label} {localize(duration.announcedKey, duration.announcedValues)}
--            </span>
--          </span>
--        ))}
-         {hasInput && (
-           <ChevronDown
-             className={cn(
+-          ))}
+-          {hasInput && (
+-            <ChevronDown
+-              className={cn(
+-                disclosureChevronVariants({ expanded: isExpanded }),
+-                'size-4 shrink-0 translate-y-[0.0625rem]',
+-              )}
+-              aria-hidden="true"
+-            />
+-          )}
+-        </span>
+       </Button>
+     </Wrapper>
+   );
 diff --git a/client/src/components/Chat/Messages/Content/RetrievalCall.tsx b/client/src/components/Chat/Messages/Content/RetrievalCall.tsx
-index e59bde5b7df3e2826c44e7d7c2fded1bbb0af053..61bab1a5bba35d65c6c47d00b190a8946734d8b8 100644
+index d864939b3a626c049a2e5d89285b2e6df81ddd16..8b6da3664e7ee940da1c6cf5d32b86ec669d46a8 100644
 --- a/client/src/components/Chat/Messages/Content/RetrievalCall.tsx
 +++ b/client/src/components/Chat/Messages/Content/RetrievalCall.tsx
-@@ -467,7 +467,7 @@ export default function RetrievalCall({
-           return intent ?? localize('com_ui_retrieved_files');
+@@ -476,7 +476,7 @@ export default function RetrievalCall({
          })()}
        </span>
--      <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5">
-+      <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5">
-         <ProgressText
-           phase={phase}
-           onClick={hasExpandableContent ? handleToggleOutput : undefined}
+       {!bare && (
+-        <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
++        <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
+           <ProgressText
+             phase={phase}
+             onClick={hasExpandableContent ? handleToggleOutput : undefined}
 diff --git a/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx b/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx
-index c483bde8930841cad37ac3e5e505f8ea422007c5..2015eaba6673897676704663973e30a072c2cd64 100644
+index b73e3e42dba53ffb78f136456868199eb1f18e02..aaf0a2633fccf9642e31c4cceba72307a9c8baed 100644
 --- a/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx
 +++ b/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx
-@@ -1,5 +1,5 @@
+@@ -1,6 +1,6 @@
  import React from 'react';
+ import { FailedRevealContext } from '@librechat/chat/components';
 -import { fireEvent, render, screen } from '@testing-library/react';
 +import { act, fireEvent, render, screen } from '@testing-library/react';
- import { FailedRevealContext } from '../reveal';
  import ProgressText from '../ProgressText';
  
-@@ -93,6 +93,28 @@ describe('ProgressText duration', () => {
+ function mockLocalize(key: string, values?: Record<string, string | number>): string {
+@@ -94,6 +94,39 @@ describe('ProgressText duration', () => {
      clock.mockRestore();
    });
  
@@ -183,17 +218,28 @@ index c483bde8930841cad37ac3e5e505f8ea422007c5..2015eaba6673897676704663973e30a0
 +        />,
 +      );
 +      expect(screen.queryByTestId('stream-elapsed')).not.toBeInTheDocument();
-+      expect(screen.getByText('· Preparation 13s')).toBeInTheDocument();
-+      expect(screen.getByText('· Tool call 1s')).toBeInTheDocument();
++      expect(screen.getByText('(prepared in 13s)')).toBeInTheDocument();
++      expect(screen.getByText('1s')).toBeInTheDocument();
 +    } finally {
 +      jest.useRealTimers();
 +    }
 +  });
 +
++  it('uses an injected timer without also rendering the phase timer', () => {
++    const injectedTimer = 'Injected timer';
++    renderProgressText({
++      phase: 'running',
++      phaseStartAt: 1_000,
++      timer: <span>{injectedTimer}</span>,
++    });
++    expect(screen.getAllByText(injectedTimer)).toHaveLength(1);
++    expect(screen.queryByTestId('stream-elapsed')).not.toBeInTheDocument();
++  });
++
    it('does not render while the step is still running', () => {
      renderProgressText({ phase: 'running', durationMs: 3500 });
-     expect(screen.queryByText('· Total elapsed 3.5s')).not.toBeInTheDocument();
-@@ -176,28 +198,43 @@ describe('ProgressText disclosure', () => {
+     expect(screen.queryByText('3.5s')).not.toBeInTheDocument();
+@@ -173,28 +206,43 @@ describe('ProgressText disclosure', () => {
    });
  
    it('renders no chevron or disclosure state without expandable content', () => {
@@ -234,7 +280,7 @@ index c483bde8930841cad37ac3e5e505f8ea422007c5..2015eaba6673897676704663973e30a0
 +    });
 +    expect(screen.getByText(finishedText.trim()).textContent).toBe(finishedText);
 +    expect(screen.getByRole('button')).toHaveAccessibleName(
-+      `${finishedText.trim()} Synthetic status details Preparation took 13 seconds Tool call took 1 second`,
++      `${finishedText.trim()} Synthetic status details Tool call took 1 second Preparation took 13 seconds`,
 +    );
    });
  
@@ -248,7 +294,7 @@ index c483bde8930841cad37ac3e5e505f8ea422007c5..2015eaba6673897676704663973e30a0
    });
  });
  
-@@ -264,21 +301,6 @@ describe('ProgressText failed reveal', () => {
+@@ -263,21 +311,6 @@ describe('ProgressText failed reveal', () => {
    });
  });
  
@@ -262,7 +308,7 @@ index c483bde8930841cad37ac3e5e505f8ea422007c5..2015eaba6673897676704663973e30a0
 -    const box = screen.getByText('Completed foo').parentElement;
 -    expect(box).toHaveClass('min-w-0');
 -    expect(box).toContainElement(screen.getByText('a very long subtitle'));
--    expect(screen.getByText('· Total elapsed 3.5s').parentElement).toHaveClass('shrink-0');
+-    expect(screen.getByText('3.5s').parentElement).toHaveClass('shrink-0');
 -    expect(container.querySelector('svg')).toHaveClass('shrink-0');
 -  });
 -});
@@ -270,56 +316,8 @@ index c483bde8930841cad37ac3e5e505f8ea422007c5..2015eaba6673897676704663973e30a0
  describe('ProgressText verdict', () => {
    it('names the failure reason inside the button on a failed card', () => {
      renderProgressText({ phase: 'failed', verdict: 'exit code 2' });
-diff --git a/client/src/utils/__tests__/activityLabels.spec.ts b/client/src/utils/__tests__/activityLabels.spec.ts
-index d8f0929414b00eeccb4bb92ee8ba6037b4c2aa9b..3c8b347b326efad931efb8f0c3197590d5fca2a5 100644
---- a/client/src/utils/__tests__/activityLabels.spec.ts
-+++ b/client/src/utils/__tests__/activityLabels.spec.ts
-@@ -6,7 +6,6 @@ import {
-   groupActivityPhases,
-   lastCursorContentIdx,
-   lastVisibleContentIdx,
--  offsetActivityPhaseBoundary,
-   findActivityLabelMessageIndex,
- } from '../activityLabels';
- 
-@@ -201,15 +200,6 @@ describe('lastCursorContentIdx', () => {
-   });
- });
- 
--describe('offsetActivityPhaseBoundary', () => {
--  it('folds only boundaries covered by the merged first completion part', () => {
--    expect(offsetActivityPhaseBoundary(0, 5, true)).toBe(4);
--    expect(offsetActivityPhaseBoundary(1, 5, true)).toBe(5);
--    expect(offsetActivityPhaseBoundary(3, 5, true)).toBe(8);
--    expect(offsetActivityPhaseBoundary(3, 5, false)).toBe(8);
--  });
--});
--
- describe('groupActivityPhases', () => {
-   const text = { type: ContentTypes.TEXT, text: 'final answer' } as TMessageContentParts;
-   const tool = {
-diff --git a/client/src/utils/activityLabels.ts b/client/src/utils/activityLabels.ts
-index bf0e265660c5e879ec8e733ff16e8e484bed218c..57515ad1c673695e075fc6391deed9118983efc1 100644
---- a/client/src/utils/activityLabels.ts
-+++ b/client/src/utils/activityLabels.ts
-@@ -138,15 +138,6 @@ export function getActivityLabelText(part: ActivityLabelPart | undefined): strin
-   return typeof label === 'string' ? label.trim() : '';
- }
- 
--/** Maps a completion-local half-open boundary into edited-response coordinates. */
--export function offsetActivityPhaseBoundary(
--  boundary: number,
--  prefixLength: number,
--  foldedFirstPart: boolean,
--): number {
--  return boundary + prefixLength - (foldedFirstPart && boundary <= 1 ? 1 : 0);
--}
--
- /**
-  * Mirrors `SUBSTANTIAL_TEXT_CHARS` in `activityPhases/runtime.ts`. Short
-  * commentary belongs inside a phase; a real block of prose ends one.
 diff --git a/e2e/specs/mock/activity-fold.spec.ts b/e2e/specs/mock/activity-fold.spec.ts
-index 1e4e71bca14c32afb35e3de6c656f89a6a6bf0da..af16f15a2d5a459dab19e8118fe9249fad31642b 100644
+index 6e229a3e7f310dfcbb4cdf09cb87e93226737e02..683d2506ccc476a9af46eca7dee50cf3cdc82d19 100644
 --- a/e2e/specs/mock/activity-fold.spec.ts
 +++ b/e2e/specs/mock/activity-fold.spec.ts
 @@ -1,8 +1,16 @@
@@ -340,7 +338,7 @@ index 1e4e71bca14c32afb35e3de6c656f89a6a6bf0da..af16f15a2d5a459dab19e8118fe9249f
  
  const PHASE_ENDPOINT = { label: 'Mock Provider F', model: 'mock-model-f' };
  const MCP_SERVER_TITLE = 'E2E Memory';
-@@ -12,6 +20,224 @@ const SHOT_DIR = process.env.E2E_FOLD_SHOTS || '';
+@@ -12,6 +20,232 @@ const SHOT_DIR = process.env.E2E_FOLD_SHOTS || '';
  
  const uniqueLabel = () => `fold-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
  
@@ -501,8 +499,16 @@ index 1e4e71bca14c32afb35e3de6c656f89a6a6bf0da..af16f15a2d5a459dab19e8118fe9249f
 +      for (const [index, intent] of MOBILE_INTENTS.entries()) {
 +        const row = page.locator(`[data-tool-call-id="intent-${index}"]`);
 +        await expectIntentGeometry(row, intent, width < 640);
-+        await expect(row).toContainText(index === 1 ? 'Total elapsed 14s' : 'Preparation 13s');
-+        if (index !== 1) await expect(row).toContainText('Tool call 1s');
++        await expect(
++          row.getByText(index === 1 ? '14s' : '(prepared in 13s)', { exact: true }),
++        ).toBeVisible();
++        if (index !== 1) {
++          await expect(row.getByText('1s', { exact: true })).toBeVisible();
++          await expect(row.getByText('Tool call took 1 second', { exact: true })).toHaveCount(1);
++          await expect(row.getByText('Preparation took 13 seconds', { exact: true })).toHaveCount(
++            1,
++          );
++        }
 +      }
 +      const disclosure = page.locator('[data-tool-call-id="intent-0"]').getByRole('button');
 +      await disclosure.focus();
@@ -990,6 +996,54 @@ index 545817ef11947aa27c9088950795502b3d92c677..693b5be697e8d363d935b803e99a71d9
   * hook, not a style: see `FOLD_GLYPH_SELECTOR`.
   */
  export const ROW_GLYPH_SLOT: string = `${FOLD_GLYPH_CLASS} flex h-5 min-w-6 shrink-0 items-center justify-center`;
+diff --git a/packages/chat/src/core/parts/__tests__/activityLabels.spec.ts b/packages/chat/src/core/parts/__tests__/activityLabels.spec.ts
+index 3fba903dda5868a1831fe3b4296a5905cbe4ddc2..26408c30a48751179c99b633de3cecab652fbedc 100644
+--- a/packages/chat/src/core/parts/__tests__/activityLabels.spec.ts
++++ b/packages/chat/src/core/parts/__tests__/activityLabels.spec.ts
+@@ -6,7 +6,6 @@ import {
+   groupActivityPhases,
+   lastCursorContentIdx,
+   lastVisibleContentIdx,
+-  offsetActivityPhaseBoundary,
+   findActivityLabelMessageIndex,
+ } from '../activityLabels';
+ 
+@@ -201,15 +200,6 @@ describe('lastCursorContentIdx', () => {
+   });
+ });
+ 
+-describe('offsetActivityPhaseBoundary', () => {
+-  it('folds only boundaries covered by the merged first completion part', () => {
+-    expect(offsetActivityPhaseBoundary(0, 5, true)).toBe(4);
+-    expect(offsetActivityPhaseBoundary(1, 5, true)).toBe(5);
+-    expect(offsetActivityPhaseBoundary(3, 5, true)).toBe(8);
+-    expect(offsetActivityPhaseBoundary(3, 5, false)).toBe(8);
+-  });
+-});
+-
+ describe('groupActivityPhases', () => {
+   const text = { type: ContentTypes.TEXT, text: 'final answer' } as TMessageContentParts;
+   const tool = {
+diff --git a/packages/chat/src/core/parts/activityLabels.ts b/packages/chat/src/core/parts/activityLabels.ts
+index 40cd49134c225837aa2e73b81dcc96201bd4786c..210f2893511300feca5226ca7bed4a00ea22ae81 100644
+--- a/packages/chat/src/core/parts/activityLabels.ts
++++ b/packages/chat/src/core/parts/activityLabels.ts
+@@ -138,15 +138,6 @@ export function getActivityLabelText(part: ActivityLabelPart | undefined): strin
+   return typeof label === 'string' ? label.trim() : '';
+ }
+ 
+-/** Maps a completion-local half-open boundary into edited-response coordinates. */
+-export function offsetActivityPhaseBoundary(
+-  boundary: number,
+-  prefixLength: number,
+-  foldedFirstPart: boolean,
+-): number {
+-  return boundary + prefixLength - (foldedFirstPart && boundary <= 1 ? 1 : 0);
+-}
+-
+ /**
+  * Mirrors `SUBSTANTIAL_TEXT_CHARS` in `activityPhases/runtime.ts`. Short
+  * commentary belongs inside a phase; a real block of prose ends one.
 diff --git a/tool-intent-spec.md b/tool-intent-spec.md
 index 5286de44a23fc0500835752edd7bcc16de00fb0c..0248af2fdcfe1c573a2e04b869953bc7dff30f4d 100644
 --- a/tool-intent-spec.md

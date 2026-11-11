@@ -4,7 +4,8 @@
 
 | 用途 | 固定提交 |
 | --- | --- |
-| 应用基线，最后纳入的 upstream main | `f4154b649efa37e1345ccc517a4d8d1ed2178c82` |
+| 当前应用基线，固定 upstream main | `e6567c7a681ce67869dce31486a21d3a25d6931b` |
+| 原始 fork 提取基线 | `f4154b649efa37e1345ccc517a4d8d1ed2178c82` |
 | 完整 fork 源，含 PR #14 的 SDK 消费方修正 | `38c026db83d0ca12a067083b5c1551c1bca2754b` |
 | 独立维护文档来源 | `2e79586e547131de06494bed2f3274f4745ca435` |
 | 当前 SDK 源，Ricky-Hao/agents | `1559d8661120b77acd7a6189bf5ba24b82cf6f50` |

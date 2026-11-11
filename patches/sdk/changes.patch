@@ -11,7 +11,7 @@ index 396f0da3e57281f6cb9c8301abf4eca8a07ae380..4320d5741d357a9aadad5db055af4e77
  docs
  
 diff --git a/Dockerfile b/Dockerfile
-index 2ea8f302dd7aea2a221fe69b525ee5b7892b1dda..d3f0e3b950ca1d882564f569cd555291ed7afb69 100644
+index f2ac52565b8b329dff0657fb862c0354f873cd82..415a9ad8f3b78d9c9842a0b75a1057e7e042e724 100644
 --- a/Dockerfile
 +++ b/Dockerfile
 @@ -27,6 +27,7 @@ WORKDIR /app
@@ -23,7 +23,7 @@ index 2ea8f302dd7aea2a221fe69b525ee5b7892b1dda..d3f0e3b950ca1d882564f569cd555291
  COPY --chown=node:node client/package.json ./client/package.json
  COPY --chown=node:node packages/data-provider/package.json ./packages/data-provider/package.json
 diff --git a/Dockerfile.multi b/Dockerfile.multi
-index f29ae6e2d30dd03343accf037bd2fb5202261060..5344918469f5ec3540ba4cec0a323ecd720fbdfe 100644
+index 539bf91ca185548004e45635df08c6bab8335273..ce53514f21e0c7b6731c5dac6f8018e961642fdc 100644
 --- a/Dockerfile.multi
 +++ b/Dockerfile.multi
 @@ -26,6 +26,7 @@ RUN npm config set fetch-retry-maxtimeout 600000 && \
@@ -35,7 +35,7 @@ index f29ae6e2d30dd03343accf037bd2fb5202261060..5344918469f5ec3540ba4cec0a323ecd
  COPY packages/api/package*.json ./packages/api/
  COPY vendor/code ./vendor/code
 diff --git a/api/package.json b/api/package.json
-index 6caeffffdc03554ad29b05f8d927f8e9b5c23f71..39ea4245dbf748ade583d484d97167129f6460ad 100644
+index 94e4c116f2d3e9dba54dc977772b1ce81ff92750..297c3e08e653358aa7218ad16c2a51b934a89ceb 100644
 --- a/api/package.json
 +++ b/api/package.json
 @@ -40,7 +40,7 @@
@@ -545,7 +545,7 @@ index 0000000000000000000000000000000000000000..908291d120fdb0cae305d0b7f5e352e5
 +  });
 +});
 diff --git a/package-lock.json b/package-lock.json
-index 0ed9dfa3ca6af3e65dfb4b9093614a96b4bffe7a..aa97c4f13568dad9ea06a707753a08c511b0dc1d 100644
+index 372d88c8716d1d902758920d7016c705242d9044..135f4ec1751c8c510779e96ad2260ee867105861 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -65,7 +65,7 @@
@@ -565,7 +565,7 @@ index 0ed9dfa3ca6af3e65dfb4b9093614a96b4bffe7a..aa97c4f13568dad9ea06a707753a08c5
        "license": "Apache-2.0",
        "dependencies": {
          "@opentelemetry/core": "2.10.0",
-@@ -9166,9 +9167,9 @@
+@@ -9474,9 +9475,9 @@
        }
      },
      "node_modules/@librechat/agents": {
@@ -578,7 +578,7 @@ index 0ed9dfa3ca6af3e65dfb4b9093614a96b4bffe7a..aa97c4f13568dad9ea06a707753a08c5
        "license": "MIT",
        "dependencies": {
          "@anthropic-ai/sdk": "^0.115.0",
-@@ -9194,7 +9195,7 @@
+@@ -9502,7 +9503,7 @@
          "@opentelemetry/sdk-node": "^0.220.0",
          "@types/diff": "^7.0.2",
          "ai-tokenizer": "^1.0.6",
@@ -587,20 +587,7 @@ index 0ed9dfa3ca6af3e65dfb4b9093614a96b4bffe7a..aa97c4f13568dad9ea06a707753a08c5
          "cheerio": "^1.2.0",
          "diff": "^9.0.0",
          "dotenv": "^16.4.7",
-@@ -20067,9 +20068,9 @@
-       }
-     },
-     "node_modules/axios": {
--      "version": "1.20.0",
--      "resolved": "https://registry.npmjs.org/axios/-/axios-1.20.0.tgz",
--      "integrity": "sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg==",
-+      "version": "1.21.0",
-+      "resolved": "https://registry.npmjs.org/axios/-/axios-1.21.0.tgz",
-+      "integrity": "sha512-YCzXMB53Q9PZBsh7yN7wtapit4WepwcHS2fP8QhGsBxSz5YtgYobV7GGlWlAJi+RxfU77GQTQi2DSLUma42EYA==",
-       "license": "MIT",
-       "dependencies": {
-         "follow-redirects": "^1.16.0",
-@@ -40781,7 +40782,7 @@
+@@ -41966,7 +41967,7 @@
          "@azure/identity": "^4.14.0",
          "@azure/storage-blob": "^12.30.0",
          "@keyv/redis": "5.1.6",
@@ -609,7 +596,7 @@ index 0ed9dfa3ca6af3e65dfb4b9093614a96b4bffe7a..aa97c4f13568dad9ea06a707753a08c5
          "@librechat/data-schemas": "*",
          "@modelcontextprotocol/sdk": "^1.32.1",
          "@opentelemetry/api": "^1.9.0",
-@@ -42671,13 +42672,6 @@
+@@ -43822,13 +43823,6 @@
          "yarn": ">=1"
        }
      },
@@ -623,7 +610,7 @@ index 0ed9dfa3ca6af3e65dfb4b9093614a96b4bffe7a..aa97c4f13568dad9ea06a707753a08c5
      "packages/client/node_modules/@testing-library/react": {
        "version": "16.3.0",
        "resolved": "https://registry.npmjs.org/@testing-library/react/-/react-16.3.0.tgz",
-@@ -42805,6 +42799,13 @@
+@@ -43956,6 +43950,13 @@
          "dequal": "^2.0.3"
        }
      },
@@ -638,7 +625,7 @@ index 0ed9dfa3ca6af3e65dfb4b9093614a96b4bffe7a..aa97c4f13568dad9ea06a707753a08c5
        "version": "5.0.0-beta.5",
        "resolved": "https://registry.npmjs.org/get-tsconfig/-/get-tsconfig-5.0.0-beta.5.tgz",
 diff --git a/packages/api/package.json b/packages/api/package.json
-index a2c6fd20a52ecc50a7d74a2a61f0129733b560a2..4c907e8c484a0b1cd85d7d1ceedb4a98c95792fc 100644
+index 9073c8eabb2dcfb7fb8974b61d5b1cfc53d21d4d..807a614adf52586a8adb42082c5bd8ebd532100a 100644
 --- a/packages/api/package.json
 +++ b/packages/api/package.json
 @@ -113,7 +113,7 @@

@@ -57,17 +57,20 @@
       ]
     },
     {
-      "name": "packages/chat tsc --noEmit",
+      "name": "packages/chat source and consumer typecheck",
       "tier": "types",
       "cwd": "packages/chat",
       "requires": [
-        "packages/chat/tsconfig.json"
+        "packages/chat/tsconfig.json",
+        "packages/chat/test/tsconfig.json",
+        "packages/chat/package.json",
+        "scripts/typecheck.mts"
       ],
       "runner": "command",
       "command": [
-        "node",
-        "../../node_modules/typescript/bin/tsc",
-        "--noEmit"
+        "npm",
+        "run",
+        "typecheck"
       ]
     },
     {
@@ -99,7 +102,7 @@
         "static-checks",
         "--",
         "--against",
-        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+        "e6567c7a681ce67869dce31486a21d3a25d6931b"
       ]
     }
   ]

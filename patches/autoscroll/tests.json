@@ -1,16 +1,16 @@
 {
   "checks": [
     {
-      "name": "client focused tests",
+      "name": "packages/chat focused tests",
       "tier": "focused",
-      "cwd": "client",
+      "cwd": "packages/chat",
       "requires": [
-        "client/package.json",
-        "client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx"
+        "packages/chat/package.json",
+        "packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx"
       ],
       "runner": "jest",
       "files": [
-        "client/src/hooks/Messages/__tests__/useMessageScrolling.spec.tsx"
+        "packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx"
       ]
     },
     {
@@ -56,7 +56,7 @@
         "static-checks",
         "--",
         "--against",
-        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+        "e6567c7a681ce67869dce31486a21d3a25d6931b"
       ]
     }
   ]

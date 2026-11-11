@@ -1,8 +1,8 @@
 diff --git a/api/server/controllers/agents/client.js b/api/server/controllers/agents/client.js
-index 5648dcb3b8939377961d7277caad2a023c93c824..dbe87d33e0c0bb55e37b7d4f96e5c24e6fb933f7 100644
+index 267a335082b87b199509b3a0028af195f4d9348e..e8884656c5c3d1422c6e8c4ba3a0ee82481baea7 100644
 --- a/api/server/controllers/agents/client.js
 +++ b/api/server/controllers/agents/client.js
-@@ -2230,7 +2230,10 @@ class AgentClient extends BaseClient {
+@@ -2236,7 +2236,10 @@ class AgentClient extends BaseClient {
        checkpointMessageOverlay: {
          source: 'skill',
          retainedFromMessageId: summary?.coverage?.retainedFromMessageId,
@@ -15,7 +15,7 @@ index 5648dcb3b8939377961d7277caad2a023c93c824..dbe87d33e0c0bb55e37b7d4f96e5c24e
      };
    }
 diff --git a/api/server/controllers/agents/client.test.js b/api/server/controllers/agents/client.test.js
-index 9b5cabe4113d9e87c3575d70515f795d932eac85..0589b0a400b8b9ed105ed173d3609a76f43e2da4 100644
+index 91ce63e75424eeb426fe6ccec91fc4e60ac48305..25dc0a94c76b4b1af1f73b4ce61d32f389072ecf 100644
 --- a/api/server/controllers/agents/client.test.js
 +++ b/api/server/controllers/agents/client.test.js
 @@ -356,7 +356,9 @@ describe('AgentClient - event actor history adapter', () => {
@@ -443,7 +443,7 @@ index 1f372eb0f836743f495c72d464d40a9378bb18e2..ecd227eeefca72187a127f52e9ad2faa
  
    it('dedups before applying the combined cap so the cap reflects real primes', () => {
 diff --git a/packages/api/src/agents/handlers.ts b/packages/api/src/agents/handlers.ts
-index f8d1928118f071b4d513320c2134863629be19f2..420adad664a7f9307e882ab1a7e9a63db717c504 100644
+index 5ee2bcd359b94a8fad1773b78ec338e10f92a7bf..f76707eb15d62d1f9b2aae05b557edf0c3bd4cd8 100644
 --- a/packages/api/src/agents/handlers.ts
 +++ b/packages/api/src/agents/handlers.ts
 @@ -5314,7 +5314,9 @@ async function handleSkillToolCall(
@@ -531,10 +531,10 @@ index 0000000000000000000000000000000000000000..ab345e8fa007f3f5036d1f506b2f1db0
 +  });
 +});
 diff --git a/packages/api/src/agents/skillFiles.spec.ts b/packages/api/src/agents/skillFiles.spec.ts
-index 5c6dd875c412c794f3760499b95fef17e54ba94e..019f99567b68b8a77e66bf02adf8f60c78e66c64 100644
+index dc56f2d75d9efbd93281f6d4502a68f027e5d55a..e00ce37b75a81ecb15d5be40494efdfd80a2c5a8 100644
 --- a/packages/api/src/agents/skillFiles.spec.ts
 +++ b/packages/api/src/agents/skillFiles.spec.ts
-@@ -65,7 +65,9 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
+@@ -66,7 +66,9 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
  
      const result = await primeInvokedSkills(deps);
  
@@ -545,7 +545,7 @@ index 5c6dd875c412c794f3760499b95fef17e54ba94e..019f99567b68b8a77e66bf02adf8f60c
      expect(deps.listSkillFiles).not.toHaveBeenCalled();
      expect(deps.batchUploadCodeEnvFiles).not.toHaveBeenCalled();
    });
-@@ -883,7 +885,14 @@ describe('primeInvokedSkillsForProfiles', () => {
+@@ -884,7 +886,14 @@ describe('primeInvokedSkillsForProfiles', () => {
  
      const result = await primeInvokedSkillsForProfiles(deps);
  
@@ -562,7 +562,7 @@ index 5c6dd875c412c794f3760499b95fef17e54ba94e..019f99567b68b8a77e66bf02adf8f60c
        {
          id: SKILL_ID.toString(),
 diff --git a/packages/api/src/agents/skillFiles.ts b/packages/api/src/agents/skillFiles.ts
-index 8c5d0a420bef640c9bd99039648b3ff567ce2188..cb92d658703cbc89ebb7908988578b2ce30f3073 100644
+index d5b5d8a1f6ca00d86caf40977e35c29d7132355d..bf6f0e9006275e95ee45ac507b52d55f31541512 100644
 --- a/packages/api/src/agents/skillFiles.ts
 +++ b/packages/api/src/agents/skillFiles.ts
 @@ -7,7 +7,7 @@ import {
@@ -574,7 +574,7 @@ index 8c5d0a420bef640c9bd99039648b3ff567ce2188..cb92d658703cbc89ebb7908988578b2c
  import type { Types } from 'mongoose';
  import type { ServerRequest } from '~/types';
  import {
-@@ -730,7 +730,7 @@ export interface PrimeInvokedSkillsResult {
+@@ -734,7 +734,7 @@ export interface PrimeInvokedSkillsResult {
    initialSessions?: ToolSessionMap;
    /** Pre-resolved skill bodies keyed by skill name. Passed to formatAgentMessages
     *  so it can reconstruct HumanMessages at the right position in the message sequence. */
@@ -583,7 +583,7 @@ index 8c5d0a420bef640c9bd99039648b3ff567ce2188..cb92d658703cbc89ebb7908988578b2c
    /** Exact records resolved under the current request's ACL. */
    skillManifest?: Array<{
      id: string;
-@@ -768,7 +768,7 @@ export async function primeInvokedSkills(
+@@ -772,7 +772,7 @@ export async function primeInvokedSkills(
      return {};
    }
  
@@ -592,7 +592,7 @@ index 8c5d0a420bef640c9bd99039648b3ff567ce2188..cb92d658703cbc89ebb7908988578b2c
  
    // Phase 1: Resolve all skills in parallel (DB lookups)
    const resolveResults = await Promise.allSettled(
-@@ -789,7 +789,11 @@ export async function primeInvokedSkills(
+@@ -793,7 +793,11 @@ export async function primeInvokedSkills(
    for (const r of resolveResults) {
      if (r.status === 'fulfilled' && r.value) {
        assertStoredSkillBodyAllowed(r.value, deps.req);
@@ -605,7 +605,7 @@ index 8c5d0a420bef640c9bd99039648b3ff567ce2188..cb92d658703cbc89ebb7908988578b2c
        resolvedSkills.push(r.value);
      } else if (r.status === 'rejected') {
        logger.warn('[primeInvokedSkills] Skill resolution failed:', getSafeErrorMetadata(r.reason));
-@@ -1033,7 +1037,7 @@ export async function primeInvokedSkillsForProfiles(
+@@ -1037,7 +1041,7 @@ export async function primeInvokedSkillsForProfiles(
    );
  
    let initialSessions: ToolSessionMap | undefined;
@@ -614,7 +614,7 @@ index 8c5d0a420bef640c9bd99039648b3ff567ce2188..cb92d658703cbc89ebb7908988578b2c
    const skillManifestByName = new Map<
      string,
      NonNullable<PrimeInvokedSkillsResult['skillManifest']>[number]
-@@ -1052,7 +1056,7 @@ export async function primeInvokedSkillsForProfiles(
+@@ -1056,7 +1060,7 @@ export async function primeInvokedSkillsForProfiles(
        if (
          (existingIdentity != null &&
            JSON.stringify(existingIdentity) !== JSON.stringify(identity)) ||

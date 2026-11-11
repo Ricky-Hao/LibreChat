@@ -1,6 +1,6 @@
 # 行为映射与替代边界
 
-本表吸收独立文档提交 `2e79586e547131de06494bed2f3274f4745ca435` 的 26 行状态记录，并核对到完整 fork 源 `38c026db83d0ca12a067083b5c1551c1bca2754b`。执行基线固定为 `f4154b649efa37e1345ccc517a4d8d1ed2178c82`；原记录对 upstream dev `0eadbc45b1304b5986ce1c324bfda1421faaabfe` 的比较只作为来源，本阶段未获取或同步该提交。
+本表吸收独立文档提交 `2e79586e547131de06494bed2f3274f4745ca435` 的 26 行状态记录，并保留完整 fork 源 `38c026db83d0ca12a067083b5c1551c1bca2754b` 的来源信息。执行基线固定为 upstream main `e6567c7a681ce67869dce31486a21d3a25d6931b`；原记录对 upstream dev `0eadbc45b1304b5986ce1c324bfda1421faaabfe` 的比较只作为历史来源。
 
 `manifest.json` 是唯一执行顺序。本表按原行为记录顺序展示映射，目录内 README 记录完整来源 SHA、后续修正、依赖及维护合同，`tests.json` 指向生成应用中的实际检查入口。
 
@@ -21,7 +21,7 @@
 | 13. Bounded MCP message reads | [bounded-reads](../patches/bounded-reads/README.md) | feature | DB projection、wire budget、逐页授权、UTF-8 continuation、revision writes 和 DocumentDB 表达式；普通 pagination/preview 不等价。 |
 | 14. Display history, lazy attachments and inactive-cache retention | [history-window](../patches/history-window/README.md) | feature | observer admission、paging/anchor、DB body 排除、鉴权懒读取、缓存所有权及 export/share/edit 完整调用；非硬 DOM/heap 上限。 |
 | 15. Native mobile overlay dismissal | [native-overlays](../patches/native-overlays/README.md) | feature | CloseWatcher/Navigation API、层栈、受控/非受控 dialog、Forward 和匹配 FINAL sync；不恢复 synthetic history，不承诺不支持原生 API 浏览器的通用 Back 拦截。 |
-| 16. Vendor chunk classification | [vendor-chunks](../patches/vendor-chunks/README.md) | awaiting-upstream | 固定基线继续使用本地修复；目标确含 #17921 后采用上游第一层 node_modules 嵌套归组，移除本地末段裁剪。 |
+| 16. Vendor chunk classification | [vendor-chunks](../patches/vendor-chunks/README.md) | upstream | 固定基线已含 #17921，采用上游第一层 node_modules 嵌套归组及 Windows 路径规范化，移除本地末段裁剪载荷；保留真实 config probe 合同。 |
 | 17. MCP server-initiated ping responses | [mcp-ping](../patches/mcp-ping/README.md) | awaiting-upstream | 固定基线保留合法空成功响应；目标确含 #18020 等价实现与回归覆盖后移除本地变体。 |
 | 18. Unknown-provider MCP display images | [mcp-images](../patches/mcp-images/README.md) | awaiting-upstream | 目标确含 #18000 后采用 display-only imageAttachments；未知 provider 不声明 vision 支持，fallback 模型文本 base64 膨胀仍未解决。 |
 | 19. Delayed sidebar focus | [sidebar-focus](../patches/sidebar-focus/README.md) | awaiting-upstream | 目标确含 #18001 后采用 opener/body guard，保留 mobile drawer commit handoff；不替代 overlay 能力。 |
@@ -33,25 +33,29 @@
 | 25. Devcontainer, fork image CI, build/test adaptations | [dev-environment](../patches/dev-environment/README.md)、[fork-image](../patches/fork-image/README.md)、[test-adaptations](../patches/test-adaptations/README.md) | local | 分别维护 Coder/locked setup、现有 rickyhao/dev 镜像入口和当前有效 fixture；保留基线 a11y workflow，不重放过期 fixture。 |
 | 26. Vendored SDK, lock/build wiring and prior artifacts | [sdk](../patches/sdk/README.md) | keep | 只携带当前消费的 4.2.2-ricky.1、源码 patch、元数据、锁文件、主机消费方和构建接线；历史归档不重放。 |
 
-另有 [contributor-guidance](../patches/contributor-guidance/README.md) 文档载荷（local），保存应用 AGENTS 和 PR template 的净差异。根 AGENTS 负责补丁仓自身维护。合并三对行为、拆出环境/镜像/测试责任并保留贡献指南后，清单共 26 条目、25 份载荷：keep 9、feature 4、awaiting-upstream 4、local 8、upstream 1。
+另有 [contributor-guidance](../patches/contributor-guidance/README.md) 文档载荷（local），保存应用 AGENTS 和 PR template 的净差异。根 AGENTS 负责补丁仓自身维护。合并三对行为、拆出环境/镜像/测试责任并保留贡献指南后，清单共 26 条目、24 份载荷：keep 9、feature 4、awaiting-upstream 3、local 8、upstream 2。
 
 ## 替代证据
 
-四项 awaiting-upstream 的平台状态已只读核实，但它们均不在固定基线的等价实现范围内，因此本阶段不跳过：
+以下四项的来源和固定基线实现已核对。`vendor-chunks` 已完全替代；其余三项继续应用：
 
 | 责任组 | 上游状态与来源 | 适用条件 |
 | --- | --- | --- |
-| vendor-chunks | [#17921](https://github.com/LibreChat-AI/LibreChat/pull/17921)，merge `fc3b86acbc0a5290154b25f7a0091641667cd14b`；#15907 被替代，#17567 已完成 | 新目标含替代提交，核对第一层 node_modules 规则和相关构建测试。 |
+| vendor-chunks | [#17921](https://github.com/LibreChat-AI/LibreChat/pull/17921)，merge `fc3b86acbc0a5290154b25f7a0091641667cd14b`；#15907 被替代，#17567 已完成 | 替代提交是固定基线祖先；`client/vite.config.ts` 按第一层 node_modules 分类，嵌套包跟随所属外层包，规范化 Windows 分隔符。对应 Playwright 合同执行两个真实配置 probe。 |
 | mcp-ping | [#18020](https://github.com/LibreChat-AI/LibreChat/pull/18020) 已合入 dev；PR head `7b59bc972982e6424cb48918c5c1d7de42391717`；#17568 已完成 | PR head 不是 merge SHA；更新基线时取得目标实际包含的替代提交与实现证据。 |
 | mcp-images | [#18000](https://github.com/LibreChat-AI/LibreChat/pull/18000) 已合入 dev；PR head `b8f7c5d2b97557ed85a71027c933f61c33bd806a`；#17569 已完成 | PR head 不是 merge SHA；核对附件持久化、display-only 路径与剩余 base64 边界。 |
 | sidebar-focus | [#18001](https://github.com/LibreChat-AI/LibreChat/pull/18001) 已合入 dev；PR head `e86cc7c687905de4e277e66a6f93a036e16617dc`；#17570 已完成 | PR head 不是 merge SHA；核对 deliberate focus 与 mobile drawer handoff。 |
 
-index-retry 的 replacement commit 为 `e2b2839375d5e8052dec4785bf3117ce27aa67dc`，已在固定基线祖先链，helper 与基线一致。只有这一项现在跳过。将来完全替代须记录完整 replacement.commit 和行为证据；部分替代只移除对应 hunks，不连带删除剩余能力、持久数据合同或调用方。
+index-retry 的 replacement commit 为 `e2b2839375d5e8052dec4785bf3117ce27aa67dc`，已在固定基线祖先链，helper 与基线一致。当前跳过 vendor-chunks 和 index-retry 两项载荷。将来完全替代须记录完整 replacement.commit 和行为证据；部分替代只移除对应 hunks，不连带删除剩余能力、持久数据合同或调用方。
 
 ## 延续的贡献状态与验证边界
 
 文档来源记录：[#15906](https://github.com/LibreChat-AI/LibreChat/pull/15906) 为 draft，与未合入的 [#15966](https://github.com/LibreChat-AI/LibreChat/pull/15966) 重叠；保留仍需的预算/恢复更新，覆盖核实后再退役重复贡献。[#15955](https://github.com/LibreChat-AI/LibreChat/pull/15955) 未合入且已含原生 overlay 重写。已关闭未合入的 [#15864](https://github.com/LibreChat-AI/LibreChat/pull/15864) 动态密码消息不在本分支载荷；[#15851](https://github.com/LibreChat-AI/LibreChat/pull/15851) 已合入，无独立重放。这里只吸收既有状态记录，不执行外部评论或贡献整理。
 
-原始历史审计及其测试计数仍可从 [固定应用源](https://github.com/Ricky-Hao/LibreChat/blob/38c026db83d0ca12a067083b5c1551c1bca2754b/docs/fork-audit.md) 读取，不转为本阶段 pass。bounded-reads 历史 Lighthouse 为 NO_FCP；loading-priority 的调用顺序也不能证明 LCP 改善。fresh Docker/Envbuilder、可选 Compose、镜像发布、部署、真实 Redis/provider 与 Safari/Firefox 均没有新增验收证据。
+原始历史审计及其测试计数仍可从 [固定应用源](https://github.com/Ricky-Hao/LibreChat/blob/38c026db83d0ca12a067083b5c1551c1bca2754b/docs/fork-audit.md) 读取，不转为本阶段 pass。2026-11-11 的固定基线验收完成 71 项去重合同：54 项 focused、6 项 types、9 项 browser 和 2 项 project 全部通过。去重后 106 个 Jest suites、6074 个 tests 及 80 个 Playwright tests 通过；生产构建、固定基线 static-checks 和两个 Lighthouse 场景通过，原有失败及修正后补跑见[根 README](../README.md#验证)。loading-priority 的调用顺序本身仍不能证明性能改善，本轮 Lighthouse 只证明当前实验场景满足原预算。
+
+最终[应用提交 `4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79`](https://github.com/Ricky-Hao/LibreChat/commit/4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79) 与正式重放共用 tree `dcc8f4edc32c510e7eea8e9b514ef0117c02c90c`。原 pre-push 完整检查通过，普通 push 已成功；原门禁跳过的配置迁移测试、缺少 depcheck 的依赖检查及未涉及的 ESLint 配置检查见根 README，不计入已运行通过项。
+
+fresh Docker/Envbuilder、可选 Compose、镜像发布、部署、真实 Redis/provider 与 Safari/Firefox 均没有新增验收证据。
 
 当前采用固定基线加有序补丁的维护方法，见 [maintenance.md](maintenance.md)。独立文档里的旧 merge-sync 推荐不作为此补丁仓的默认流程；应用主分支迁移、合并、发布和部署仍需各自方案与授权。

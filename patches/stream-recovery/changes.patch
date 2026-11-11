@@ -1,5 +1,5 @@
 diff --git a/api/server/routes/__tests__/config.spec.js b/api/server/routes/__tests__/config.spec.js
-index a6feec5d20d77962fadefb552d8644c11114696b..ee5439baf9bf22175f3f6d2b598d82fcbbfed7aa 100644
+index 532a2ce841d38a7015bb1dcb5001b7d481dd258c..7358f2eaed3ef6e706a780ba2e09dcacb3eb0205 100644
 --- a/api/server/routes/__tests__/config.spec.js
 +++ b/api/server/routes/__tests__/config.spec.js
 @@ -126,6 +126,19 @@ afterEach(() => {
@@ -70,13 +70,13 @@ index 3827b06599f785be303244826c4efb092fe977a9..d9884103201ce16995e67c7e718589f2
          appConfig,
          endpoint: EModelEndpoint.agents,
 diff --git a/client/src/Providers/ChatHostContext.tsx b/client/src/Providers/ChatHostContext.tsx
-index becf077e124544fa07013abf020b48c90ac2c9f4..9e5193ce620e4c0930c1e48b2920e10e27cea58e 100644
+index 310e953507294be490faa33da7eabf7580bbf441..70ed1c65ee43530fd9eefadc0ed1b0b3789c497d 100644
 --- a/client/src/Providers/ChatHostContext.tsx
 +++ b/client/src/Providers/ChatHostContext.tsx
-@@ -101,6 +101,8 @@ function useMessages(
+@@ -102,6 +102,8 @@ function useMessages(
      {
-       enabled: !!conversationId && conversationId !== Constants.SEARCH,
-       refetchOnMount: true,
+       enabled: enabled && !!conversationId && conversationId !== Constants.SEARCH,
+       refetchOnMount: refetchMessagesOnMount,
 +      refetchOnWindowFocus: !isStreaming,
 +      refetchOnReconnect: !isStreaming,
      },
@@ -159,7 +159,7 @@ index a500852c1190e8ece5812c7340147aec47907584..e114c5d1d932fa55cd329f596db61bfe
      const queryClient = new QueryClient();
      queryClient.setQueryData([QueryKeys.messages, 'convo-1'], messages);
 diff --git a/client/src/hooks/Chat/contract.ts b/client/src/hooks/Chat/contract.ts
-index 90d07dd30873a54317fda1d110d71c9292eb42bd..2dd5e0df3fa6fdf8de8672290d344dfed05d8b73 100644
+index 35486df2b6f72a8beb3a32a972c8e46791c3d78f..ad618071542b682c3ace8bca36f037a454d9adf2 100644
 --- a/client/src/hooks/Chat/contract.ts
 +++ b/client/src/hooks/Chat/contract.ts
 @@ -72,6 +72,7 @@ export type ChatConfig = {
@@ -171,18 +171,23 @@ index 90d07dd30873a54317fda1d110d71c9292eb42bd..2dd5e0df3fa6fdf8de8672290d344dfe
  
  /** The signed-in account, as far as the chat reads it. */
 diff --git a/client/src/hooks/SSE/resumable.ts b/client/src/hooks/SSE/resumable.ts
-index 230b032d3650834499f94555310749baa4f498a8..6d0d1747396d24e5cdc7786946f82a8b2c146e96 100644
+index f833a68f567d770999c3c1d19ce66d25d95e8eeb..9b82a4e4b6bf22357620f9c2fc351b1c6d65f899 100644
 --- a/client/src/hooks/SSE/resumable.ts
 +++ b/client/src/hooks/SSE/resumable.ts
-@@ -1,5 +1,6 @@
+@@ -1,10 +1,11 @@
 -import { useCallback } from 'react';
 +import { useCallback, useRef, useLayoutEffect } from 'react';
- import { documentVisibility } from '@librechat/chat';
+ import {
+   documentVisibility,
+   applyActivityLabelPart,
+   offsetActivityPhaseBoundary,
+   findActivityLabelMessageIndex,
+ } from '@librechat/chat';
 +import { DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES } from 'librechat-data-provider';
  import type { ResumableServices, ResumableStreamParams } from '@librechat/chat/react';
  import type { ResumableParts } from '@librechat/chat';
  import {
-@@ -47,6 +48,10 @@ export function useResumableServices({
+@@ -49,6 +50,10 @@ export function useResumableServices({
    setStreamId,
  }: ResumableStreamParams): () => ResumableServices {
    const { auth, config } = useChatSettings();
@@ -193,7 +198,7 @@ index 230b032d3650834499f94555310749baa4f498a8..6d0d1747396d24e5cdc7786946f82a8b
    const { token, isAuthenticated = false } = auth;
    const transport = useChatTransport();
    const { setMessages, getMessages, setConversation, setIsSubmitting, newConversation } = chat;
-@@ -82,6 +87,7 @@ export function useResumableServices({
+@@ -84,6 +89,7 @@ export function useResumableServices({
      (): ResumableServices => ({
        logger,
        visibility: documentVisibility,
@@ -214,7 +219,7 @@ index 9553e7a702b27b7f21e784b0c7c0bef58be4621f..998f53ae50735799714072a8b292eb12
        queuedSendLockTimeoutMs: ui?.queuedSendLockTimeoutMs,
        queuedTurnReconciliationTimeoutMs: ui?.queuedTurnReconciliationTimeoutMs,
 diff --git a/librechat.example.yaml b/librechat.example.yaml
-index e325df6adc0c44a0b2ba080d02de318cd8112e9a..df1975dd1139c2c13196761aa86c5c26bedc70ef 100644
+index cd3af21ceab69967f0cfb0b1dd9e0af239ab866e..8054ad41b9d475f43979f991c631a790f31710fc 100644
 --- a/librechat.example.yaml
 +++ b/librechat.example.yaml
 @@ -51,6 +51,11 @@ projects:
@@ -317,10 +322,17 @@ index 1c6bd0d85b1e54bebdd78125b90fd735ee33387f..b35cc1408af845887c1ae9c8b615da0e
        findReasoningLabelTarget: jest.fn(() => -1),
      },
 diff --git a/packages/chat/src/core/__tests__/subscription.spec.ts b/packages/chat/src/core/__tests__/subscription.spec.ts
-index 578e0045e2d2a7eba10666f944b5504861c42b15..2465f4ca538fc068b49d0343a148f13fe9541c96 100644
+index bb64390d6be2ed0f2f760ae8ac725514b13c9674..32f873942b320fce8bb86025aeac8f7d1bbd7188 100644
 --- a/packages/chat/src/core/__tests__/subscription.spec.ts
 +++ b/packages/chat/src/core/__tests__/subscription.spec.ts
-@@ -12,18 +12,24 @@ import { createScheduler } from '../__fixtures__/resumable';
+@@ -11,24 +11,31 @@ import {
+   withStatusDeadline,
+   ResumableSubscription,
+   STATUS_READ_TIMEOUT_MS,
++  StatusReadTimeoutError,
+ } from '../resumable';
+ import { createScheduler } from '../__fixtures__/resumable';
+ 
  const createVisibility = () => {
    let visible = true;
    const listeners = new Set<() => void>();
@@ -346,7 +358,7 @@ index 578e0045e2d2a7eba10666f944b5504861c42b15..2465f4ca538fc068b49d0343a148f13f
  };
  
  const submission = {
-@@ -148,20 +154,27 @@ describe('ResumableSubscription', () => {
+@@ -153,42 +160,47 @@ describe('ResumableSubscription', () => {
      expect(subscribe).toHaveBeenCalledWith(expect.objectContaining({ isResume: true }));
    });
  
@@ -382,7 +394,36 @@ index 578e0045e2d2a7eba10666f944b5504861c42b15..2465f4ca538fc068b49d0343a148f13f
      expect(subscribe).toHaveBeenCalledTimes(1);
    });
  
-@@ -176,6 +189,7 @@ describe('ResumableSubscription', () => {
+-  it('runs the next foreground check once an unanswered status read reaches its deadline', async () => {
++  it('re-attaches on foreground while a separate status read is still unanswered', async () => {
+     const { sub, clock, page, fetchStatus, subscribe } = setup();
+     sub.host.fetchStatus = withStatusDeadline(fetchStatus, clock.scheduler);
+     sub.claim();
+     sub.connection = { closed: false };
+     sub.watchForeground();
+     fetchStatus.mockReturnValueOnce(new Promise<never>(() => undefined));
++    const status = sub.host.fetchStatus('c-1');
+     page.show();
+-    await new Promise((resolve) => setImmediate(resolve));
+-    page.show();
+-    await new Promise((resolve) => setImmediate(resolve));
+     expect(fetchStatus).toHaveBeenCalledTimes(1);
++    expect(subscribe).toHaveBeenCalledWith(
++      expect.objectContaining({ isResume: true, generationCreatedAt: 2000 }),
++    );
+ 
+     clock.advance(STATUS_READ_TIMEOUT_MS);
+-    await new Promise((resolve) => setImmediate(resolve));
+-    fetchStatus.mockResolvedValueOnce({ active: false, createdAt: 2000 });
+-    page.show();
+-    await new Promise((resolve) => setImmediate(resolve));
+-    expect(fetchStatus).toHaveBeenCalledTimes(2);
++    await expect(status).rejects.toBeInstanceOf(StatusReadTimeoutError);
++    expect(fetchStatus).toHaveBeenCalledTimes(1);
+     expect(subscribe).toHaveBeenCalledTimes(1);
+   });
+ 
+@@ -203,6 +215,7 @@ describe('ResumableSubscription', () => {
      });
      second.watchForeground();
      expect(page.listeners.size).toBe(1);
@@ -391,10 +432,10 @@ index 578e0045e2d2a7eba10666f944b5504861c42b15..2465f4ca538fc068b49d0343a148f13f
  });
  
 diff --git a/packages/chat/src/core/__tests__/terminal.spec.ts b/packages/chat/src/core/__tests__/terminal.spec.ts
-index 6f71332f50311578c42bbe37a3165d8f17d5c435..7ee25759e26fdb870bed671a0eabc35ade59c4f7 100644
+index 548b8df8596ce9a323eb34a7397fc65e642ca737..565b17856344f9bcbb02681eeac2ca11aa9007be 100644
 --- a/packages/chat/src/core/__tests__/terminal.spec.ts
 +++ b/packages/chat/src/core/__tests__/terminal.spec.ts
-@@ -8,6 +8,7 @@ import {
+@@ -11,6 +11,7 @@ import {
    reconcileGenerationLifecycle,
  } from '../resumable';
  import { createHost, createScheduler } from '../__fixtures__/resumable';
@@ -402,7 +443,7 @@ index 6f71332f50311578c42bbe37a3165d8f17d5c435..7ee25759e26fdb870bed671a0eabc35a
  
  const submission = {
    userMessage: { messageId: 'u-1', conversationId: 'c-1', isCreatedByUser: true } as TMessage,
-@@ -53,7 +54,7 @@ describe('authorizeTerminalTeardown', () => {
+@@ -56,7 +57,7 @@ describe('authorizeTerminalTeardown', () => {
      fetchStatus.mockResolvedValue({ active: true, createdAt: 2000, generationProtocolVersion: 2 });
      await expect(authorizeTerminalTeardown(ctx, 'c-1', 'error')).resolves.toBe(false);
      expect(ctx.sub.controller.signal.aborted).toBe(true);
@@ -411,7 +452,18 @@ index 6f71332f50311578c42bbe37a3165d8f17d5c435..7ee25759e26fdb870bed671a0eabc35a
      expect(host.subscribe).not.toHaveBeenCalled();
      clock.advance(1);
      expect(host.subscribe).toHaveBeenCalledWith(
-@@ -129,15 +130,39 @@ describe('reconcileGenerationLifecycle', () => {
+@@ -76,7 +77,9 @@ describe('authorizeTerminalTeardown', () => {
+       'Could not verify FINAL generation status',
+       expect.objectContaining({ error: expect.any(StatusReadTimeoutError) }),
+     );
+-    clock.advance(250);
++    clock.advance(999);
++    expect(host.subscribe).not.toHaveBeenCalled();
++    clock.advance(1);
+     expect(host.subscribe).toHaveBeenCalledWith(
+       expect.objectContaining({ streamId: 'c-1', isResume: true, generationCreatedAt: 2000 }),
+     );
+@@ -150,15 +153,39 @@ describe('reconcileGenerationLifecycle', () => {
      expect(run.reconnectAttempt).toBe(0);
    });
  
@@ -1175,7 +1227,7 @@ index 83cac50ac3416530464b0bf7c38588f2d528dbb1..02401a097f8a405898d5a9a2a0996a90
          dispatch({ type: 'open' });
        });
 diff --git a/packages/data-provider/src/config.spec.ts b/packages/data-provider/src/config.spec.ts
-index be96bd60ed1c57da531bad3dbddfc5d5d14d3043..8b972f50bad554ea68c867d0b7140b5833fcbf98 100644
+index 97927ecfe00767e14e3808fb57c5f972f4c5df5f..731e1e2776a7827526a3b1b5f6f5cdcd0b2509f1 100644
 --- a/packages/data-provider/src/config.spec.ts
 +++ b/packages/data-provider/src/config.spec.ts
 @@ -424,6 +424,41 @@ describe('passkey enrollment config', () => {
@@ -1221,10 +1273,10 @@ index be96bd60ed1c57da531bad3dbddfc5d5d14d3043..8b972f50bad554ea68c867d0b7140b58
    it('ships the exact-count budget a deployment can raise or lower', () => {
      /** The save path tokenizes a stopped turn's retained tool results to add an
 diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
-index fa2aa40b0b8e59150373e24fd986de6e12ed9cd8..2be591214a4b37ccfbb52c8f09a5dd9fd2063085 100644
+index 39199452d3162b89aca2e82d43d732a5200f37fa..d2f15429e81fa6f6a33449b1b089b7955a8f9db5 100644
 --- a/packages/data-provider/src/config.ts
 +++ b/packages/data-provider/src/config.ts
-@@ -3709,6 +3709,7 @@ export type TStartupConfig = {
+@@ -3741,6 +3741,7 @@ export type TStartupConfig = {
     * is advertised. */
    codeWorkspaceInheritanceVersion?: typeof CODE_WORKSPACE_INHERITANCE_VERSION;
    interface?: TInterfaceConfig;
@@ -1232,7 +1284,7 @@ index fa2aa40b0b8e59150373e24fd986de6e12ed9cd8..2be591214a4b37ccfbb52c8f09a5dd9f
    turnstile?: TTurnstileConfig;
    balance?: TBalanceConfig;
    transactions?: TTransactionsConfig;
-@@ -4457,3 +4458,17 @@ export const messageReadsConfigSchema = z.object({
+@@ -4489,3 +4490,17 @@ export type TMessageReadsConfig = z.infer<typeof messageReadsConfigSchema>;
 +export const DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES = 5;
 +
 +export const resumableStreamsSchema = z
@@ -1250,7 +1302,7 @@ index fa2aa40b0b8e59150373e24fd986de6e12ed9cd8..2be591214a4b37ccfbb52c8f09a5dd9f
  export const configSchema = z.object({
    version: z.string(),
    telemetry: telemetrySchema.optional(),
-@@ -4467,6 +4482,7 @@ export const configSchema = z.object({
+@@ -4499,6 +4514,7 @@ export const configSchema = z.object({
      .optional(),
    cache: z.boolean().default(true),
    projects: chatProjectsConfigSchema,

@@ -1,10 +1,10 @@
 diff --git a/client/src/components/Artifacts/Artifacts.tsx b/client/src/components/Artifacts/Artifacts.tsx
-index 43707ba9feae59c6c32d05cf616c396cb864f8d5..2657c5b974c177d0a02d0fe6e063baf9cf1488a8 100644
+index c398bbe5c1584bda41d366e3290fa46d387d7411..47a27d4b4dd235ad22c9e7a1bd0a17634cf8682b 100644
 --- a/client/src/components/Artifacts/Artifacts.tsx
 +++ b/client/src/components/Artifacts/Artifacts.tsx
-@@ -3,7 +3,14 @@ import { useAtom } from 'jotai';
- import copy from 'copy-to-clipboard';
+@@ -4,7 +4,14 @@ import copy from 'copy-to-clipboard';
  import * as Tabs from '@radix-ui/react-tabs';
+ import { CopyButton } from '@librechat/chat/components';
  import { useSetRecoilState, useResetRecoilState } from 'recoil';
 -import { Button, Spinner, useMediaQuery, Radio, useToastContext } from '@librechat/client';
 +import {
@@ -37,76 +37,6 @@ index 43707ba9feae59c6c32d05cf616c396cb864f8d5..2657c5b974c177d0a02d0fe6e063baf9
 +    </OverlayBack>
 +  );
  }
-diff --git a/client/src/components/Chat/Messages/Content/DialogImage.tsx b/client/src/components/Chat/Messages/Content/DialogImage.tsx
-index 4dd98b0d8f74d231bb761bd900c89ef287c58959..b261c3bfa51cbc6a6ee0ac2c90a7f940c5c67af7 100644
---- a/client/src/components/Chat/Messages/Content/DialogImage.tsx
-+++ b/client/src/components/Chat/Messages/Content/DialogImage.tsx
-@@ -2,7 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
- import { PanelLeftOpen, PanelLeftClose } from 'lucide';
- import * as DialogPrimitive from '@radix-ui/react-dialog';
- import { X, ArrowDownToLine, RotateCcw } from 'lucide-react';
--import { Button, MorphIcon, TooltipAnchor, useMediaQuery, useRemScale } from '@librechat/client';
-+import {
-+  Button,
-+  Dialog,
-+  MorphIcon,
-+  TooltipAnchor,
-+  useMediaQuery,
-+  useRemScale,
-+} from '@librechat/client';
- import { useLocalize } from '~/hooks';
- 
- /** The lightbox is z-250 and not an OGDialog, so its tooltips would keep the default 150 and sit behind it. */
-@@ -260,7 +267,7 @@ export default function DialogImage({
-   const getImageMaxWidth = () => (detailsBeside ? 'calc(90vw - 20rem)' : '90vw');
- 
-   return (
--    <DialogPrimitive.Root open={isOpen} onOpenChange={onOpenChange}>
-+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
-       <DialogPrimitive.Portal>
-         <DialogPrimitive.Overlay
-           className="bg-surface-media-overlay/90 fixed inset-0 z-[250]"
-@@ -477,6 +484,6 @@ export default function DialogImage({
-           )}
-         </DialogPrimitive.Content>
-       </DialogPrimitive.Portal>
--    </DialogPrimitive.Root>
-+    </Dialog>
-   );
- }
-diff --git a/client/src/components/Chat/Subagents/SubagentThreadPanel.tsx b/client/src/components/Chat/Subagents/SubagentThreadPanel.tsx
-index d4faa30c5f7b4ca62775c33276f66f22799441c6..cf096d55cc2d47d0bd8169115f3cd1cd8b1d63af 100644
---- a/client/src/components/Chat/Subagents/SubagentThreadPanel.tsx
-+++ b/client/src/components/Chat/Subagents/SubagentThreadPanel.tsx
-@@ -10,6 +10,7 @@ import {
-   Button,
-   Composer,
-   ControlCombobox,
-+  OverlayBack,
-   useMediaQuery,
-   useToastContext,
- } from '@librechat/client';
-@@ -1594,7 +1595,7 @@ export default function SubagentThreadPanel({ selection }: { selection: ActiveSu
-     );
-   }
- 
--  return (
-+  const panel = (
-     <aside
-       ref={panelRef}
-       tabIndex={-1}
-@@ -1766,6 +1767,11 @@ export default function SubagentThreadPanel({ selection }: { selection: ActiveSu
-       )}
-     </aside>
-   );
-+  return (
-+    <OverlayBack open={isMobile} onClose={close}>
-+      {panel}
-+    </OverlayBack>
-+  );
- }
- 
- function HistoricalEventTaskActivity({
 diff --git a/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx b/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx
 index b0ca8e43462a4eb05da65a50f7e57a3431a9ec41..d832a2741feeb38dda711249e3f01e5b8e33e438 100644
 --- a/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx
@@ -165,12 +95,12 @@ index beb54d49c8a56403b2e30f114e6557d61328f68d..69a83010d232667ad8b62d0051e049f9
 +  );
  }
 diff --git a/client/src/hooks/SSE/pane.ts b/client/src/hooks/SSE/pane.ts
-index 63b9a6f1acbbc76502d6c9501dd5c08f904450f1..3c23767a16093adb65dcf713b472248cd2bf141c 100644
+index 255d951dd38dfb7abfdfdcf19dab8509ca2e1fc2..559a340d1993974299a20d65e00f425657f7d4fb 100644
 --- a/client/src/hooks/SSE/pane.ts
 +++ b/client/src/hooks/SSE/pane.ts
 @@ -23,6 +23,7 @@ import type {
  } from '@librechat/chat';
- import type { EventHandlerParams } from './useEventHandlers';
+ import type { EventHandlerParams } from '@librechat/chat/react';
  import { clearComposerDrafts, resolveRunEndTarget } from '~/utils';
 +import { replaceBrowserUrl } from '~/utils/overlays';
  import { activeRunFamily } from './atoms';
@@ -1191,7 +1121,7 @@ index 0000000000000000000000000000000000000000..4a15db658fae0d38aabc2331b41d2dd6
 +}
 diff --git a/e2e/specs/mock/mobile-overlay-back.spec.ts b/e2e/specs/mock/mobile-overlay-back.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..2babe9c74ee712e8bc705c86f1ed704cfca022a8
+index 0000000000000000000000000000000000000000..f46c23de1f9d097f9646ac3846d1114bbe70a0b4
 --- /dev/null
 +++ b/e2e/specs/mock/mobile-overlay-back.spec.ts
 @@ -0,0 +1,373 @@
@@ -1279,10 +1209,10 @@ index 0000000000000000000000000000000000000000..2babe9c74ee712e8bc705c86f1ed704c
 +    const label = 'mobile-instructions-back';
 +    const chatUrl = await prepareMockChat(page, replyPrompt(label));
 +    const form = await openAgentBuilder(page, { navigate: false });
-+    const instructions = form.getByTestId('instructions-inline-panel');
++    const expandInstructions = form.getByRole('button', { name: 'Expand editor', exact: true });
 +    const agentName = uniqueAgentName('E2E Back Draft');
 +    await form.getByLabel('Agent name').fill(agentName);
-+    await instructions.getByRole('button', { name: 'Expand editor', exact: true }).click();
++    await expandInstructions.click();
 +
 +    const editor = page.getByRole('dialog', { name: 'Instructions', exact: true });
 +    const draft = 'Keep this unsaved instruction draft.\nDo not navigate away from the chat.';
@@ -1291,7 +1221,7 @@ index 0000000000000000000000000000000000000000..2babe9c74ee712e8bc705c86f1ed704c
 +    await expect(form.getByLabel('Instructions', { exact: true })).toHaveValue(draft);
 +    await expect(form.getByLabel('Agent name')).toHaveValue(agentName);
 +
-+    await instructions.getByRole('button', { name: 'Expand editor', exact: true }).click();
++    await expandInstructions.click();
 +    await expect(editor.getByRole('textbox', { name: 'Instructions', exact: true })).toHaveValue(
 +      draft,
 +    );
@@ -1569,7 +1499,7 @@ index 0000000000000000000000000000000000000000..2babe9c74ee712e8bc705c86f1ed704c
 +  });
 +});
 diff --git a/packages/chat/src/components/composer/files/ImagePreview.tsx b/packages/chat/src/components/composer/files/ImagePreview.tsx
-index 3ba6e175a849f9ae1cae2a2c55cc77f0734c0cbe..503db39cee72c45ac6215f19585b173c9e40bd42 100644
+index 28ae4e978d18332e743023625ba9287f1779121a..374633cfab1eadef3b05b042de83a6aeae7fbfc1 100644
 --- a/packages/chat/src/components/composer/files/ImagePreview.tsx
 +++ b/packages/chat/src/components/composer/files/ImagePreview.tsx
 @@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
@@ -1581,7 +1511,7 @@ index 3ba6e175a849f9ae1cae2a2c55cc77f0734c0cbe..503db39cee72c45ac6215f19585b173c
  import ProgressCircle from './ProgressCircle';
  import SourceIcon from './SourceIcon';
  
-@@ -161,7 +161,7 @@ const ImagePreview = ({
+@@ -141,7 +141,7 @@ const ImagePreview = ({
          <SourceIcon source={source} aria-label={source ? `Source: ${source}` : undefined} />
        </button>
  
@@ -1590,7 +1520,7 @@ index 3ba6e175a849f9ae1cae2a2c55cc77f0734c0cbe..503db39cee72c45ac6215f19585b173c
          <DialogPrimitive.Portal>
            <DialogPrimitive.Overlay
              className="bg-surface-media-overlay/90 fixed inset-0 z-[250]"
-@@ -204,7 +204,7 @@ const ImagePreview = ({
+@@ -184,7 +184,7 @@ const ImagePreview = ({
              </div>
            </DialogPrimitive.Content>
          </DialogPrimitive.Portal>
@@ -1599,6 +1529,68 @@ index 3ba6e175a849f9ae1cae2a2c55cc77f0734c0cbe..503db39cee72c45ac6215f19585b173c
      </>
    );
  };
+diff --git a/packages/chat/src/components/parts/DialogImage.tsx b/packages/chat/src/components/parts/DialogImage.tsx
+index e0457a89d737d3574f39786af24c9ff9a025c809..e498b04b3529d7ccb2770797c62d90e25f1bb138 100644
+--- a/packages/chat/src/components/parts/DialogImage.tsx
++++ b/packages/chat/src/components/parts/DialogImage.tsx
+@@ -4,6 +4,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ import { X, ArrowDownToLine, RotateCcw } from 'lucide-react';
+ import {
+   Button,
++  Dialog,
+   MorphIcon,
+   TooltipAnchor,
+   useLocalize,
+@@ -266,7 +267,7 @@ export default function DialogImage({
+   const getImageMaxWidth = () => (detailsBeside ? 'calc(90vw - 20rem)' : '90vw');
+ 
+   return (
+-    <DialogPrimitive.Root open={isOpen} onOpenChange={onOpenChange}>
++    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+       <DialogPrimitive.Portal>
+         <DialogPrimitive.Overlay
+           className="bg-surface-media-overlay/90 fixed inset-0 z-[250]"
+@@ -482,6 +483,6 @@ export default function DialogImage({
+           )}
+         </DialogPrimitive.Content>
+       </DialogPrimitive.Portal>
+-    </DialogPrimitive.Root>
++    </Dialog>
+   );
+ }
+diff --git a/packages/chat/src/components/subagents/panel.tsx b/packages/chat/src/components/subagents/panel.tsx
+index 3c8c6d0f333bbb921cfa4b2c6cc6f2196702ad5a..b85557a384167ad5cfe0e52f794c59e697041aed 100644
+--- a/packages/chat/src/components/subagents/panel.tsx
++++ b/packages/chat/src/components/subagents/panel.tsx
+@@ -10,6 +10,7 @@ import {
+   useFocusTrap,
+   useMediaQuery,
+   ControlCombobox,
++  OverlayBack,
+   useToastContext,
+ } from '@librechat/client';
+ import type {
+@@ -1602,7 +1603,7 @@ export default function SubagentThreadPanel({
+     );
+   }
+ 
+-  return (
++  const panel = (
+     <aside
+       ref={panelRef}
+       tabIndex={-1}
+@@ -1775,6 +1776,11 @@ export default function SubagentThreadPanel({
+       )}
+     </aside>
+   );
++  return (
++    <OverlayBack open={isMobile} onClose={close}>
++      {panel}
++    </OverlayBack>
++  );
+ }
+ 
+ function HistoricalEventTaskActivity({
 diff --git a/packages/client/src/Providers/Overlay.tsx b/packages/client/src/Providers/Overlay.tsx
 new file mode 100644
 index 0000000000000000000000000000000000000000..21cf998f6f368d85bf106050582c07b948839a9c

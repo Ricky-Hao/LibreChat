@@ -1,14 +1,14 @@
 # 与 checkout 路径无关的 vendor chunk
 
-状态：`awaiting-upstream`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`upstream`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
-当前载荷按 node_modules 后的包名分类并处理 Windows 分隔符，避免 checkout 名称误命中 vendor group。
+采用固定基线已有的上游包名分类和 Windows 分隔符规范化，避免 checkout 名称误命中 vendor group。
 
 依赖：无；以固定基线已有模块为前提。
 
 ## 载荷与来源
 
-[changes.patch](changes.patch) 是代码、测试及必要文档的标准 Git diff。路径范围以根 manifest.json 的 paths 为准。
+无载荷；工具核对 replacement.commit 已包含于应用 HEAD 后才跳过。
 最终源码来自 [`38c026db83d0ca12a067083b5c1551c1bca2754b`](https://github.com/Ricky-Hao/LibreChat/commit/38c026db83d0ca12a067083b5c1551c1bca2754b)；按净差异归组，包含截至该源的后续修正，不直接重放历史提交队列。
 主要行为与后续修正追溯：
 
@@ -16,7 +16,9 @@
 - [0c83d171e4f48625d504c30df28fe83541398aab](https://github.com/Ricky-Hao/LibreChat/commit/0c83d171e4f48625d504c30df28fe83541398aab)
 - [60663053cd91cee73fb70cf3566e74f360e055b9](https://github.com/Ricky-Hao/LibreChat/commit/60663053cd91cee73fb70cf3566e74f360e055b9)
 
-上游 #17921 已以 fc3b86acbc0a5290154b25f7a0091641667cd14b 合入，但固定基线未含。目标确含后采用上游第一层 node_modules 的嵌套归组，移除本地末段裁剪；#15907 已被替代，#17567 已完成。
+上游 [#17921](https://github.com/LibreChat-AI/LibreChat/pull/17921) 的 replacement commit 为 `fc3b86acbc0a5290154b25f7a0091641667cd14b`，已核为固定基线的祖先。固定基线的 `client/vite.config.ts` 在 `manualChunks` 中先规范化反斜线，再按第一层 `node_modules/` 后的包路径分类，保留嵌套依赖的上游归组规则；本地末段裁剪已移除。
+
+替代回归入口为 `e2e/specs/mock/scenarios/vendor-chunk-paths.spec.ts`：两项 config probe 分别验证 checkout 名不影响分类，以及反斜线路径和嵌套依赖分类。合同使用实际 Playwright discovery 和执行。#15907 已被替代，#17567 已完成。
 
 ## 维护与验证
 
@@ -30,4 +32,4 @@ python3 tools/patchset.py test --target /path/to/application --only vendor-chunk
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。
+2026-11-11：两个真实 config probe 与 client 类型检查通过，替代提交祖先检查通过。项目门禁汇总见[根 README](../../README.md#验证)。

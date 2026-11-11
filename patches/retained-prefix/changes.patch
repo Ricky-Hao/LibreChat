@@ -1,8 +1,8 @@
 diff --git a/api/app/clients/BaseClient.js b/api/app/clients/BaseClient.js
-index 58ca0e53706033bf6a6cec46864b2929437516fd..8f5dfcda5e7c458040ed06325a01396b0e2e53ee 100644
+index 988ad187a11385571b6f358cb45c9929c583d544..02e79970d70515a85643e5a59c224b8fbc0476d4 100644
 --- a/api/app/clients/BaseClient.js
 +++ b/api/app/clients/BaseClient.js
-@@ -38,6 +38,7 @@ const {
+@@ -39,6 +39,7 @@ const {
    rejectPrivateTextAdmission,
    bindPrivateTextPersistenceAbort,
    persistedReasoningOverrideFields,
@@ -10,7 +10,7 @@ index 58ca0e53706033bf6a6cec46864b2929437516fd..8f5dfcda5e7c458040ed06325a01396b
    isTemporaryTurn,
  } = require('@librechat/api');
  const {
-@@ -53,7 +54,7 @@ const {
+@@ -54,7 +55,7 @@ const {
    supportsBalanceCheck,
    isBedrockDocumentType,
    HITL_MESSAGE_FILTER_FIELDS,
@@ -19,7 +19,7 @@ index 58ca0e53706033bf6a6cec46864b2929437516fd..8f5dfcda5e7c458040ed06325a01396b
    resolveTurnLLMDeliveryPath,
    resolveUseResponsesApi,
  } = require('librechat-data-provider');
-@@ -600,6 +601,12 @@ class BaseClient {
+@@ -601,6 +602,12 @@ class BaseClient {
        }),
      );
  
@@ -32,7 +32,7 @@ index 58ca0e53706033bf6a6cec46864b2929437516fd..8f5dfcda5e7c458040ed06325a01396b
      /**
       * Attach quoted excerpts (the "Add to chat" selections from `req.body.quotes`)
       * before `getReqData`/`onStart` fire, so the optimistic bubble, resumable job
-@@ -786,8 +793,6 @@ class BaseClient {
+@@ -787,8 +794,6 @@ class BaseClient {
        });
      }
  
@@ -41,7 +41,7 @@ index 58ca0e53706033bf6a6cec46864b2929437516fd..8f5dfcda5e7c458040ed06325a01396b
      // It's not necessary to push to currentMessages
      // depending on subclass implementation of handling messages
      // When this is an edit, all messages are already in currentMessages, both user and response
-@@ -803,35 +808,6 @@ class BaseClient {
+@@ -804,35 +809,6 @@ class BaseClient {
            sender: this.sender,
          };
          this.currentMessages.push(userMessage, latestMessage);
@@ -77,7 +77,7 @@ index 58ca0e53706033bf6a6cec46864b2929437516fd..8f5dfcda5e7c458040ed06325a01396b
        }
        this.continued = true;
      } else if (opts.isCompaction !== true) {
-@@ -1572,82 +1548,7 @@ class BaseClient {
+@@ -1573,82 +1549,7 @@ class BaseClient {
     * @returns {Array} The merged content array
     */
    mergeEditedContent(existingContent, newCompletion, editedType) {
@@ -162,7 +162,7 @@ index 58ca0e53706033bf6a6cec46864b2929437516fd..8f5dfcda5e7c458040ed06325a01396b
  
    async sendPayload(payload, opts = {}) {
 diff --git a/api/app/clients/specs/BaseClient.test.js b/api/app/clients/specs/BaseClient.test.js
-index 0e36ec116fb2de85e961300854ee774cb0c52554..035b20d032a4afa59d7ceee15977779fdc0ec0cc 100644
+index 0755640504b63c38d6c34913bf294e3fb5f45e2b..9d2f844e2bb8f5d2c1212b726ab58769b4e14000 100644
 --- a/api/app/clients/specs/BaseClient.test.js
 +++ b/api/app/clients/specs/BaseClient.test.js
 @@ -710,8 +710,15 @@ describe('BaseClient', () => {
@@ -281,7 +281,7 @@ index b582af63791d5e6274be799fc8ac284c052d07e1..a49b520b402b231a3b237582f2293612
  
    it('restores the authenticated tenant before saving a partial response on disconnect', async () => {
 diff --git a/api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js b/api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js
-index f3993086e357393cca552c367c6071626d9c4bbb..d88416274fb164fdfb618cb3566a7a1a2a98629b 100644
+index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c43ef65819 100644
 --- a/api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js
 +++ b/api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js
 @@ -26,6 +26,7 @@ const mockGenerationJobManager = {
@@ -562,7 +562,7 @@ index f3993086e357393cca552c367c6071626d9c4bbb..d88416274fb164fdfb618cb3566a7a1a
      let allSubscribersLeftHandler;
      mockGenerationJobManager.createJob.mockResolvedValue({
        createdAt: 1000,
-@@ -3753,7 +3783,7 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -3755,7 +3785,7 @@ describe('ResumableAgentController resume metadata', () => {
      expect(mockDeleteAgentCheckpoint).not.toHaveBeenCalled();
    });
  
@@ -571,7 +571,7 @@ index f3993086e357393cca552c367c6071626d9c4bbb..d88416274fb164fdfb618cb3566a7a1a
      const userMessage = {
        messageId: 'user-msg',
        parentMessageId: 'parent-msg',
-@@ -3764,7 +3794,8 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -3766,7 +3796,8 @@ describe('ResumableAgentController resume metadata', () => {
        messageId: 'response-msg',
        parentMessageId: userMessage.messageId,
        conversationId: 'conversation-123',
@@ -581,7 +581,7 @@ index f3993086e357393cca552c367c6071626d9c4bbb..d88416274fb164fdfb618cb3566a7a1a
      };
      let signalPauseSaveStarted;
      const pauseSaveStarted = new Promise((resolve) => {
-@@ -3839,6 +3870,7 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -3841,6 +3872,7 @@ describe('ResumableAgentController resume metadata', () => {
        expect.objectContaining({
          messageId: response.messageId,
          content: response.content,
@@ -589,7 +589,7 @@ index f3993086e357393cca552c367c6071626d9c4bbb..d88416274fb164fdfb618cb3566a7a1a
          unfinished: true,
        }),
        expect.objectContaining({ context: expect.stringContaining('persist unfinished') }),
-@@ -3961,6 +3993,91 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -3963,6 +3995,91 @@ describe('ResumableAgentController resume metadata', () => {
          expect(mockStampConvoLastResponse).not.toHaveBeenCalled();
        },
      );
@@ -1177,7 +1177,7 @@ index d59f60b0e40d7bf9fddb7dbf42a1493c01ac83c2..b82ce240e49d395d7eddca11d9fc85b1
 +  });
  });
 diff --git a/client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts b/client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts
-index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b14235f610 100644
+index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47a9337858 100644
 --- a/client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts
 +++ b/client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts
 @@ -1,4 +1,5 @@
@@ -1206,7 +1206,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
  import {
    activeUsageResponseIdFamily,
    liveTokensFamily,
-@@ -79,7 +88,7 @@ jest.mock('sse.js', () => {
+@@ -78,7 +87,7 @@ jest.mock('sse.js', () => {
  const mockRedirectIfTwoFactorSetupPayload = jest.fn((_payload: unknown) => false);
  const mockSetQueryData = jest.fn();
  const mockGetQueryData = jest.fn();
@@ -1215,7 +1215,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
  const mockInvalidateQueries = jest.fn();
  const mockRemoveQueries = jest.fn();
  const mockBackingQueryClient = new QueryClient();
-@@ -91,7 +100,6 @@ const mockFindAll = jest.fn((_queryKey?: QueryKey): Query[] => []);
+@@ -90,7 +99,6 @@ const mockFindAll = jest.fn((_queryKey?: QueryKey): Query[] => []);
  const mockQueryClient = {
    setQueryData: mockSetQueryData,
    getQueryData: mockGetQueryData,
@@ -1223,7 +1223,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
    invalidateQueries: mockInvalidateQueries,
    removeQueries: mockRemoveQueries,
    cancelQueries: mockCancelQueries,
-@@ -197,20 +205,34 @@ jest.mock('~/Providers/ChatSettingsContext', () => {
+@@ -196,20 +204,34 @@ jest.mock('~/Providers/ChatSettingsContext', () => {
      ...actual.defaultChatSettings,
      auth: { token: 'test-token', isAuthenticated: true },
    };
@@ -1260,7 +1260,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
    GENERATION_PROTOCOL_VERSION: 2,
    generationProtocolHeaders: () => ({ 'X-LibreChat-Generation-Protocol': '2' }),
    getGenerationProtocolVersion: (value: unknown) =>
-@@ -291,6 +313,7 @@ jest.mock('librechat-data-provider', () => {
+@@ -282,6 +304,7 @@ jest.mock('librechat-data-provider', () => {
      ...actual,
      dataService: {
        ...actual.dataService,
@@ -1268,21 +1268,17 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
        getConversationById: (...args: unknown[]) => mockGetConversationById(...args),
      },
      createPayload: jest.fn(() => ({
-@@ -315,11 +338,13 @@ jest.mock('librechat-data-provider', () => {
- import { selectLocalSteersForQueue, ABORT_SWEEP_STATUSES } from '~/hooks/SSE/resumable';
- import { appStreamHost } from '~/Providers/StreamHostContext';
- import useSSE from '~/hooks/SSE/useSSE';
-+import useEventHandlers from '~/hooks/SSE/useEventHandlers';
- import type { PendingSteer } from '@librechat/chat';
+@@ -309,7 +332,9 @@ import type { PendingSteer } from '@librechat/chat';
  import type { Transport } from '~/hooks/Chat/contract';
  import { ChatTransportContext, defaultChatTransport } from '~/Providers/ChatTransportContext';
  import {
++  useEventHandlers,
    useResumableSSE,
 +  useStepHandler,
    StreamHostProvider,
    recoveryDispositionsFamily,
    queuedMessagesByConvoId,
-@@ -428,6 +453,7 @@ const advanceRetryTimer = async (ms: number) => {
+@@ -418,6 +443,7 @@ const advanceRetryTimer = async (ms: number) => {
  describe('useResumableSSE', () => {
    beforeEach(() => {
      getDefaultStore().set(recoveryDispositionsFamily(CONV_ID), {});
@@ -1290,7 +1286,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      mockSSEInstances.length = 0;
      localStorage.clear();
      mockErrorHandler.mockClear();
-@@ -439,9 +465,9 @@ describe('useResumableSSE', () => {
+@@ -429,9 +455,9 @@ describe('useResumableSSE', () => {
      mockSetIsSubmitting.mockClear();
      mockSetQueryData.mockClear();
      mockGetQueryData.mockReset();
@@ -1303,7 +1299,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      );
      mockInvalidateQueries.mockClear();
      mockRemoveQueries.mockClear();
-@@ -877,10 +903,7 @@ describe('useResumableSSE', () => {
+@@ -782,10 +808,7 @@ describe('useResumableSSE', () => {
      };
      const messages = [{ messageId: 'saved-response', conversationId: 'stream-123', text: 'Done' }];
      mockGetConversationById.mockResolvedValue(persisted);
@@ -1315,7 +1311,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      const chatHelpers = buildChatHelpers();
      const { unmount } = renderHook(() =>
        useResumableSSE(
-@@ -1505,18 +1528,28 @@ describe('useResumableSSE', () => {
+@@ -1410,18 +1433,28 @@ describe('useResumableSSE', () => {
      unmount();
    });
  
@@ -1347,7 +1343,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      unmount();
    });
  
-@@ -2645,6 +2678,7 @@ describe('useResumableSSE', () => {
+@@ -2550,6 +2583,7 @@ describe('useResumableSSE', () => {
  
    it('drops an awaited synthesized reconciliation after conversation B starts', async () => {
      const conversationB = 'conv-b-789';
@@ -1355,7 +1351,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      (request.post as jest.Mock)
        .mockResolvedValueOnce({
          streamId: CONV_ID,
-@@ -2659,7 +2693,7 @@ describe('useResumableSSE', () => {
+@@ -2564,7 +2598,7 @@ describe('useResumableSSE', () => {
          generationProtocolVersion: 2,
        });
      let resolveMessages!: (value: TMessage[]) => void;
@@ -1364,7 +1360,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
        () =>
          new Promise<TMessage[]>((resolve) => {
            resolveMessages = resolve;
-@@ -2700,7 +2734,7 @@ describe('useResumableSSE', () => {
+@@ -2605,7 +2639,7 @@ describe('useResumableSSE', () => {
          }),
        });
      });
@@ -1373,7 +1369,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
  
      rerender({ current: submissionB });
      await waitFor(() => expect(mockSSEInstances).toHaveLength(2));
-@@ -2714,6 +2748,7 @@ describe('useResumableSSE', () => {
+@@ -2619,6 +2653,7 @@ describe('useResumableSSE', () => {
      mockSetShowStopButton.mockClear();
      mockSettleAppliedSteerParts.mockClear();
  
@@ -1381,7 +1377,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      await act(async () => {
        resolveMessages([]);
        await Promise.resolve();
-@@ -2729,6 +2764,7 @@ describe('useResumableSSE', () => {
+@@ -2634,6 +2669,7 @@ describe('useResumableSSE', () => {
      expect(mockSetIsSubmitting).not.toHaveBeenCalledWith(false);
      expect(mockSetShowStopButton).not.toHaveBeenCalledWith(false);
      expect(generationB.close).not.toHaveBeenCalled();
@@ -1389,7 +1385,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      unmount();
    });
  
-@@ -2825,7 +2861,7 @@ describe('useResumableSSE', () => {
+@@ -2730,7 +2766,7 @@ describe('useResumableSSE', () => {
      expect(mockFinalHandler).not.toHaveBeenCalled();
      expect(mockSetRunEnd).not.toHaveBeenCalled();
  
@@ -1398,7 +1394,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
  
      expect(mockSSEInstances).toHaveLength(sseCount + 1);
      expect(getLastSSE()._url).toContain('resume=true');
-@@ -2864,7 +2900,7 @@ describe('useResumableSSE', () => {
+@@ -2769,7 +2805,7 @@ describe('useResumableSSE', () => {
      expect(mockErrorHandler).not.toHaveBeenCalled();
      expect(mockSetRunEnd).not.toHaveBeenCalled();
  
@@ -1407,7 +1403,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
  
      expect(mockSSEInstances).toHaveLength(sseCount + 1);
      expect(getLastSSE()._url).toContain('resume=true');
-@@ -3123,14 +3159,15 @@ describe('useResumableSSE', () => {
+@@ -3028,14 +3064,15 @@ describe('useResumableSSE', () => {
      unmount();
    });
  
@@ -1425,7 +1421,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      mockFetchStreamStatus.mockResolvedValue({ active: false, generationProtocolVersion: 2 });
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
-@@ -3156,13 +3193,26 @@ describe('useResumableSSE', () => {
+@@ -3061,13 +3098,26 @@ describe('useResumableSSE', () => {
  
      expect(mockFinalHandler).not.toHaveBeenCalled();
      expect(mockErrorHandler).not.toHaveBeenCalled();
@@ -1458,7 +1454,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      unmount();
    });
  
-@@ -3173,7 +3223,7 @@ describe('useResumableSSE', () => {
+@@ -3078,7 +3128,7 @@ describe('useResumableSSE', () => {
        generationCreatedAt: 1000,
        generationProtocolVersion: 2,
      });
@@ -1467,7 +1463,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      mockFetchStreamStatus.mockResolvedValue({ active: false, generationProtocolVersion: 2 });
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
-@@ -3639,7 +3689,7 @@ describe('useResumableSSE', () => {
+@@ -3544,7 +3594,7 @@ describe('useResumableSSE', () => {
    });
  
    it('completes an applied authoritative final without requiring a client persistence refetch', async () => {
@@ -1476,7 +1472,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
  
-@@ -3664,7 +3714,7 @@ describe('useResumableSSE', () => {
+@@ -3569,7 +3619,7 @@ describe('useResumableSSE', () => {
        finalPayload,
        expect.objectContaining(submission),
      );
@@ -1485,7 +1481,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      expect(mockSetRunEnd).toHaveBeenCalledWith(
        expect.objectContaining({ conversationId: CONV_ID, outcome: 'completed' }),
      );
-@@ -5055,163 +5105,778 @@ describe('useResumableSSE', () => {
+@@ -4960,163 +5010,778 @@ describe('useResumableSSE', () => {
      unmount();
    });
  
@@ -2389,7 +2385,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
     */
    const enrollmentBody = JSON.stringify({
      code: 'two_factor_enrollment_required',
-@@ -5225,80 +5890,585 @@ describe('useResumableSSE', () => {
+@@ -5130,80 +5795,585 @@ describe('useResumableSSE', () => {
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
  
@@ -2609,7 +2605,9 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
 +      expect(mockSetDrainAfterAbort.mock.invocationCallOrder[0]).toBeLessThan(
 +        mockSetRunEnd.mock.invocationCallOrder[0],
 +      );
-+
+ 
+-    const sse = getLastSSE();
+-    const sseCount = mockSSEInstances.length;
 +      const retiredSSE = getLastSSE();
 +      await advanceRetryTimer(60_000);
 +      await act(async () => {
@@ -2622,8 +2620,10 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
 +    },
 +  );
  
--    const sse = getLastSSE();
--    const sseCount = mockSSEInstances.length;
+-    await act(async () => {
+-      sse._emit('error', { responseCode: 403, data: enrollmentBody });
+-    });
+-    await advanceRetryTimer(60000);
 +  it.each(['active', 'inconclusive', 'unavailable'])(
 +    'keeps a synthesized missing-history recovery pending when status is %s',
 +    async (state) => {
@@ -2668,10 +2668,11 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
 +    },
 +  );
  
--    await act(async () => {
--      sse._emit('error', { responseCode: 403, data: enrollmentBody });
--    });
--    await advanceRetryTimer(60000);
+-    expect(mockRedirectIfTwoFactorSetupPayload).toHaveBeenCalledWith(enrollmentBody);
+-    expect(mockSSEInstances.length).toBe(sseCount);
+-    expect(mockErrorHandler).not.toHaveBeenCalled();
+-    unmount();
+-  });
 +  it.each(
 +    [undefined, 0, 2, 8].flatMap((maxRetries) =>
 +      ['http', 'frame', 'unnegotiated-http'].flatMap((kind) =>
@@ -2730,11 +2731,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
 +        await flushMicrotasks();
 +      };
  
--    expect(mockRedirectIfTwoFactorSetupPayload).toHaveBeenCalledWith(enrollmentBody);
--    expect(mockSSEInstances.length).toBe(sseCount);
--    expect(mockErrorHandler).not.toHaveBeenCalled();
--    unmount();
--  });
+-  it('keeps reconnecting on a 403 that is not an enrollment response', async () => {
 +      const delays = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000];
 +      for (const delay of delays.slice(0, maxRetries ?? 5)) {
 +        await receiveTerminal();
@@ -2788,8 +2785,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
 +      expect(mockSSEInstances).toHaveLength(countAfterUnmount);
 +    },
 +  );
- 
--  it('keeps reconnecting on a 403 that is not an enrollment response', async () => {
++
 +  it('applies late config to a pending terminal frame retry without restarting the generation', async () => {
      jest.useFakeTimers();
 +    (request.post as jest.Mock).mockResolvedValue({
@@ -3026,7 +3022,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
    it.each([undefined, 500, 503])(
      'does not call errorHandler for responseCode %s (reconnect path)',
      async (responseCode) => {
-@@ -5569,7 +6739,7 @@ describe('useResumableSSE', () => {
+@@ -5474,7 +6644,7 @@ describe('useResumableSSE', () => {
          isCreatedByUser: false,
        },
      ] as TMessage[];
@@ -3035,7 +3031,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
  
-@@ -5586,7 +6756,7 @@ describe('useResumableSSE', () => {
+@@ -5491,7 +6661,7 @@ describe('useResumableSSE', () => {
      });
      await flushMicrotasks();
  
@@ -3044,7 +3040,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      expect(mockSSEInstances).toHaveLength(sseCount + 1);
      expect(getLastSSE()._url).toBe(
        '/api/agents/chat/stream/stream-epoch?resume=true&generationCreatedAt=1000&generationProtocolVersion=2',
-@@ -5599,15 +6769,12 @@ describe('useResumableSSE', () => {
+@@ -5504,15 +6674,12 @@ describe('useResumableSSE', () => {
      });
      await flushMicrotasks();
  
@@ -3062,7 +3058,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      mockFetchStreamStatus.mockResolvedValue({
        active: true,
        streamId: 'stream-123',
-@@ -5617,6 +6784,17 @@ describe('useResumableSSE', () => {
+@@ -5522,6 +6689,17 @@ describe('useResumableSSE', () => {
      });
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
@@ -3080,7 +3076,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
  
      const { unmount } = renderHook(() => useResumableSSE(submission, chatHelpers));
      await flushMicrotasks();
-@@ -5631,13 +6809,37 @@ describe('useResumableSSE', () => {
+@@ -5536,13 +6714,37 @@ describe('useResumableSSE', () => {
      });
      await flushMicrotasks();
  
@@ -3122,7 +3118,7 @@ index c4065aa88e31926d62c82deb87007f076258170c..be6e7731cd39561d41be0b1314e0a1b1
      mockFetchStreamStatus.mockResolvedValue({
        active: false,
        status: 'complete',
-@@ -5650,17 +6852,34 @@ describe('useResumableSSE', () => {
+@@ -5555,17 +6757,34 @@ describe('useResumableSSE', () => {
      const { unmount } = renderHook(() => useResumableSSE(submission, chatHelpers));
      await flushMicrotasks();
  
@@ -3269,10 +3265,10 @@ index 02a9dc8c5ae2153365053bacc883d9b087ec5d4f..ee5f99c15c34ed73fb5c7b114cf4aa3e
      const staleChip: PendingSteer = {
        steerId: 'stale-1',
 diff --git a/client/src/hooks/SSE/__tests__/useStepHandler.spec.ts b/client/src/hooks/SSE/__tests__/useStepHandler.spec.ts
-index 2772f43797f0a0b4239266b31e2dd93e05aa099f..dcc0f8546b61872f18f555a30f89edc42d258e6c 100644
+index dda7737a6316b5aaec3918022b50c0cdcc35c595..3b4d35b37102c5fd93c2af8b789ed1f31cb09cf8 100644
 --- a/client/src/hooks/SSE/__tests__/useStepHandler.spec.ts
 +++ b/client/src/hooks/SSE/__tests__/useStepHandler.spec.ts
-@@ -9,6 +9,7 @@ import {
+@@ -10,6 +10,7 @@ import {
    StepEvents,
    ContentTypes,
    ToolCallTypes,
@@ -3280,7 +3276,7 @@ index 2772f43797f0a0b4239266b31e2dd93e05aa099f..dcc0f8546b61872f18f555a30f89edc4
  } from 'librechat-data-provider';
  import {
    activeSubagentPanel,
-@@ -29,6 +30,7 @@ import type {
+@@ -30,6 +31,7 @@ import type {
    SubagentUpdateEvent,
    PtcToolCallEvent,
    Agents,
@@ -3490,10 +3486,10 @@ index 2772f43797f0a0b4239266b31e2dd93e05aa099f..dcc0f8546b61872f18f555a30f89edc4
        const commentary = {
          type: ContentTypes.TEXT,
 diff --git a/client/src/hooks/SSE/events.ts b/client/src/hooks/SSE/events.ts
-index f497f459ca96b3b50041768a5e7b49692179439e..15cfb3c7ec39bd9be6adfe6f27605da58b05c690 100644
+index f30adb923fa01621137078e26ace476d9fc74f94..db4bc071ca1b2192f101a3fdbb74b4c6e21e3ae6 100644
 --- a/client/src/hooks/SSE/events.ts
 +++ b/client/src/hooks/SSE/events.ts
-@@ -83,13 +83,16 @@ export default function useResumableEvents({
+@@ -82,13 +82,16 @@ export default function useResumableEvents({
     */
    const stepHandler = useCallback(
      (...[event, submission]: Parameters<typeof rawStepHandler>) => {
@@ -3517,18 +3513,23 @@ index f497f459ca96b3b50041768a5e7b49692179439e..15cfb3c7ec39bd9be6adfe6f27605da5
      [rawStepHandler, run],
    );
 diff --git a/client/src/hooks/SSE/resumable.ts b/client/src/hooks/SSE/resumable.ts
-index 6d0d1747396d24e5cdc7786946f82a8b2c146e96..7410d42a8eb18a71c6d81b5846ba1b8a64da3502 100644
+index 9b82a4e4b6bf22357620f9c2fc351b1c6d65f899..db77bc2f66853aaf5b955e2af2439316ecb521ae 100644
 --- a/client/src/hooks/SSE/resumable.ts
 +++ b/client/src/hooks/SSE/resumable.ts
-@@ -9,7 +9,6 @@ import {
-   applyReasoningLabel,
-   findSteerMessageIndex,
+@@ -1,11 +1,10 @@
+ import { useCallback, useRef, useLayoutEffect } from 'react';
++import { DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES } from 'librechat-data-provider';
+ import {
+   documentVisibility,
    applyActivityLabelPart,
 -  offsetActivityPhaseBoundary,
    findActivityLabelMessageIndex,
-   findReasoningLabelMessageIndex,
- } from '~/utils';
-@@ -28,7 +27,6 @@ const resumableParts: ResumableParts = {
+ } from '@librechat/chat';
+-import { DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES } from 'librechat-data-provider';
+ import type { ResumableServices, ResumableStreamParams } from '@librechat/chat/react';
+ import type { ResumableParts } from '@librechat/chat';
+ import {
+@@ -30,7 +29,6 @@ const resumableParts: ResumableParts = {
    findSteerTarget: findSteerMessageIndex,
    applyActivityLabel: applyActivityLabelPart,
    findActivityLabelTarget: findActivityLabelMessageIndex,
@@ -3537,10 +3538,10 @@ index 6d0d1747396d24e5cdc7786946f82a8b2c146e96..7410d42a8eb18a71c6d81b5846ba1b8a
    findReasoningLabelTarget: findReasoningLabelMessageIndex,
  };
 diff --git a/e2e/setup/fake-model.js b/e2e/setup/fake-model.js
-index 13222eca1046b5be392fd1172d049eee6794ebf2..3c66603d3674b80fcddcf0520577ad93623c739d 100644
+index c8c9152b6572d8048370a26f98853ac8805b488d..2b21e682b841ee9b869c95bb378eed252124418f 100644
 --- a/e2e/setup/fake-model.js
 +++ b/e2e/setup/fake-model.js
-@@ -43,6 +43,7 @@ const THINK_REPLY_MARKER = 'E2E_THINK_REPLY:';
+@@ -45,6 +45,7 @@ const THINK_REPLY_MARKER = 'E2E_THINK_REPLY:';
  const LONG_THINK_REPLY_MARKER = 'E2E_LONG_THINK_REPLY:';
  const LONG_THINK_WORDS = 400;
  const SLOW_THINK_REPLY_MARKER = 'E2E_SLOW_THINK_REPLY:';
@@ -3548,7 +3549,7 @@ index 13222eca1046b5be392fd1172d049eee6794ebf2..3c66603d3674b80fcddcf0520577ad93
  const COUNTED_REPLY_MARKER = 'E2E_COUNTED_REPLY:';
  const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
  const SLOW_REPLY_MARKER = 'E2E_SLOW_REPLY:';
-@@ -3589,6 +3590,20 @@ function resolveResponses({ graph, messages, text, toolNames }) {
+@@ -3805,6 +3806,20 @@ function resolveResponses({ graph, messages, text, toolNames }) {
      return approvalToolResponses(approvalLabel, toolNames);
    }
  
@@ -3972,7 +3973,7 @@ index a6bd48771f440e5130896dd883fe4b336e3f4ee7..0c565d4d6b833490834e486aebd7eeab
  const HITL_MESSAGE_FILTER_FIELD_SET = new Set<string>(HITL_MESSAGE_FILTER_FIELDS);
  const STORED_MESSAGE_SUBMITTED_ROOTS = new Set([
 diff --git a/packages/api/src/stream/GenerationJobManager.ts b/packages/api/src/stream/GenerationJobManager.ts
-index 08ddd067ad73626a630d2c7a525a206318ba5235..6415b059286a403bfa3dd116a697337e9ce0601c 100644
+index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50ca916f38 100644
 --- a/packages/api/src/stream/GenerationJobManager.ts
 +++ b/packages/api/src/stream/GenerationJobManager.ts
 @@ -42,6 +42,7 @@ import type {
@@ -4093,7 +4094,7 @@ index 08ddd067ad73626a630d2c7a525a206318ba5235..6415b059286a403bfa3dd116a697337e
          text,
          collectedUsage,
          ...(pendingSteers.length > 0 && { pendingSteers }),
-@@ -6432,6 +6447,20 @@ class GenerationJobManagerClass {
+@@ -6469,6 +6484,20 @@ class GenerationJobManagerClass {
          ]);
        }
  
@@ -4114,7 +4115,7 @@ index 08ddd067ad73626a630d2c7a525a206318ba5235..6415b059286a403bfa3dd116a697337e
        if (pendingOverflow != null && recoveryStartedAt != null) {
          const contentSnapshot = recoveryContentSnapshot;
          const reconstructedEvents = this._isRedis
-@@ -8224,6 +8253,27 @@ class GenerationJobManagerClass {
+@@ -8261,6 +8290,27 @@ class GenerationJobManagerClass {
      await this.jobStore.updateJob(streamId, updates, generationId);
    }
  
@@ -4142,7 +4143,7 @@ index 08ddd067ad73626a630d2c7a525a206318ba5235..6415b059286a403bfa3dd116a697337e
    /** Stages exact detached terminal evidence in the generation-owned job outbox
     * and verifies the epoch-fenced write before the external result leaves memory. */
    async persistAgentEventDetachedTerminalEvidence(
-@@ -8875,6 +8925,12 @@ class GenerationJobManagerClass {
+@@ -8912,6 +8962,12 @@ class GenerationJobManagerClass {
      if (!jobData || (expectedCreatedAt != null && jobData.createdAt !== expectedCreatedAt)) {
        return null;
      }
@@ -4155,7 +4156,7 @@ index 08ddd067ad73626a630d2c7a525a206318ba5235..6415b059286a403bfa3dd116a697337e
      if (jobData.earlyBufferOverflow?.persistencePending === true) {
        const initialCreatedAt = jobData.createdAt;
        jobData = await this.waitForFinalizedEarlyBufferOverflow(streamId, jobData);
-@@ -9051,6 +9107,13 @@ class GenerationJobManagerClass {
+@@ -9088,6 +9144,13 @@ class GenerationJobManagerClass {
      return {
        runSteps: effectiveRunSteps,
        aggregatedContent,
@@ -5043,26 +5044,28 @@ index 4581008457cbc56b40b0e3a64e5279bd3b85c2db..5a263c5f3e93c8371658cdb1208c37bf
        ...event,
        index: contentIndex,
 diff --git a/packages/chat/src/core/resumable/resume.ts b/packages/chat/src/core/resumable/resume.ts
-index af82855b7a7e2881f652b849e3f0cd30bf1c5fd5..7599694d6354e29bcc80da854d2bdbd333d39212 100644
+index ad6cdc700ff73ed334cf907e199ac014866f2de2..dd3c61fec60b3d05707dc86b5134833f8c5fde65 100644
 --- a/packages/chat/src/core/resumable/resume.ts
 +++ b/packages/chat/src/core/resumable/resume.ts
-@@ -1,4 +1,4 @@
--import { Constants, tMessageSchema } from 'librechat-data-provider';
-+import { Constants, tMessageSchema, mergeEditedMessageContent } from 'librechat-data-provider';
+@@ -1,4 +1,9 @@
+-import { Constants, ContentTypes, tMessageSchema } from 'librechat-data-provider';
++import {
++  Constants,
++  ContentTypes,
++  tMessageSchema,
++  mergeEditedMessageContent,
++} from 'librechat-data-provider';
  import type {
    Agents,
    TMessage,
-@@ -89,12 +89,22 @@ export const buildResumeEventSubmission = (
+@@ -115,13 +120,20 @@ export const buildResumeEventSubmission = (
      currentSubmission.initialResponse?.messageId ??
      `${userMessage.messageId}_`;
  
++  const resumeContent = restoreSummaryState(resumeState);
 +  const retainedContent = resumeState.retainedContent;
 +  const mergedResumeContent = retainedContent
-+    ? mergeEditedMessageContent(
-+        retainedContent.parts,
-+        resumeState.aggregatedContent ?? [],
-+        retainedContent.type,
-+      )
++    ? mergeEditedMessageContent(retainedContent.parts, resumeContent ?? [], retainedContent.type)
 +    : undefined;
 +
    const initialResponse = {
@@ -5071,11 +5074,13 @@ index af82855b7a7e2881f652b849e3f0cd30bf1c5fd5..7599694d6354e29bcc80da854d2bdbd3
      parentMessageId: userMessage.messageId,
      conversationId,
      content:
+-      restoreSummaryState(resumeState) ??
 +      mergedResumeContent?.content ??
-       resumeState.aggregatedContent ??
++      resumeContent ??
        (currentSubmission.initialResponse as TMessage | undefined)?.content,
      sender: resumeState.sender ?? currentSubmission.initialResponse?.sender,
-@@ -114,6 +124,14 @@ export const buildResumeEventSubmission = (
+     iconURL: preferDefinedString(currentSubmission.initialResponse?.iconURL, resumeState.iconURL),
+@@ -140,6 +152,14 @@ export const buildResumeEventSubmission = (
      /** Carried so every consumer of the resumed submission (the merges below,
       *  the abort-error write) reads the same answer this resolved. */
      ...(anchoredUserMessage && { compact: true }),
@@ -5090,19 +5095,16 @@ index af82855b7a7e2881f652b849e3f0cd30bf1c5fd5..7599694d6354e29bcc80da854d2bdbd3
    } as EventSubmission;
  };
  
-@@ -193,15 +211,25 @@ export function buildSubmissionFromResumeState(
+@@ -219,15 +239,19 @@ export function buildSubmissionFromResumeState(
            isCreatedByUser: true,
          } as TMessage)));
  
 -  // ALWAYS use aggregatedContent from resumeState - it has the latest content from the running job.
 -  // DB content may be stale (saved at disconnect, but generation continued).
++  const resumeContent = restoreSummaryState(resumeState);
 +  const retainedContent = resumeState.retainedContent;
 +  const mergedResumeContent = retainedContent
-+    ? mergeEditedMessageContent(
-+        retainedContent.parts,
-+        resumeState.aggregatedContent ?? [],
-+        retainedContent.type,
-+      )
++    ? mergeEditedMessageContent(retainedContent.parts, resumeContent ?? [], retainedContent.type)
 +    : undefined;
 +  // Rebuild the full answer from the captured prefix and generation-local output.
    let initialResponse: TMessage = {
@@ -5111,15 +5113,12 @@ index af82855b7a7e2881f652b849e3f0cd30bf1c5fd5..7599694d6354e29bcc80da854d2bdbd3
      conversationId,
      text: '',
      // aggregatedContent is authoritative - it reflects actual job state
--    content: (resumeState.aggregatedContent as TMessage['content']) ?? [],
-+    content:
-+      (mergedResumeContent?.content as TMessage['content']) ??
-+      (resumeState.aggregatedContent as TMessage['content']) ??
-+      [],
+-    content: restoreSummaryState(resumeState) ?? [],
++    content: (mergedResumeContent?.content as TMessage['content']) ?? resumeContent ?? [],
      isCreatedByUser: false,
      role: 'assistant',
      sender: responseMetadataMessage?.sender ?? resumeState.sender,
-@@ -240,6 +268,13 @@ export function buildSubmissionFromResumeState(
+@@ -266,6 +290,13 @@ export function buildSubmissionFromResumeState(
      ...(regenerateMessages && { regenerateMessages }),
      isTemporary,
      endpointOption: {},
@@ -5163,7 +5162,7 @@ index 416c81a59cdfdb432e87f5042e829d1bce396c49..addc7afec23a5487f9d9e0cf87533b60
  
    /** Forgets a stream once its run has ended. */
 diff --git a/packages/chat/src/core/resumable/sync.ts b/packages/chat/src/core/resumable/sync.ts
-index d242a0eb0d79cb8c959348e4a42a2adcaab1f723..49c77f58623e514e6e0db02af2367d1fbc80f3c6 100644
+index 578ba515867b9f69ae536a089fef3a0395e3eb27..c69fcfbb0e8146490a01d3f7a0937291101c44b8 100644
 --- a/packages/chat/src/core/resumable/sync.ts
 +++ b/packages/chat/src/core/resumable/sync.ts
 @@ -57,6 +57,11 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
@@ -5178,15 +5177,16 @@ index d242a0eb0d79cb8c959348e4a42a2adcaab1f723..49c77f58623e514e6e0db02af2367d1f
    if (data.resumeState?.userMessage != null) {
      run.identityConfirmed = true;
    }
-@@ -100,6 +105,7 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
+@@ -99,7 +104,7 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
+   if (data.resumeState?.aggregatedContent && sub.userMessage?.messageId) {
      const messages = host.messages.get() ?? [];
      const userMsgId = sub.userMessage.messageId;
-     const hasResumedContent = data.resumeState.aggregatedContent.length > 0;
-+    const snapshotContent = resumeSubmission.initialResponse.content ?? [];
+-    const resumedContent = resumeSubmission.initialResponse.content;
++    const resumedContent = resumeSubmission.initialResponse.content ?? [];
+     const hasResumedContent = (resumedContent?.length ?? 0) > 0;
      const responseId = resumeSubmission.initialResponse.messageId;
      const messageIndexes = getResumeMessageIndexes(
-       messages,
-@@ -129,7 +135,10 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
+@@ -130,7 +135,10 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
         *  and leave a bare cursor. Require an existing content array so it is never
         *  swapped for `undefined`. */
        const preserveLoadedContent =
@@ -5198,7 +5198,7 @@ index d242a0eb0d79cb8c959348e4a42a2adcaab1f723..49c77f58623e514e6e0db02af2367d1f
        /**
         * Replacing the response with `aggregatedContent` drops the
         * prefix an edited resubmission had retained: the snapshot is
-@@ -140,7 +149,7 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
+@@ -141,7 +149,7 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
         * resolves. Preserving `oldContent` keeps the prefix, and with
         * it the offset. Run steps and labels both read this.
         */
@@ -5207,16 +5207,7 @@ index d242a0eb0d79cb8c959348e4a42a2adcaab1f723..49c77f58623e514e6e0db02af2367d1f
          run.editPrefixCleared = true;
        }
        const responseMessage = {
-@@ -148,7 +157,7 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
-         ...messages[responseIdx],
-         messageId: responseId,
-         parentMessageId: userMsgId,
--        content: preserveLoadedContent ? oldContent : data.resumeState.aggregatedContent,
-+        content: preserveLoadedContent ? oldContent : snapshotContent,
-         sender: messages[responseIdx]?.sender ?? resumeSubmission.initialResponse.sender,
-         iconURL: preferDefinedString(
-           messages[responseIdx]?.iconURL,
-@@ -183,12 +192,14 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
+@@ -184,7 +192,9 @@ export function handleSync(ctx: StreamContext, data: ChatSyncFrame): void {
         *  later steps and labels must stop offsetting. Setting it
         *  only in the matched branch left this path adding an offset
         *  to indices that were already absolute. */
@@ -5227,12 +5218,6 @@ index d242a0eb0d79cb8c959348e4a42a2adcaab1f723..49c77f58623e514e6e0db02af2367d1f
        const newMessage = {
          ...resumeSubmission.initialResponse,
          messageId: responseId,
-         parentMessageId: userMsgId,
--        content: data.resumeState.aggregatedContent,
-+        content: snapshotContent,
-         isCreatedByUser: false,
-       } as TMessage;
-       host.messages.set(
 diff --git a/packages/chat/src/core/steps/content.ts b/packages/chat/src/core/steps/content.ts
 index f85ff498a7762f4a62944daf86150b2cad0d4188..2342327d713ca1a0036741bf5bf9e00ca3751686 100644
 --- a/packages/chat/src/core/steps/content.ts
@@ -5432,16 +5417,19 @@ index 0000000000000000000000000000000000000000..7d62a9aad8486e94ee04f4c5a5401b44
 +  });
 +});
 diff --git a/packages/data-provider/src/messages.ts b/packages/data-provider/src/messages.ts
-index 2f6f5ff03d66b64d2d4fae73cabb9f67a353c8d7..7354bbab4a3493addb0d75fbc09516fb13211886 100644
+index 9deb80947c96bcb65ad4187fe4d31f3f93187737..17d45e32aa2214ab0567d64c51236f96b754cd88 100644
 --- a/packages/data-provider/src/messages.ts
 +++ b/packages/data-provider/src/messages.ts
-@@ -1,8 +1,25 @@
+@@ -1,4 +1,5 @@
 -import type { TMessageContentParts } from './types/content';
 +import type { TextData, TMessageContentParts } from './types/content';
 +import type { Agents } from './types/agents';
  import type { TFile } from './types/files';
  import type { TMessage } from './types';
  import { ContentTypes } from './types/runs';
+@@ -13,6 +14,22 @@ export function mergeMessageFile(file: Partial<TFile>, stored?: TFile): Partial<
+   return { ...stored, textPreview, llmDeliveryPath };
+ }
  
 +const mergeTextData = (
 +  existing: string | TextData,
@@ -5462,7 +5450,7 @@ index 2f6f5ff03d66b64d2d4fae73cabb9f67a353c8d7..7354bbab4a3493addb0d75fbc09516fb
  /** A generated reasoning title describes the text as it existed at generation time.
   *  Any manual edit or merge into a different reasoning step invalidates the entire
   *  title revision domain while preserving unrelated content metadata. */
-@@ -22,6 +39,95 @@ export function stripReasoningLabelMetadata(part: TMessageContentParts): TMessag
+@@ -32,6 +49,95 @@ export function stripReasoningLabelMetadata(part: TMessageContentParts): TMessag
    return unlabeledPart;
  }
  
@@ -5559,7 +5547,7 @@ index 2f6f5ff03d66b64d2d4fae73cabb9f67a353c8d7..7354bbab4a3493addb0d75fbc09516fb
  
  /**
 diff --git a/packages/data-provider/src/types.ts b/packages/data-provider/src/types.ts
-index 74444ce41bf543474da3d07c06f4ce615bc6e965..a3771dd4b93276f51903ba00f8fc58d6acb4a10b 100644
+index 03f55b18278e1cd76235018c26c8a1d25db79008..a9bcce32866648ef30953d5d62a0b2dcec180044 100644
 --- a/packages/data-provider/src/types.ts
 +++ b/packages/data-provider/src/types.ts
 @@ -231,7 +231,9 @@ export type TSubmission = {

@@ -1,6 +1,6 @@
 # 现有测试合同的适配
 
-状态：`local`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`local`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
 保留 pinned drag 测量与 pagination 对齐、sender-seen/unread 时序、stream budget/recovery、activity fold 和滚动 fixture 的最终修正。
 
@@ -23,6 +23,8 @@
 
 仅保留最终净差异，不逐个重放过期 fixture 提交；依赖当前实际测试消费的 history、intent 与 recovery 合同。
 
+本基线保留当前 activity-fold 断言；上游 `0491d60ae6ae6c6606ea87d03a192968a185125c` 已删除 path 高亮调用和旧布局夹具。pinned helper 沿用 `scrollIntoView({ block: 'nearest' })`，等待 draggable 并在 hover 后检测命中，起拖后滚动再测量目标。unseen-replies 等 sender acknowledgment 后离开会话，再恢复 unread 夹具。
+
 ## 维护与验证
 
 先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
@@ -35,4 +37,4 @@ python3 tools/patchset.py test --target /path/to/application --only test-adaptat
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。
+2026-11-11：本组浏览器合同 47 个用例通过，无跳过或重试，包含完整 activity-fold、pinned drag、unseen-replies 与 streaming 回归。项目门禁汇总见[根 README](../../README.md#验证)。

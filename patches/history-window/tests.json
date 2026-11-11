@@ -37,15 +37,13 @@
         "client/src/components/Chat/Messages/Content/Parts/__tests__/LogContent.test.tsx",
         "client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx",
         "client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx",
-        "client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx",
         "client/src/components/Chat/__tests__/ChatView.spec.tsx",
         "client/src/components/Conversations/ConvoOptions/__tests__/ShareButton.test.tsx",
         "client/src/data-provider/Messages/__tests__/queries.test.ts",
         "client/src/data-provider/Messages/__tests__/window.test.ts",
         "client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx",
         "client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx",
-        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx",
-        "client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx"
+        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx"
       ],
       "runner": "jest",
       "files": [
@@ -53,15 +51,13 @@
         "client/src/components/Chat/Messages/Content/Parts/__tests__/LogContent.test.tsx",
         "client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx",
         "client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx",
-        "client/src/components/Chat/Messages/__tests__/MessagesView.spec.tsx",
         "client/src/components/Chat/__tests__/ChatView.spec.tsx",
         "client/src/components/Conversations/ConvoOptions/__tests__/ShareButton.test.tsx",
         "client/src/data-provider/Messages/__tests__/queries.test.ts",
         "client/src/data-provider/Messages/__tests__/window.test.ts",
         "client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx",
         "client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx",
-        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx",
-        "client/src/hooks/Messages/__tests__/useThreadRows.spec.tsx"
+        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx"
       ]
     },
     {
@@ -84,12 +80,16 @@
       "requires": [
         "packages/chat/package.json",
         "packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx",
-        "packages/chat/test/consumer.spec.tsx"
+        "packages/chat/src/components/pane/__tests__/messages.spec.tsx",
+        "packages/chat/test/consumer.spec.tsx",
+        "packages/chat/src/react/messages/__tests__/rows.spec.tsx"
       ],
       "runner": "jest",
       "files": [
         "packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx",
-        "packages/chat/test/consumer.spec.tsx"
+        "packages/chat/src/components/pane/__tests__/messages.spec.tsx",
+        "packages/chat/test/consumer.spec.tsx",
+        "packages/chat/src/react/messages/__tests__/rows.spec.tsx"
       ]
     },
     {
@@ -167,17 +167,20 @@
       ]
     },
     {
-      "name": "packages/chat tsc --noEmit",
+      "name": "packages/chat source and consumer typecheck",
       "tier": "types",
       "cwd": "packages/chat",
       "requires": [
-        "packages/chat/tsconfig.json"
+        "packages/chat/tsconfig.json",
+        "packages/chat/test/tsconfig.json",
+        "packages/chat/package.json",
+        "scripts/typecheck.mts"
       ],
       "runner": "command",
       "command": [
-        "node",
-        "../../node_modules/typescript/bin/tsc",
-        "--noEmit"
+        "npm",
+        "run",
+        "typecheck"
       ]
     },
     {
@@ -223,7 +226,7 @@
         "static-checks",
         "--",
         "--against",
-        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+        "e6567c7a681ce67869dce31486a21d3a25d6931b"
       ]
     },
     {

@@ -1,5 +1,5 @@
 diff --git a/api/server/services/Endpoints/agents/initialize.js b/api/server/services/Endpoints/agents/initialize.js
-index a76b677ac5a78d6e04e6169c3d4254a407a677d3..6192eaa823049a70528971c61e175a672dc9e8b2 100644
+index 1c5d7c7b188af64ee48d0b58c09d758ac2f1fa76..46e6fd07cc724f6242b53b0c07d4076d256aff0f 100644
 --- a/api/server/services/Endpoints/agents/initialize.js
 +++ b/api/server/services/Endpoints/agents/initialize.js
 @@ -56,6 +56,7 @@ const {
@@ -10,7 +10,7 @@ index a76b677ac5a78d6e04e6169c3d4254a407a677d3..6192eaa823049a70528971c61e175a67
    hasEntityEmbeddings,
  } = require('@librechat/api');
  const {
-@@ -1376,20 +1377,19 @@ const initializeClientWithProvider = async ({
+@@ -1384,20 +1385,19 @@ const initializeClientWithProvider = async ({
      viewAccessChecked = false,
    }) => {
      throwIfAborted(context.signal);
@@ -45,10 +45,10 @@ index a76b677ac5a78d6e04e6169c3d4254a407a677d3..6192eaa823049a70528971c61e175a67
        subagentCodeRouting.place({
          agent,
 diff --git a/api/server/services/Endpoints/agents/initialize.spec.js b/api/server/services/Endpoints/agents/initialize.spec.js
-index bd6bba47687d5996179a446997c48d828ba44b48..fc5b4aebf9ec6256178116d2de6d2e517bf5b180 100644
+index a36f151c465dd3c0ee8b1b0f64935e19e4454272..20b93166ec552a322865bc59b0f1d2793ee906f9 100644
 --- a/api/server/services/Endpoints/agents/initialize.spec.js
 +++ b/api/server/services/Endpoints/agents/initialize.spec.js
-@@ -3689,7 +3689,7 @@ describe('initializeClient — subagent loading', () => {
+@@ -3723,7 +3723,7 @@ describe('initializeClient — subagent loading', () => {
        agentClientArgs.agent.lazySubagentConfigs[0].resolve({
          signal: new AbortController().signal,
        }),
@@ -57,7 +57,7 @@ index bd6bba47687d5996179a446997c48d828ba44b48..fc5b4aebf9ec6256178116d2de6d2e51
      expect(mockInitializeAgent).toHaveBeenCalledTimes(1);
    });
  
-@@ -3712,7 +3712,7 @@ describe('initializeClient — subagent loading', () => {
+@@ -3746,7 +3746,7 @@ describe('initializeClient — subagent loading', () => {
        agentClientArgs.agent.lazySubagentConfigs[0].resolve({
          signal: new AbortController().signal,
        }),
@@ -67,7 +67,7 @@ index bd6bba47687d5996179a446997c48d828ba44b48..fc5b4aebf9ec6256178116d2de6d2e51
    });
  
 diff --git a/packages/api/src/agents/__tests__/initialize.test.ts b/packages/api/src/agents/__tests__/initialize.test.ts
-index 8cad7a99b1f36f1edaa51e5db98f7ed041baf1b5..b27be69ed7733ecb4471bddd0d6b5a0468fc5fa3 100644
+index ce7310b63ca262d1fc021988176ce6a931f73a95..a26e8cde2d54f12aef2bab6e6ef38fb1ad78713f 100644
 --- a/packages/api/src/agents/__tests__/initialize.test.ts
 +++ b/packages/api/src/agents/__tests__/initialize.test.ts
 @@ -33,6 +33,7 @@ jest.mock('@librechat/agents', () => ({
@@ -235,10 +235,10 @@ index fe2bc395e196b407df9e6ec497a155c6ce4e3105..3b98f25ab16578efc64304f1f73a25ba
  
    it('passes the trusted per-agent code-session partition to the SDK', async () => {
 diff --git a/packages/api/src/agents/index.ts b/packages/api/src/agents/index.ts
-index 834b335059bab330453c35acad8c4e3b0ffdbe14..49d025314cab05545f01003911162dd0bdde47a5 100644
+index 31129d3ef48f0856656968e0985a19bd51356e13..2db7e028efcdac95a8b99d911077712840ba9fa5 100644
 --- a/packages/api/src/agents/index.ts
 +++ b/packages/api/src/agents/index.ts
-@@ -99,4 +99,5 @@ export * from './remote';
+@@ -101,4 +101,5 @@ export * from './remote';
  export * from './queuedTurns';
  export * from './queuedTurnHttp';
  export * from './files/index';
@@ -593,7 +593,7 @@ index 0000000000000000000000000000000000000000..1a2a85bc3d8a2cc46a3a9aa65b1292f2
 +  };
 +}
 diff --git a/packages/api/src/agents/initialize.ts b/packages/api/src/agents/initialize.ts
-index 6934915b8a4e5033b22c203a144766b825f395cf..70ef27b2990bf89a3f6967788353c96ba7be64ca 100644
+index 58849173700efc0ad8c3073c727ef3fc7d7eeb16..1760de680ab75a27c5d754909883f894872ec237 100644
 --- a/packages/api/src/agents/initialize.ts
 +++ b/packages/api/src/agents/initialize.ts
 @@ -141,6 +141,7 @@ import { createRequestAgentExecutionContext } from './runtime';
@@ -604,7 +604,7 @@ index 6934915b8a4e5033b22c203a144766b825f395cf..70ef27b2990bf89a3f6967788353c96b
  import { assertToolOptionsWithinLimits } from './options';
  import { hasActiveFilePolicy } from '../protection/files';
  import { resolveAgentCodeExecution } from '~/code/agent';
-@@ -1431,37 +1432,40 @@ export async function initializeAgent(
+@@ -1434,37 +1435,40 @@ export async function initializeAgent(
    let perSkillExtras: Map<string, string[]> = new Map();
    let resolvedSkillCatalog: ResolvedSkillCatalog | undefined;
    if (hasSkillAccess) {
@@ -676,7 +676,7 @@ index 6934915b8a4e5033b22c203a144766b825f395cf..70ef27b2990bf89a3f6967788353c96b
  
      manualSkillPrimes = manualPrimesResult;
      alwaysApplySkillPrimes = alwaysApplyPrimesResult;
-@@ -1555,10 +1559,14 @@ export async function initializeAgent(
+@@ -1558,10 +1562,14 @@ export async function initializeAgent(
     * policy reads the endpoint's own name, but the route each attachment takes also depends on
     * the backing client and on the Responses API decision `getOptions` makes, and nothing
     * between here and tool loading feeds either. */
@@ -695,7 +695,7 @@ index 6934915b8a4e5033b22c203a144766b825f395cf..70ef27b2990bf89a3f6967788353c96b
    if (overrideProvider !== agent.provider) {
      agent.provider = overrideProvider;
    }
-@@ -1576,17 +1584,19 @@ export async function initializeAgent(
+@@ -1579,17 +1587,19 @@ export async function initializeAgent(
    );
    const finalModelOptions = pinAgentModel(modelOptions, agent.model);
  
@@ -726,7 +726,7 @@ index 6934915b8a4e5033b22c203a144766b825f395cf..70ef27b2990bf89a3f6967788353c96b
  
    const llmConfig = options.llmConfig as Record<string, unknown>;
    const webSearchDenied =
-@@ -2191,18 +2201,20 @@ export async function initializeAgent(
+@@ -2194,18 +2204,20 @@ export async function initializeAgent(
     * the empty fallback — the agent's own tools are the problem.
     */
    const callLoadTools = async (tools: string[]) =>
@@ -759,7 +759,7 @@ index 6934915b8a4e5033b22c203a144766b825f395cf..70ef27b2990bf89a3f6967788353c96b
  
    let loadToolsResult;
    const initialFailedSilently = (result: unknown) =>
-@@ -2221,7 +2233,7 @@ export async function initializeAgent(
+@@ -2224,7 +2236,7 @@ export async function initializeAgent(
      if (extraAllowedToolNames.length > 0) {
        logger.warn(
          `[allowedTools] loadTools threw with ${extraAllowedToolNames.length} skill-added extra(s); retrying without them`,
@@ -768,7 +768,7 @@ index 6934915b8a4e5033b22c203a144766b825f395cf..70ef27b2990bf89a3f6967788353c96b
        );
        if (!baseToolNames.includes(Tools.file_search)) {
          dropFileSearchResources();
-@@ -2658,30 +2670,32 @@ export async function initializeAgent(
+@@ -2664,30 +2676,32 @@ export async function initializeAgent(
     * invoke what it creates later in the same conversation.
     */
    if ((accessibleSkillIds && accessibleSkillIds.length > 0) || skillAuthoringAvailable) {
@@ -826,7 +826,7 @@ index 6934915b8a4e5033b22c203a144766b825f395cf..70ef27b2990bf89a3f6967788353c96b
      skillCount = skillResult.skillCount;
      executableSkillIds = skillResult.activeSkillIds;
 diff --git a/packages/api/src/agents/run.ts b/packages/api/src/agents/run.ts
-index 7d3d2750841994fc9d91acfc970a2cb471ee42ae..60b627bda4126aa4fa675688b035514a0a168a52 100644
+index 1cc6973eeaad59bb48169a63a5539f00eea7d81a..2c55b584001788af123302b55c2b86d759ab7dce 100644
 --- a/packages/api/src/agents/run.ts
 +++ b/packages/api/src/agents/run.ts
 @@ -123,6 +123,7 @@ import { reportSubagentResolutionFailure } from '~/agents/failures/subagent';
@@ -837,7 +837,7 @@ index 7d3d2750841994fc9d91acfc970a2cb471ee42ae..60b627bda4126aa4fa675688b035514a
  import { getDirectDispatcher, getProxyDispatcher } from '~/utils/proxy';
  import { getAzureCredentials, constructAzureURL } from '~/utils/azure';
  import { buildEffectiveToolApprovalPolicy } from '~/agents/hitl/allow';
-@@ -3049,6 +3050,9 @@ export async function createRun({
+@@ -3074,6 +3075,9 @@ export async function createRun({
          }
        : customHandlers;
  
@@ -847,7 +847,7 @@ index 7d3d2750841994fc9d91acfc970a2cb471ee42ae..60b627bda4126aa4fa675688b035514a
    const runConfig = {
      runId: resolvedRunId,
      graphConfig,
-@@ -3062,7 +3066,24 @@ export async function createRun({
+@@ -3087,7 +3091,24 @@ export async function createRun({
      subagentUsageSink,
      subagentTasks: activeSubagentTasks,
      // Without it a subagent that cannot start logs nothing beyond the SDK's fixed `cause`.

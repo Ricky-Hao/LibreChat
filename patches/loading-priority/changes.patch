@@ -1,8 +1,8 @@
 diff --git a/client/src/routes/ChatRoute.tsx b/client/src/routes/ChatRoute.tsx
-index 446b253763729134340ef9005faa697a1442c482..553bd6bd4cc57ba412648f619dd74609f073ed5f 100644
+index 3e378a6c55299e2f4fcd592c8fdb79fd3fe6a31d..8128f36ec1895b69d17ed567d9499a5a17a5ac2e 100644
 --- a/client/src/routes/ChatRoute.tsx
 +++ b/client/src/routes/ChatRoute.tsx
-@@ -79,6 +79,14 @@ export default function ChatRoute() {
+@@ -73,6 +73,14 @@ export default function ChatRoute() {
    } else if (routeState.pending && conversation?.conversationId === conversationId) {
      setRouteState({ conversationId, pending: false });
    }
@@ -17,10 +17,10 @@ index 446b253763729134340ef9005faa697a1442c482..553bd6bd4cc57ba412648f619dd74609
    useAppStartup({ startupConfig, user });
    const { newConversation } = useNewConvo();
    const { showToast } = useToastContext();
-@@ -137,12 +145,6 @@ export default function ChatRoute() {
-     enabled: isAuthenticated,
-     refetchOnMount: 'always',
-   });
+@@ -127,12 +135,6 @@ export default function ChatRoute() {
+     );
+   }, [projectScopeMissing, setSearchParams]);
+ 
 -  const initialConvoQuery = useGetConvoIdQuery(conversationId, {
 -    enabled:
 -      isAuthenticated &&
@@ -28,5 +28,5 @@ index 446b253763729134340ef9005faa697a1442c482..553bd6bd4cc57ba412648f619dd74609
 -      (!hasSetConversation.current || routeState.pending),
 -  });
    const endpointsQuery = useGetEndpointsQuery({ enabled: isAuthenticated });
-   const assistantListMap = useAssistantListMap();
-   /** The map comes from Root's shared context (one mapping pass app-wide); the
+   // Capture stored intent once per route/account, before startup writes defaults.
+   const storedSelection = useMemo(

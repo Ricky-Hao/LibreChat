@@ -1,19 +1,18 @@
 {
   "checks": [
     {
-      "name": "Vendor chunk classification (first Node test only)",
-      "tier": "focused",
+      "name": "Upstream vendor chunk path config probes",
+      "tier": "browser",
       "cwd": ".",
-      "requires": [
-        "e2e/client-build.test.mjs",
-        "client/vite.config.ts"
+      "runner": "playwright",
+      "files": [
+        "e2e/specs/mock/scenarios/vendor-chunk-paths.spec.ts"
       ],
-      "runner": "command",
-      "command": [
-        "node",
-        "--test",
-        "--test-name-pattern=^vendor chunk names depend on packages rather than checkout paths$",
-        "e2e/client-build.test.mjs"
+      "config": "e2e/playwright.config.mock.ts",
+      "requires": [
+        "e2e/playwright.config.mock.ts",
+        "e2e/specs/mock/scenarios/vendor-chunk-paths.spec.ts",
+        "client/vite.config.ts"
       ]
     },
     {
@@ -45,7 +44,7 @@
         "static-checks",
         "--",
         "--against",
-        "f4154b649efa37e1345ccc517a4d8d1ed2178c82"
+        "e6567c7a681ce67869dce31486a21d3a25d6931b"
       ]
     }
   ]

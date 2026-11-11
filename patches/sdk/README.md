@@ -1,6 +1,6 @@
 # 当前 agents SDK 与构建接线
 
-状态：`keep`。应用基线：`f4154b649efa37e1345ccc517a4d8d1ed2178c82`。
+状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
 
 携带唯一在消费的 4.2.2-ricky.1 tarball、源码差异、来源元数据、锁文件、两个消费方和 Docker COPY。SDK 所有者为 Ricky-Hao/agents；本仓不另修 SDK。历史 tarball 不参与重放。
 
@@ -30,4 +30,4 @@ python3 tools/patchset.py test --target /path/to/application --only sdk --tier a
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-本阶段未运行本组应用测试；机械重放和入口存在不代表业务通过。
+2026-11-11：真实 SDK 来源与导出 smoke、浏览器合同及 API 类型检查通过；继续消费原有 `4.2.2-ricky.1`。项目门禁汇总见[根 README](../../README.md#验证)。

@@ -1,5 +1,5 @@
 diff --git a/packages/api/src/agents/handlers.spec.ts b/packages/api/src/agents/handlers.spec.ts
-index bc56be1d708bf0123b1d82ba1960159f5769c666..795c0a4ccc4eb64f155e68ef4811503f8c79d576 100644
+index b36a490783e00a0da8e5775213bb5b438a3dd79c..12314931f85d7741e453a0a40f053150355d0095 100644
 --- a/packages/api/src/agents/handlers.spec.ts
 +++ b/packages/api/src/agents/handlers.spec.ts
 @@ -1,3 +1,4 @@
@@ -59,7 +59,7 @@ index bc56be1d708bf0123b1d82ba1960159f5769c666..795c0a4ccc4eb64f155e68ef4811503f
        const capturedArgs: unknown[] = [];
        const tool = createMockTool(Constants.BASH_PROGRAMMATIC_TOOL_CALLING, [], {
 diff --git a/packages/api/src/agents/handlers.ts b/packages/api/src/agents/handlers.ts
-index 420adad664a7f9307e882ab1a7e9a63db717c504..62e7ea152aaf30c526fe13ebbff8a642a9a1486d 100644
+index f76707eb15d62d1f9b2aae05b557edf0c3bd4cd8..c30537c77c157d45b26ed1feec325c02836da1d5 100644
 --- a/packages/api/src/agents/handlers.ts
 +++ b/packages/api/src/agents/handlers.ts
 @@ -1,6 +1,6 @@

@@ -1,16 +1,16 @@
 diff --git a/api/server/controllers/agents/__tests__/callbacks.spec.js b/api/server/controllers/agents/__tests__/callbacks.spec.js
-index 18f6101f04c814e0438c389533e256628c938692..b8cc2377cc6bb9957111b4b5dd227aba4871d854 100644
+index 194d8cd12007f0ecaf033e750839ab37df865f52..06d85dae6842976360cd4523496ffc18a81972a8 100644
 --- a/api/server/controllers/agents/__tests__/callbacks.spec.js
 +++ b/api/server/controllers/agents/__tests__/callbacks.spec.js
-@@ -40,6 +40,7 @@ jest.mock('@librechat/api', () => ({
-   isCodeArtifactToolOutput: jest.requireActual('@librechat/api').isCodeArtifactToolOutput,
+@@ -41,6 +41,7 @@ jest.mock('@librechat/api', () => ({
    isCodeSessionToolName: jest.requireActual('@librechat/api').isCodeSessionToolName,
    collectToolCallIds: jest.requireActual('@librechat/api').collectToolCallIds,
+   getImageAttachmentContent: jest.requireActual('@librechat/api').getImageAttachmentContent,
 +  collectSubagentContent: jest.requireActual('@librechat/api').collectSubagentContent,
    captureSubagentIdentity: jest.requireActual('@librechat/api').captureSubagentIdentity,
    feedSubagentAggregator: jest.requireActual('@librechat/api').feedSubagentAggregator,
    createToolTimingAdapter: jest.requireActual('@librechat/api').createToolTimingAdapter,
-@@ -505,7 +506,7 @@ describe('resumable event generation fencing', () => {
+@@ -506,7 +507,7 @@ describe('resumable event generation fencing', () => {
        });
      }
      expect(jest.requireMock('@librechat/data-schemas').logger.warn).not.toHaveBeenCalled();
@@ -19,7 +19,7 @@ index 18f6101f04c814e0438c389533e256628c938692..b8cc2377cc6bb9957111b4b5dd227aba
        id: 'child-call',
        toolPreparationStartedAt: 100,
        toolPreparationDurationMs: 400,
-@@ -577,7 +578,7 @@ describe('resumable event generation fencing', () => {
+@@ -578,7 +579,7 @@ describe('resumable event generation fencing', () => {
          ...update,
        });
      }
@@ -28,7 +28,7 @@ index 18f6101f04c814e0438c389533e256628c938692..b8cc2377cc6bb9957111b4b5dd227aba
      expect(aggregator.contentParts).toHaveLength(4);
      expect(aggregator.contentParts[0].tool_call).toMatchObject({
        id: 'query-1',
-@@ -607,7 +608,7 @@ describe('resumable event generation fencing', () => {
+@@ -608,7 +609,7 @@ describe('resumable event generation fencing', () => {
        phase: 'steer_applied',
        data: { index, part: { type: 'steer', steer: 'guidance' } },
      });
@@ -38,7 +38,7 @@ index 18f6101f04c814e0438c389533e256628c938692..b8cc2377cc6bb9957111b4b5dd227aba
  
    it('forwards the originating job epoch with deferred attachments', () => {
 diff --git a/api/server/controllers/agents/callbacks.js b/api/server/controllers/agents/callbacks.js
-index 4145f43b1b4ef66f2a86967df938f90bedebb962..47eb4c090792680ed0c869f64f82cdd44490bf8b 100644
+index 07e4c405eb7a3cc066f9f47fed3bdd0f746b9c9b..424ba3a602f044fb0be3a098632a71b1f253c7c0 100644
 --- a/api/server/controllers/agents/callbacks.js
 +++ b/api/server/controllers/agents/callbacks.js
 @@ -11,12 +11,7 @@ const {
@@ -63,9 +63,9 @@ index 4145f43b1b4ef66f2a86967df938f90bedebb962..47eb4c090792680ed0c869f64f82cdd4
 -  feedSubagentAggregator,
 +  collectSubagentContent,
    getAttachmentOwnership,
+   getImageAttachmentContent,
    collectToolCallIds,
-   createToolTimingAdapter,
-@@ -714,22 +708,7 @@ function getDefaultHandlers({
+@@ -715,22 +709,7 @@ function getDefaultHandlers({
            toolCall.mcpServerName = serverName;
          }
        }
@@ -90,7 +90,7 @@ index 4145f43b1b4ef66f2a86967df938f90bedebb962..47eb4c090792680ed0c869f64f82cdd4
      },
    };
 diff --git a/api/server/controllers/agents/client.js b/api/server/controllers/agents/client.js
-index dbe87d33e0c0bb55e37b7d4f96e5c24e6fb933f7..4cd9b444e2dbffa01bab19a7f7836f65b23acf71 100644
+index e8884656c5c3d1422c6e8c4ba3a0ee82481baea7..338fe1908df7be729d6c315462afba2cf5fb9d60 100644
 --- a/api/server/controllers/agents/client.js
 +++ b/api/server/controllers/agents/client.js
 @@ -212,6 +212,8 @@ const {
@@ -102,7 +102,7 @@ index dbe87d33e0c0bb55e37b7d4f96e5c24e6fb933f7..4cd9b444e2dbffa01bab19a7f7836f65
    isTemporaryTurn,
    hasEntityEmbeddings,
  } = require('@librechat/api');
-@@ -792,7 +794,7 @@ class AgentClient extends BaseClient {
+@@ -797,7 +799,7 @@ class AgentClient extends BaseClient {
     * Returns the aggregated content parts for the current run.
     * @returns {MessageContentComplex[]} */
    getContentParts() {
@@ -111,7 +111,7 @@ index dbe87d33e0c0bb55e37b7d4f96e5c24e6fb933f7..4cd9b444e2dbffa01bab19a7f7836f65
    }
  
    /**
-@@ -805,37 +807,7 @@ class AgentClient extends BaseClient {
+@@ -810,37 +812,7 @@ class AgentClient extends BaseClient {
     * appeared in `contentParts` are discarded (no home to attach to).
     */
    finalizeSubagentContent() {
@@ -150,7 +150,7 @@ index dbe87d33e0c0bb55e37b7d4f96e5c24e6fb933f7..4cd9b444e2dbffa01bab19a7f7836f65
    }
  
    /** Stamps host-resolved MCP identities onto persisted calls so future replay
-@@ -5955,7 +5927,12 @@ class AgentClient extends BaseClient {
+@@ -5961,7 +5933,12 @@ class AgentClient extends BaseClient {
        // introspection fall back to the durable chunk reconstruction, which is complete.
        // `setContentParts` still points the in-memory store at the seeded client content.
        if (streamId && this.contentParts) {
@@ -165,10 +165,10 @@ index dbe87d33e0c0bb55e37b7d4f96e5c24e6fb933f7..4cd9b444e2dbffa01bab19a7f7836f65
  
        // Carry the user's MCP auth into the rebuilt run so an approved MCP tool executes
 diff --git a/api/server/controllers/agents/client.test.js b/api/server/controllers/agents/client.test.js
-index 0589b0a400b8b9ed105ed173d3609a76f43e2da4..c8a69b2d3d4fc32e28a60ca81523b04579043778 100644
+index 25dc0a94c76b4b1af1f73b4ce61d32f389072ecf..3a0c8cbacfccbb0861527bcc19c6b031ce57e16b 100644
 --- a/api/server/controllers/agents/client.test.js
 +++ b/api/server/controllers/agents/client.test.js
-@@ -9922,9 +9922,9 @@ describe('AgentClient - finalizeSubagentContent', () => {
+@@ -9971,9 +9971,9 @@ describe('AgentClient - finalizeSubagentContent', () => {
      client.finalizeSubagentContent();
      const attached = client.contentParts[0].tool_call.subagent_content;
      expect(attached).toEqual([
@@ -201,16 +201,17 @@ index c36df29b59817ad343f9789a44374e320dd353da..6491a002098045b38552d2f2953aa30f
      let userMessage;
 diff --git a/client/src/components/Chat/Subagents/Recovery.test.tsx b/client/src/components/Chat/Subagents/Recovery.test.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..1142158ae21676755ffbb5974c41d54ba6478c3e
+index 0000000000000000000000000000000000000000..34b67bb218a8e59fa077fbd0f6a2120275d85be6
 --- /dev/null
 +++ b/client/src/components/Chat/Subagents/Recovery.test.tsx
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,283 @@
 +import React from 'react';
 +import axios from 'axios';
 +import { RecoilRoot } from 'recoil';
 +import { useAtomValue, useStore } from 'jotai';
 +import { MemoryRouter } from 'react-router-dom';
 +import { ContentTypes } from 'librechat-data-provider';
++import { loadSubagentThreadPanel } from '@librechat/chat/components';
 +import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 +import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 +import {
@@ -221,17 +222,19 @@ index 0000000000000000000000000000000000000000..1142158ae21676755ffbb5974c41d54b
 +  subagentProgressKey,
 +} from '@librechat/chat/react';
 +import type { TMessageContentParts, ToolCallPartResponse } from 'librechat-data-provider';
++import '~/components/Chat/Messages/Content/register';
++import '~/Providers/SubagentsHostContext';
 +import ContentParts from '~/components/Chat/Messages/Content/ContentParts';
-+import SubagentThreadPanel from './SubagentThreadPanel';
++import { SubagentIndexHostProvider } from 'test/streamHost';
 +import { ChatSurfaceHarness } from 'test/harness';
++
++const SubagentThreadPanel = React.lazy(loadSubagentThreadPanel);
 +
 +jest.mock('~/hooks', () => ({
 +  ...jest.requireActual('~/hooks/Messages/useCopyToClipboard'),
 +  useLocalize: () => (key: string) => key,
-+  useFocusTrap: jest.requireActual('~/hooks/useFocusTrap').default,
 +  useNavigateToConvo: () => ({ navigateToConvo: jest.fn() }),
 +  useExpandCollapse: () => ({ style: {}, ref: { current: null } }),
-+  useLazyCollapseBody: jest.requireActual('~/hooks/Messages/useLazyCollapseBody').default,
 +  useProgress: (initial: number) => initial,
 +  scheduleMessageContentLayoutReconcile: jest.fn(() => jest.fn()),
 +}));
@@ -250,17 +253,15 @@ index 0000000000000000000000000000000000000000..1142158ae21676755ffbb5974c41d54b
 +  useForkConvoMutation: () => ({ mutate: jest.fn() }),
 +  useSubagentControlMutation: () => ({ mutate: jest.fn() }),
 +}));
-+jest.mock('./ParentSubagentsProvider', () => ({
-+  useParentSubagents: () => ({ byMessageId: new Map(), byThreadId: new Map() }),
-+}));
-+jest.mock('@librechat/chat/react', () => ({
-+  ...jest.requireActual('@librechat/chat/react'),
-+  useSubagentActivityStream: () => ({ isReady: false }),
-+}));
 +jest.mock('@librechat/client', () => ({
 +  ...jest.requireActual('@librechat/client'),
++  useLocalize: () => (key: string) => key,
 +  useToastContext: () => ({ showToast: jest.fn() }),
 +  useMediaQuery: () => false,
++}));
++jest.mock('~/hooks/Conversations/useNavigateToConvo', () => ({
++  __esModule: true,
++  default: () => ({ navigateToConvo: jest.fn() }),
 +}));
 +jest.mock('~/components/Chat/Messages/Content/MarkdownLite', () => ({
 +  __esModule: true,
@@ -314,7 +315,13 @@ index 0000000000000000000000000000000000000000..1142158ae21676755ffbb5974c41d54b
 +
 +function PanelHost() {
 +  const selection = useAtomValue(activeSubagentPanel);
-+  return selection == null ? null : <SubagentThreadPanel selection={selection} />;
++  return selection == null ? null : (
++    <SubagentIndexHostProvider>
++      <React.Suspense fallback={null}>
++        <SubagentThreadPanel selection={selection} />
++      </React.Suspense>
++    </SubagentIndexHostProvider>
++  );
 +}
 +
 +function mount() {
@@ -481,23 +488,11 @@ index 0000000000000000000000000000000000000000..1142158ae21676755ffbb5974c41d54b
 +    ),
 +  );
 +});
-diff --git a/client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx b/client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx
-index 85a803fff9f9bf2697419db09ed641b3d90a6649..e99c4a1a833b6556a9d04575a7fb418256729843 100644
---- a/client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx
-+++ b/client/src/components/Chat/Subagents/SubagentThreadPanel.test.tsx
-@@ -316,6 +316,7 @@ const mockComposerVerdict = (
- };
- 
- jest.mock('@librechat/client', () => ({
-+  OverlayBack: jest.requireActual('@librechat/client').OverlayBack,
-   Alert: ({ children, ...props }: React.ComponentProps<'div'>) => (
-     <div role="alert" {...props}>
-       {children}
 diff --git a/client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx b/client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx
-index d2041c4f199cb0f9fcb2d83acbec3b1ac7617bf7..781e1d06ef46d8278991f65c77655cc790a5545d 100644
+index 35ed6ede61e7abe07c8d61f86490fc553a33d66d..f8b99368be868aaba5f7479ff403b9f95e77cb65 100644
 --- a/client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx
 +++ b/client/src/components/Chat/__tests__/ChatView.subagent.spec.tsx
-@@ -6,6 +6,7 @@ let mockConversation: Record<string, unknown> | null;
+@@ -10,6 +10,7 @@ let mockConversation: Record<string, unknown> | null;
  
  jest.mock('react-router-dom', () => ({
    useParams: () => ({ conversationId: 'child-thread' }),
@@ -506,10 +501,10 @@ index d2041c4f199cb0f9fcb2d83acbec3b1ac7617bf7..781e1d06ef46d8278991f65c77655cc7
  
  jest.mock('recoil', () => ({
 diff --git a/e2e/setup/fake-model.js b/e2e/setup/fake-model.js
-index 3c66603d3674b80fcddcf0520577ad93623c739d..df796c9a752b208ae11f22bb59b16851b199ba3b 100644
+index 2b21e682b841ee9b869c95bb378eed252124418f..9e2fbe08ee2847f1e8934cc28e72d91276233e9c 100644
 --- a/e2e/setup/fake-model.js
 +++ b/e2e/setup/fake-model.js
-@@ -131,6 +131,7 @@ const HANDOFF_MARKER = 'E2E_HANDOFF:';
+@@ -142,6 +142,7 @@ const HANDOFF_MARKER = 'E2E_HANDOFF:';
  const SUBAGENT_RESULT_MARKER = 'E2E_SUBAGENT_RESULT:';
  const SUBAGENT_CHILD_MARKER = 'E2E_SUBAGENT_CHILD:';
  const SUBAGENT_ACTIVITY_MARKER = 'E2E_SUBAGENT_ACTIVITY:';
@@ -517,7 +512,7 @@ index 3c66603d3674b80fcddcf0520577ad93623c739d..df796c9a752b208ae11f22bb59b16851
  const SUBAGENT_ACTIVITY_CHILD_MARKER = 'E2E_SUBAGENT_ACTIVITY_CHILD:';
  const RUN_FILES_MARKER = 'E2E_RUN_FILES:';
  const RUN_FILES_CHILD_MARKER = 'E2E_RUN_FILES_CHILD:';
-@@ -2446,7 +2447,8 @@ function runFileVersionsResponses(text) {
+@@ -2540,7 +2541,8 @@ function runFileVersionsResponses(text) {
  }
  
  function parseSubagentActivityMarker(text) {
@@ -527,7 +522,7 @@ index 3c66603d3674b80fcddcf0520577ad93623c739d..df796c9a752b208ae11f22bb59b16851
    const separator = value.indexOf(':');
    if (separator <= 0 || separator === value.length - 1) {
      return null;
-@@ -2460,6 +2462,7 @@ function parseSubagentActivityMarker(text) {
+@@ -2554,6 +2556,7 @@ function parseSubagentActivityMarker(text) {
    return {
      childIds,
      label: value.slice(separator + 1),
@@ -535,7 +530,7 @@ index 3c66603d3674b80fcddcf0520577ad93623c739d..df796c9a752b208ae11f22bb59b16851
    };
  }
  
-@@ -2498,7 +2501,9 @@ function subagentActivityResponses(text) {
+@@ -2592,7 +2595,9 @@ function subagentActivityResponses(text) {
            message.tool_call_id.startsWith('call_e2e_subagent_activity_'),
        );
        if (backgroundTaskResults.length >= marker.childIds.length) {
@@ -687,10 +682,10 @@ index d85a8c1c25d17d38e84cae3453c16080e61067b6..537638f76c22a163f5a3f03689c50805
  ): void {
    if (event.phase === 'steer_applied') {
 diff --git a/packages/api/src/agents/index.ts b/packages/api/src/agents/index.ts
-index 1fb91a53f7494983518e133a1397b4d35434d714..ce19ed170cc961b64664157ec16adf29816afd7f 100644
+index 900e1903d8cbe64e8b3542a13df403d726e8bc18..7639b9cf3f292d6720ea0dbbccce5b2024cad02c 100644
 --- a/packages/api/src/agents/index.ts
 +++ b/packages/api/src/agents/index.ts
-@@ -62,8 +62,9 @@ export * from './startup';
+@@ -64,8 +64,9 @@ export * from './startup';
  export * from './subagentThreads';
  export * from './subagentActivity';
  export * from './aggregation';
@@ -1472,7 +1467,7 @@ index 0000000000000000000000000000000000000000..e57f6cb8e7e6c135ae637ee02f29d4bf
 +  buffer.clear();
 +}
 diff --git a/packages/api/src/stream/GenerationJobManager.ts b/packages/api/src/stream/GenerationJobManager.ts
-index 6415b059286a403bfa3dd116a697337e9ce0601c..f768e9e0e7eb4479eb9670fbf7a5ae7610f69fba 100644
+index 6fe659b16b34533b21dc51dc55801e50ca916f38..f2a41664b8d60dde5d0b6ea88c15c1eea532e353 100644
 --- a/packages/api/src/stream/GenerationJobManager.ts
 +++ b/packages/api/src/stream/GenerationJobManager.ts
 @@ -39,6 +39,7 @@ import type {
@@ -1483,7 +1478,7 @@ index 6415b059286a403bfa3dd116a697337e9ce0601c..f768e9e0e7eb4479eb9670fbf7a5ae76
  import type { AgentStartupTelemetry } from '~/agents/startup';
  import type { RecoveredSteerPayload } from './SteerRecovery';
  import type { SteerContentView } from './SteeringLifecycle';
-@@ -8572,12 +8573,13 @@ class GenerationJobManagerClass {
+@@ -8609,12 +8610,13 @@ class GenerationJobManagerClass {
      streamId: string,
      contentParts: Agents.MessageContentComplex[],
      expectedCreatedAt?: number,
@@ -2484,7 +2479,7 @@ index 20fd5526b2de6338c3d9e21005555a76aadc6507..267b88603dcef254d1446034981a44a7
    );
    it.each([NaN, Infinity, -1, 2_000])(
 diff --git a/packages/chat/src/react/subagents/adapters.ts b/packages/chat/src/react/subagents/adapters.ts
-index d73d95dfac3e000587c92c866ee601a0e4d3ede5..41d6e8bf451a0c4246bd654c672bf5d1fa59f971 100644
+index 3fe2d0468f4c2248a5700ec484166fb079575f07..1459138c27f15e792730873b1c158523a33c092c 100644
 --- a/packages/chat/src/react/subagents/adapters.ts
 +++ b/packages/chat/src/react/subagents/adapters.ts
 @@ -310,6 +310,42 @@ const liveStatus = ({
@@ -2554,7 +2549,7 @@ index d73d95dfac3e000587c92c866ee601a0e4d3ede5..41d6e8bf451a0c4246bd654c672bf5d1
      items = mergePersistedAndLiveActivity(persistedItems, liveItems);
      // A suffix without sequence-aligned standard recovery still needs the legacy bridge.
 diff --git a/packages/chat/src/react/subagents/state.ts b/packages/chat/src/react/subagents/state.ts
-index 1b338c011d0278be3558234a7765c69f37e80235..c03a1955c90cfaa5a162eaf100b75c355559d097 100644
+index 1896a5397529ac11bb32b5319a919958fc9d6fe3..857945f0a8a14d8636e1c1b34a7a6ce00d3ec87a 100644
 --- a/packages/chat/src/react/subagents/state.ts
 +++ b/packages/chat/src/react/subagents/state.ts
 @@ -11,6 +11,7 @@ import type {
@@ -2565,7 +2560,7 @@ index 1b338c011d0278be3558234a7765c69f37e80235..c03a1955c90cfaa5a162eaf100b75c35
  } from 'librechat-data-provider';
  import type { Getter, PrimitiveAtom, WritableAtom } from 'jotai';
  import type { SetStateAction } from 'react';
-@@ -38,6 +39,8 @@ import {
+@@ -39,6 +40,8 @@ import { REDACTED_REASONING_MARKER } from './redaction';
   * capped by item count and encoded size to match the durable public view.
   */
  export interface SubagentProgress {
@@ -2574,7 +2569,7 @@ index 1b338c011d0278be3558234a7765c69f37e80235..c03a1955c90cfaa5a162eaf100b75c35
    /** Child run id from the SDK — unique per spawn; one tool_call may only have one. */
    subagentRunId: string;
    /** `type` identifier from the SubagentConfig (e.g. 'self', 'researcher'). */
-@@ -799,7 +802,8 @@ const foldAcceptedSubagentEvents = (
+@@ -791,7 +794,8 @@ const foldAcceptedSubagentEvents = (
    )
      return foldLegacyInvocations(previous, events, pendingSequencedEvents);
    const firstSequence = events[0].activitySequence;
@@ -2584,7 +2579,7 @@ index 1b338c011d0278be3558234a7765c69f37e80235..c03a1955c90cfaa5a162eaf100b75c35
    const hasGap =
      validActivitySequence(firstSequence) &&
      validActivitySequence(priorSequence) &&
-@@ -820,7 +824,8 @@ const foldAcceptedSubagentEvents = (
+@@ -812,7 +816,8 @@ const foldAcceptedSubagentEvents = (
    }
    const boundedEventKeys = recentEventKeys.slice(-MAX_RECENT_EVENT_KEYS);
    let contentParts = previous?.contentParts ?? [];
@@ -2594,7 +2589,7 @@ index 1b338c011d0278be3558234a7765c69f37e80235..c03a1955c90cfaa5a162eaf100b75c35
    let tickerState = previous?.tickerState ?? initSubagentTickerState();
    let subagentKind = previous?.subagentKind;
    const omissions = acceptedOmissions(previous, events);
-@@ -851,6 +856,11 @@ const foldAcceptedSubagentEvents = (
+@@ -843,6 +848,11 @@ const foldAcceptedSubagentEvents = (
      aggregatorState,
      events[events.length - 1].subagentAgentId ?? previous?.subagentAgentId,
    ));
@@ -2606,7 +2601,7 @@ index 1b338c011d0278be3558234a7765c69f37e80235..c03a1955c90cfaa5a162eaf100b75c35
    tickerState = boundTickerState(tickerState);
    const last = events[events.length - 1];
    const lastActivitySequence = [...events]
-@@ -861,6 +871,7 @@ const foldAcceptedSubagentEvents = (
+@@ -853,6 +863,7 @@ const foldAcceptedSubagentEvents = (
    const acceptedRunStart = events.some((event) => event.activitySequence === 0);
    return {
      subagentRunId: last.subagentRunId,
@@ -2614,7 +2609,7 @@ index 1b338c011d0278be3558234a7765c69f37e80235..c03a1955c90cfaa5a162eaf100b75c35
      subagentType: last.subagentType,
      subagentAgentId: last.subagentAgentId ?? previous?.subagentAgentId,
      subagentKind,
-@@ -1033,6 +1044,50 @@ export function reduceSubagentProgress(
+@@ -1025,6 +1036,50 @@ export function reduceSubagentProgress(
    });
  }
  
