@@ -638,6 +638,32 @@
       "tests": "patches/contributor-guidance/tests.json"
     },
     {
+      "id": "file-search-provisioning",
+      "status": "keep",
+      "depends_on": [
+        "task-callbacks"
+      ],
+      "patch": "patches/file-search-provisioning/changes.patch",
+      "paths": [
+        "api/app/clients/tools/util/fileSearch.js",
+        "api/server/services/Endpoints/agents/initialize.js",
+        "api/server/services/Files/provisionCallback.js",
+        "api/server/services/ToolService.js",
+        "api/test/app/clients/tools/util/fileSearch.test.js",
+        "packages/api/src/agents/files/host.spec.ts",
+        "packages/api/src/agents/files/host.ts",
+        "packages/api/src/agents/handlers.ptcFiles.spec.ts",
+        "packages/api/src/agents/handlers.ts",
+        "packages/api/src/files/provision/callback.spec.ts",
+        "packages/api/src/files/provision/callback.ts",
+        "packages/api/src/files/rag/search.spec.ts",
+        "packages/api/src/files/rag/search.ts",
+        "packages/api/src/tools/definitions.spec.ts",
+        "packages/api/src/tools/definitions.ts"
+      ],
+      "tests": "patches/file-search-provisioning/tests.json"
+    },
+    {
       "id": "index-retry",
       "status": "upstream",
       "depends_on": [],

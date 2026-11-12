@@ -1,0 +1,94 @@
+{
+  "checks": [
+    {
+      "name": "PTC file-search provisioning and shared host contracts",
+      "tier": "focused",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/package.json",
+        "packages/api/src/agents/handlers.ptcFiles.spec.ts",
+        "packages/api/src/agents/handlers.spec.ts",
+        "packages/api/src/agents/files/host.spec.ts",
+        "packages/api/src/files/provision/callback.spec.ts",
+        "packages/api/src/files/rag/search.spec.ts",
+        "packages/api/src/tools/definitions.spec.ts",
+        "packages/api/src/agents/callbacks.ptc.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/api/src/agents/handlers.ptcFiles.spec.ts",
+        "packages/api/src/agents/handlers.spec.ts",
+        "packages/api/src/agents/files/host.spec.ts",
+        "packages/api/src/files/provision/callback.spec.ts",
+        "packages/api/src/files/rag/search.spec.ts",
+        "packages/api/src/tools/definitions.spec.ts",
+        "packages/api/src/agents/callbacks.ptc.spec.ts"
+      ]
+    },
+    {
+      "name": "Legacy file-search and host wiring contracts",
+      "tier": "focused",
+      "cwd": "api",
+      "requires": [
+        "api/package.json",
+        "api/test/app/clients/tools/util/fileSearch.test.js",
+        "api/server/services/__tests__/ToolService.spec.js",
+        "api/server/services/Endpoints/agents/initialize.spec.js"
+      ],
+      "runner": "jest",
+      "files": [
+        "api/test/app/clients/tools/util/fileSearch.test.js",
+        "api/server/services/__tests__/ToolService.spec.js",
+        "api/server/services/Endpoints/agents/initialize.spec.js"
+      ]
+    },
+    {
+      "name": "packages/api tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/api",
+      "requires": [
+        "packages/api/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    },
+    {
+      "name": "Application static checks against fixed base",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "scripts/static-checks.mts"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "static-checks",
+        "--",
+        "--against",
+        "e6567c7a681ce67869dce31486a21d3a25d6931b"
+      ]
+    },
+    {
+      "name": "Lighthouse application gate",
+      "tier": "project",
+      "cwd": ".",
+      "requires": [
+        "package.json",
+        "e2e/playwright.config.lighthouse.ts",
+        "e2e/lighthouse/README.md"
+      ],
+      "runner": "command",
+      "command": [
+        "npm",
+        "run",
+        "lighthouse"
+      ]
+    }
+  ]
+}
