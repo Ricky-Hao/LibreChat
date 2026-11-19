@@ -1,0 +1,33 @@
+{
+  "checks": [
+    {
+      "name": "Pinned drag ordering tests",
+      "tier": "focused",
+      "cwd": "client",
+      "requires": [
+        "client/package.json",
+        "client/src/components/Conversations/__tests__/PinnedSection.spec.tsx",
+        "client/src/components/Conversations/__tests__/dnd.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "client/src/components/Conversations/__tests__/PinnedSection.spec.tsx",
+        "client/src/components/Conversations/__tests__/dnd.spec.ts"
+      ]
+    },
+    {
+      "name": "client tsc --noEmit",
+      "tier": "types",
+      "cwd": "client",
+      "requires": [
+        "client/tsconfig.json"
+      ],
+      "runner": "command",
+      "command": [
+        "node",
+        "../node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ]
+    }
+  ]
+}

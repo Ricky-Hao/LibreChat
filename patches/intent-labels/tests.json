@@ -1,29 +1,18 @@
 {
   "checks": [
     {
-      "name": "client focused tests",
-      "tier": "focused",
-      "cwd": "client",
-      "requires": [
-        "client/package.json",
-        "client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx"
-      ],
-      "runner": "jest",
-      "files": [
-        "client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx"
-      ]
-    },
-    {
       "name": "packages/chat focused tests",
       "tier": "focused",
       "cwd": "packages/chat",
       "requires": [
         "packages/chat/package.json",
-        "packages/chat/src/core/parts/__tests__/activityLabels.spec.ts"
+        "packages/chat/src/core/parts/__tests__/activityLabels.spec.ts",
+        "packages/chat/src/components/parts/__tests__/ProgressText.spec.tsx"
       ],
       "runner": "jest",
       "files": [
-        "packages/chat/src/core/parts/__tests__/activityLabels.spec.ts"
+        "packages/chat/src/core/parts/__tests__/activityLabels.spec.ts",
+        "packages/chat/src/components/parts/__tests__/ProgressText.spec.tsx"
       ]
     },
     {
@@ -113,7 +102,7 @@
         "static-checks",
         "--",
         "--against",
-        "e6567c7a681ce67869dce31486a21d3a25d6931b"
+        "d4e85d2205c78413ee27d631d7e3b7313556f21d"
       ]
     }
   ]

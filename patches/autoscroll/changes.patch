@@ -1,62 +1,47 @@
 diff --git a/client/src/components/Chat/ChatView.tsx b/client/src/components/Chat/ChatView.tsx
-index ee4701f35d796504f32ebf32dba844aefc2082fc..aefce03e252c3a251ba1f67b8251e8c1707d3b9e 100644
+index 891dd01447de93adadde8dd6b1ed21a5189f6aa2..97fd0b8494795d621ebd3e554dd76e1b4b27e644 100644
 --- a/client/src/components/Chat/ChatView.tsx
 +++ b/client/src/components/Chat/ChatView.tsx
-@@ -82,6 +82,7 @@ function ChatViewPane({
-   messages: TMessage[] | null;
-   isLoading: boolean;
+@@ -79,2 +79,3 @@ function ChatViewPane({
  }) {
 +  const { targetMessageId } = useParams();
    const rootSubmission = useAtomValue(submissionByIndex(index));
-   const { saveDrafts } = useChatSettings();
-   const enterToSend = useRecoilValue(store.enterToSend);
-@@ -171,7 +172,22 @@ function ChatViewPane({
-                               />
-                             )}
+@@ -177,3 +178,21 @@ function ChatViewPane({
                              renderBadge={(projectId) => <ProjectBadge projectId={projectId} />}
--                            messagesSlots={messagesSlots}
-+                            messagesSlots={{
-+                              ...messagesSlots,
-+                              scrollNavigation: {
-+                                conversationKey: conversationId,
-+                                targetMessageId,
-+                                ready: !routePending,
-+                                explicitSendId:
-+                                  rootSubmission &&
-+                                  !('resumeStreamId' in rootSubmission) &&
-+                                  (rootSubmission.conversation?.conversationId == null ||
-+                                    rootSubmission.conversation?.conversationId === conversationId)
-+                                    ? (rootSubmission.clientRequestId ??
-+                                      rootSubmission.initialResponse?.messageId)
-+                                    : undefined,
-+                              },
-+                            }}
+-                            renderMessages={renderMessages}
++                            renderMessages={(props) =>
++                              renderMessages({
++                                ...props,
++                                scrollNavigation: {
++                                  conversationKey: conversationId,
++                                  targetMessageId,
++                                  ready: !routePending,
++                                  explicitSendId:
++                                    rootSubmission &&
++                                    !('resumeStreamId' in rootSubmission) &&
++                                    (rootSubmission.conversation?.conversationId == null ||
++                                      rootSubmission.conversation?.conversationId ===
++                                        conversationId)
++                                      ? (rootSubmission.clientRequestId ??
++                                        rootSubmission.initialResponse?.messageId)
++                                      : undefined,
++                                },
++                              })
++                            }
                              landing={<Landing centerFormOnLanding={centerFormOnLanding} />}
-                             renderColumn={(column) => (
-                               <OwnerTextProvider
 diff --git a/e2e/setup/fake-model.js b/e2e/setup/fake-model.js
-index 9e2fbe08ee2847f1e8934cc28e72d91276233e9c..74263b302093f32a5a9905e532a6efa38309116b 100644
+index 47b354c9b84dcc6e1589a42a04b3aabddbfc08de..b7f56de772145c85a4a7c19d201be095013d6f1d 100644
 --- a/e2e/setup/fake-model.js
 +++ b/e2e/setup/fake-model.js
-@@ -11,6 +11,7 @@
-  */
- const sharp = require('sharp');
+@@ -13,2 +13,3 @@ const sharp = require('sharp');
  const { FakeChatModel } = require('@librechat/agents');
 +const { setTimeout: delay } = require('node:timers/promises');
  const { ChatGenerationChunk } = require('@langchain/core/outputs');
- const { AIMessageChunk } = require('@langchain/core/messages');
- const { tryBindReplay } = require('./model-replay');
-@@ -49,6 +50,7 @@ const RETAINED_PREFIX_MARKER = 'E2E_RETAINED_PREFIX:';
- const COUNTED_REPLY_MARKER = 'E2E_COUNTED_REPLY:';
- const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
+@@ -51,2 +52,3 @@ const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
  const SLOW_REPLY_MARKER = 'E2E_SLOW_REPLY:';
 +const RUNNING_REPLY_MARKER = 'E2E_RUNNING_REPLY:';
  const EMPTY_SLOW_REPLY_MARKER = 'E2E_EMPTY_SLOW_REPLY:';
- const PRE_TOKEN_REPLY_MARKER = 'E2E_PRE_TOKEN_REPLY:';
- /** A run that completes having produced no content at all: the shape a
-@@ -874,6 +876,15 @@ function replyResponses(text) {
-     };
-   }
+@@ -900,2 +902,11 @@ function replyResponses(text) {
  
 +  const runningName = getMarkerValue(text, RUNNING_REPLY_MARKER);
 +  if (runningName) {
@@ -68,11 +53,7 @@ index 9e2fbe08ee2847f1e8934cc28e72d91276233e9c..74263b302093f32a5a9905e532a6efa3
 +  }
 +
    const slowName = getMarkerValue(text, SLOW_REPLY_MARKER);
-   if (slowName) {
-     return slowReplyResponses(slowName);
-@@ -954,6 +965,20 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
-     this.streamSleep = sleep ?? CHUNK_DELAY_MS;
-   }
+@@ -980,2 +991,16 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
  
 +  /** Navigation tests need a live run until Stop, not a finite timing window. */
 +  async *streamRunningResponseChunks(label, signal, runManager) {
@@ -89,11 +70,7 @@ index 9e2fbe08ee2847f1e8934cc28e72d91276233e9c..74263b302093f32a5a9905e532a6efa3
 +  }
 +
    async *streamScriptedResponseChunks({
-     response,
-     toolCalls,
-@@ -1050,7 +1075,13 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
-       ? null
-       : await this.resolveOnStream?.(messages, options, runManager);
+@@ -1076,3 +1101,9 @@ class UsageEmittingFakeChatModel extends FakeChatModel {
      let chunkStream;
 -    if (scriptedResponse) {
 +    if (scriptedResponse?.runningReply) {
@@ -104,8 +81,6 @@ index 9e2fbe08ee2847f1e8934cc28e72d91276233e9c..74263b302093f32a5a9905e532a6efa3
 +      );
 +    } else if (scriptedResponse) {
        chunkStream = this.streamScriptedResponseChunks({
-         response: scriptedResponse.response ?? '',
-         toolCalls: scriptedResponse.toolCalls,
 diff --git a/e2e/specs/mock/running-autoscroll.spec.ts b/e2e/specs/mock/running-autoscroll.spec.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..d1483c529a7522097e804518a0055a237dae00e2
@@ -288,79 +263,59 @@ index 0000000000000000000000000000000000000000..d1483c529a7522097e804518a0055a23
 +  }
 +});
 diff --git a/packages/chat/src/components/messages/MessagesView.tsx b/packages/chat/src/components/messages/MessagesView.tsx
-index 3552c364bf2c4f3632658e85626fc51444b6016a..b63057e9cf96c7781300492b0525a563075b4df3 100644
+index 5a0433077c4e6104c251ecf642e5dec7641a0677..20b5434e4d8d5ab71b3c52f44badf4cc084d136d 100644
 --- a/packages/chat/src/components/messages/MessagesView.tsx
 +++ b/packages/chat/src/components/messages/MessagesView.tsx
-@@ -3,6 +3,7 @@ import { Constants } from 'librechat-data-provider';
- import { cn, useLocalize } from '@librechat/client';
- import type { RefObject, ReactNode, ReactElement } from 'react';
+@@ -5,2 +5,3 @@ import type { RefObject, ReactNode, ReactElement } from 'react';
  import type { TMessage } from 'librechat-data-provider';
 +import type { ScrollNavigation } from '../../react/messages/useMessageScrolling';
  import type { MessagesScrollButtonProps } from './ScrollButton';
- import type { MessagesThreadProps } from './thread/Thread';
- import {
-@@ -24,6 +25,7 @@ export type { MessagesThreadProps, MessagesScrollButtonProps };
- export type MessagesViewProps = {
-   messagesTree?: TMessage[] | null;
+@@ -30,2 +31,3 @@ export type MessagesViewProps = {
    messages?: TMessage[] | null;
 +  scrollNavigation?: ScrollNavigation;
    /** The viewer's preference for the scroll-to-bottom control. */
-   showScrollButton: boolean;
-   /** The viewer's chat-width preference. */
-@@ -73,6 +75,7 @@ const renderDefaultNav: NonNullable<MessagesViewProps['renderNav']> = ({
- export default function MessagesView({
-   messagesTree,
+@@ -97,2 +99,3 @@ export default function MessagesView({
    messages,
 +  scrollNavigation,
    showScrollButton,
-   maximizeChatSpace,
-   flatThread = true,
-@@ -114,6 +117,7 @@ export default function MessagesView({
-     abortScroll,
-     setAbortScroll,
+@@ -145,2 +148,3 @@ export default function MessagesView({
      autoScroll,
 +    navigation: scrollNavigation,
    });
- 
-   useScrollbarGutter(scrollableRef);
-@@ -173,7 +177,7 @@ export default function MessagesView({
-   );
- 
+@@ -205,3 +209,3 @@ export default function MessagesView({
    const mountWindow = useProgressiveRowMount({
 -    tailDepth: latestMessageDepth,
 +    tailDepth: scrollNavigation?.targetMessageId ? undefined : latestMessageDepth,
      anchorBottom: autoScroll || isSubmitting,
-     isSubmitting,
-     conversationId: treeConversationId,
 diff --git a/packages/chat/src/components/pane/messages.tsx b/packages/chat/src/components/pane/messages.tsx
-index 3388b6a100bcbcbd37906605fc5a937338024428..f6837be6a2aa3f0c23b82b0891c5548bdf89dbaa 100644
+index 8970575b718b6999f018f3d3fca777853b10ece6..9943d31ddf8764f2706dac17dafbb7ebd25e6509 100644
 --- a/packages/chat/src/components/pane/messages.tsx
 +++ b/packages/chat/src/components/pane/messages.tsx
-@@ -9,6 +9,7 @@ import MessagesView from '../messages/MessagesView';
- export type ChatScreenMessagesSlots = Pick<
-   MessagesViewProps,
-   | 'flatThread'
-+  | 'scrollNavigation'
-   | 'renderThread'
-   | 'renderPendingTurn'
-   | 'renderPendingSteers'
+@@ -19,2 +19,3 @@ export type ChatScreenMessagesProps = {
+   messages: TMessage[] | null;
++  scrollNavigation?: MessagesViewProps['scrollNavigation'];
+ };
+@@ -25,2 +26,3 @@ export default function ScreenMessages({
+   messages,
++  scrollNavigation,
+   slots,
+@@ -34,2 +36,3 @@ export default function ScreenMessages({
+         messages={messages}
++        scrollNavigation={scrollNavigation}
+         showScrollButton={showScrollButton}
 diff --git a/packages/chat/src/react.ts b/packages/chat/src/react.ts
-index eedeb5ce015d3da22e76c7e4dadef4a41cc816ad..1687295ae723e423dfcad1bf65053f712ac9d0ed 100644
+index 29ad0fbc931242a64e094397e1f0ba32433acd89..76854e061c983edd86646b08e2a68b6508880d5c 100644
 --- a/packages/chat/src/react.ts
 +++ b/packages/chat/src/react.ts
-@@ -132,6 +132,7 @@ export { default as useTimeTick } from './react/tick';
- export { default as useGenerationsByLatest } from './react/messages/generations';
- export type { Generations, TUseGenerations } from './react/messages/generations';
+@@ -140,2 +140,3 @@ export type { Generations, TUseGenerations } from './react/messages/generations'
  export { default as useConversationSeen } from './react/messages/useConversationSeen';
 +export type { ScrollNavigation } from './react/messages/useMessageScrolling';
  export {
-   reconcileMessageContentLayout,
-   getRenderedContentMaxScrollTop,
 diff --git a/packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx b/packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx
 index cee231ebade97c48d8b3f5b7cb2732639b52c1cd..68e7f85a0b469b492c8047c2e770910b8e8c9362 100644
 --- a/packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx
 +++ b/packages/chat/src/react/messages/__tests__/useMessageScrolling.spec.tsx
-@@ -1,657 +1,471 @@
+@@ -1,82 +1,19 @@
 -/**
 - * @jest-environment jsdom
 - */
@@ -453,7 +408,7 @@ index cee231ebade97c48d8b3f5b7cb2732639b52c1cd..68e7f85a0b469b492c8047c2e770910b
 +  callback() {
 +    this.listener([], this);
    }
- }
+@@ -84,22 +21,91 @@ class MockIntersectionObserver {
  
 -/** Matches the hook's glide fallback, the window in which a landing is still pending. */
 -const glideWindow = 700;
@@ -564,7 +519,7 @@ index cee231ebade97c48d8b3f5b7cb2732639b52c1cd..68e7f85a0b469b492c8047c2e770910b
 +      <button onClick={scrolling.handleSmoothToRef}>{bottomLabel}</button>
 +    </>
    );
- }
+@@ -107,550 +113,358 @@ function setRect(element: HTMLElement, rect: Partial<DOMRect>): void {
  
 -const message = {
 -  messageId: 'message-1',
@@ -1411,12 +1366,11 @@ index cee231ebade97c48d8b3f5b7cb2732639b52c1cd..68e7f85a0b469b492c8047c2e770910b
 +    resize(1400);
 +    expect(el.scrollTop).toBe(200);
    });
- });
 diff --git a/packages/chat/src/react/messages/useMessageScrolling.ts b/packages/chat/src/react/messages/useMessageScrolling.ts
 index d84b20dd770ade2a6a886bbdbd585375ab3be791..93df10e950532abb71d40b9065708a29471043ca 100644
 --- a/packages/chat/src/react/messages/useMessageScrolling.ts
 +++ b/packages/chat/src/react/messages/useMessageScrolling.ts
-@@ -1,62 +1,43 @@
+@@ -1,11 +1,15 @@
 -import { useRef, useCallback, useEffect } from 'react';
 +import { useRef, useMemo, useCallback, useLayoutEffect, useEffect } from 'react';
  import { Constants } from 'librechat-data-provider';
@@ -1438,8 +1392,7 @@ index d84b20dd770ade2a6a886bbdbd585375ab3be791..93df10e950532abb71d40b9065708a29
 +};
 +
  export type MessageScrollingInput = {
-   messagesTree?: TMessage[] | null;
-   conversationId?: string | null;
+@@ -14,25 +18,17 @@ export type MessageScrollingInput = {
    isSubmitting: boolean;
 -  /** Whether the reader vetoed riding the stream for the current turn. */
    abortScroll: boolean;
@@ -1469,7 +1422,7 @@ index d84b20dd770ade2a6a886bbdbd585375ab3be791..93df10e950532abb71d40b9065708a29
    handleNearBottomChange: (isNearBottom: boolean) => void;
 +  detachFromBottom: () => void;
  };
- 
+@@ -40,21 +36,6 @@ export type MessageScrolling = {
  const resizeFollowThreshold = 120;
 -
 -/** How long a glide is given to land before per-frame following resumes. */
@@ -1493,11 +1446,7 @@ index d84b20dd770ade2a6a886bbdbd585375ab3be791..93df10e950532abb71d40b9065708a29
 -/** Follows the stream, lands on a conversation's end once its rows mount, and keeps the
 - *  reader's position when they scroll away. */
  export default function useMessageScrolling({
-   messagesTree,
-   conversationId,
-@@ -64,444 +45,356 @@ export default function useMessageScrolling({
-   abortScroll,
-   setAbortScroll,
+@@ -66,3 +47,12 @@ export default function useMessageScrolling({
    autoScroll,
 +  navigation,
  }: MessageScrollingInput): MessageScrolling {
@@ -1510,7 +1459,7 @@ index d84b20dd770ade2a6a886bbdbd585375ab3be791..93df10e950532abb71d40b9065708a29
 +    !!messagesTree?.length;
 +
    const scrollableRef = useRef<HTMLDivElement | null>(null);
-   const contentRef = useRef<HTMLDivElement | null>(null);
+@@ -70,436 +60,339 @@ export default function useMessageScrolling({
    const messagesEndRef = useRef<HTMLDivElement | null>(null);
 -  const isNearBottomRef = useRef(true);
 -  /** The single authority for whether the thread is riding the stream. Driven only
@@ -2228,12 +2177,7 @@ index d84b20dd770ade2a6a886bbdbd585375ab3be791..93df10e950532abb71d40b9065708a29
 -  }, [autoScroll, conversationId, messagesTree, scrollToBottom]);
 +  }, [detach, isCurrent, setAbortScroll]);
  
-   return {
-     contentRef,
-@@ -511,5 +404,6 @@ export default function useMessageScrolling({
-     handleSmoothToRef,
-     debouncedHandleScroll,
+@@ -513,2 +406,3 @@ export default function useMessageScrolling({
      handleNearBottomChange,
 +    detachFromBottom: detach,
    };
- }

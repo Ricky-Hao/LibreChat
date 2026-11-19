@@ -1,6 +1,6 @@
 # 在实际文件搜索时准备附件
 
-状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`keep`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 纯代码或 MCP 的 PTC 调用只准备代码环境附件，不再因外层 `run_tools_with_bash`／`run_tools_with_code` 无条件触发向量化。权限筛选后的实际内层 `file_search.invoke` 先沿现有 callback 准备附件，再重新加载搜索工具，读取准备后的文件列表；不扫描程序文本，也不依赖 `tool_manifest` 提前声明搜索。
 

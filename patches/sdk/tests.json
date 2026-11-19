@@ -7,14 +7,26 @@
       "requires": [
         "vendor/verify-agents.mjs",
         "vendor/agents.json",
-        "vendor/librechat-agents-4.2.2-ricky.1.tgz",
-        "vendor/agents-4.2.2-ricky.1.patch",
+        "vendor/librechat-agents-4.2.11-ricky.1.tgz",
+        "vendor/agents-4.2.11-ricky.1.patch",
         "package-lock.json"
       ],
       "runner": "command",
       "command": [
         "node",
         "vendor/verify-agents.mjs"
+      ]
+    },
+    {
+      "name": "Installed SDK subagent outcome aggregation",
+      "tier": "focused",
+      "cwd": "packages/chat",
+      "requires": [
+        "packages/chat/src/react/subagents/__tests__/outcome.spec.ts"
+      ],
+      "runner": "jest",
+      "files": [
+        "packages/chat/src/react/subagents/__tests__/outcome.spec.ts"
       ]
     },
     {
@@ -62,7 +74,7 @@
         "static-checks",
         "--",
         "--against",
-        "e6567c7a681ce67869dce31486a21d3a25d6931b"
+        "d4e85d2205c78413ee27d631d7e3b7313556f21d"
       ]
     },
     {

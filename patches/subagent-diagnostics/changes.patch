@@ -1,18 +1,12 @@
 diff --git a/api/server/services/Endpoints/agents/initialize.js b/api/server/services/Endpoints/agents/initialize.js
-index 1c5d7c7b188af64ee48d0b58c09d758ac2f1fa76..46e6fd07cc724f6242b53b0c07d4076d256aff0f 100644
+index 7782b61ac1ee5da9711a37995cd58aa5933f01e1..300648e2d504f51d35765b1261747fa32a175853 100644
 --- a/api/server/services/Endpoints/agents/initialize.js
 +++ b/api/server/services/Endpoints/agents/initialize.js
-@@ -56,6 +56,7 @@ const {
-   getScheduleMCPExecution,
-   getMCPRequestContext,
+@@ -58,2 +58,3 @@ const {
    createSubagentCodeRouting,
 +  validateSelectedSubagent,
    hasEntityEmbeddings,
- } = require('@librechat/api');
- const {
-@@ -1384,20 +1385,19 @@ const initializeClientWithProvider = async ({
-     viewAccessChecked = false,
-   }) => {
+@@ -1377,16 +1378,15 @@ const initializeClientWithProvider = async ({
      throwIfAborted(context.signal);
 -    if (!agent || getLazySubagentConfigId(agent) !== configId) {
 -      throw new Error(`Subagent ${agentId} changed before it could be initialized.`);
@@ -21,7 +15,7 @@ index 1c5d7c7b188af64ee48d0b58c09d758ac2f1fa76..46e6fd07cc724f6242b53b0c07d4076d
 -      throw new Error(`You no longer have access to subagent ${agentId}.`);
 -    }
 -    const validation = await waitForAbort(
--      validateAgentModel({ req, res, agent, modelsConfig, logViolation }),
+-      validateAgentModel({ req, res, agent, getEndpointModels, logViolation }),
 -      context.signal,
 -    );
 -    throwIfAborted(context.signal);
@@ -36,67 +30,43 @@ index 1c5d7c7b188af64ee48d0b58c09d758ac2f1fa76..46e6fd07cc724f6242b53b0c07d4076d
 +      canView: () => hasSubagentViewAccess(agent, agentId, context.signal),
 +      validateModel: () =>
 +        waitForAbort(
-+          validateAgentModel({ req, res, agent, modelsConfig, logViolation }),
++          validateAgentModel({ req, res, agent, getEndpointModels, logViolation }),
 +          context.signal,
 +        ),
 +      signal: context.signal,
 +    });
      const placement = await waitForAbort(
-       subagentCodeRouting.place({
-         agent,
 diff --git a/api/server/services/Endpoints/agents/initialize.spec.js b/api/server/services/Endpoints/agents/initialize.spec.js
-index a36f151c465dd3c0ee8b1b0f64935e19e4454272..20b93166ec552a322865bc59b0f1d2793ee906f9 100644
+index dd479b68f6d4176edebb4aef98a73631197f5021..9becd9d08443d856183f738a5d4b9256ac40cc20 100644
 --- a/api/server/services/Endpoints/agents/initialize.spec.js
 +++ b/api/server/services/Endpoints/agents/initialize.spec.js
-@@ -3723,7 +3723,7 @@ describe('initializeClient — subagent loading', () => {
-       agentClientArgs.agent.lazySubagentConfigs[0].resolve({
-         signal: new AbortController().signal,
+@@ -3736,3 +3736,3 @@ describe('initializeClient — subagent loading', () => {
        }),
 -    ).rejects.toThrow(`Subagent ${SUBAGENT_ID} changed`);
 +    ).rejects.toMatchObject({ code: 'configuration_changed' });
      expect(mockInitializeAgent).toHaveBeenCalledTimes(1);
-   });
- 
-@@ -3746,7 +3746,7 @@ describe('initializeClient — subagent loading', () => {
-       agentClientArgs.agent.lazySubagentConfigs[0].resolve({
-         signal: new AbortController().signal,
+@@ -3759,3 +3759,3 @@ describe('initializeClient — subagent loading', () => {
        }),
 -    ).rejects.toThrow(`no longer have access to subagent ${SUBAGENT_ID}`);
 +    ).rejects.toMatchObject({ code: 'agent_unavailable' });
      expect(mockInitializeAgent).toHaveBeenCalledTimes(1);
-   });
- 
 diff --git a/packages/api/src/agents/__tests__/initialize.test.ts b/packages/api/src/agents/__tests__/initialize.test.ts
-index ce7310b63ca262d1fc021988176ce6a931f73a95..a26e8cde2d54f12aef2bab6e6ef38fb1ad78713f 100644
+index f185e600f2f0d8bb6b93f7f2fac93cc34f4ec785..f544523839126b65356a8691a8dbe4195acecf6d 100644
 --- a/packages/api/src/agents/__tests__/initialize.test.ts
 +++ b/packages/api/src/agents/__tests__/initialize.test.ts
-@@ -33,6 +33,7 @@ jest.mock('@librechat/agents', () => ({
- }));
- 
+@@ -35,2 +35,3 @@ jest.mock('@librechat/agents', () => ({
  import { Providers } from '@librechat/agents';
 +import { Types } from 'mongoose';
  import { createHash } from 'node:crypto';
- import { logger } from '@librechat/data-schemas';
- import { createRepositoryInstructionLoader } from '../../code/instructions';
-@@ -98,6 +99,7 @@ const mockOptionalChainWithEmptyCheck = jest.fn();
- const mockGetThreadData = jest.fn();
- 
- jest.mock('~/utils', () => ({
+@@ -104,2 +105,3 @@ jest.mock('~/utils', () => ({
+     jest.requireActual('~/utils').createCodeApiRateLimitBudget(...args),
 +  getSafeErrorMetadata: jest.requireActual('~/utils/errors').getSafeErrorMetadata,
    extractLibreChatParams: (...args: unknown[]) => mockExtractLibreChatParams(...args),
-   getModelMaxTokens: (...args: unknown[]) => mockGetModelMaxTokens(...args),
-   optionalChainWithEmptyCheck: (...args: unknown[]) => mockOptionalChainWithEmptyCheck(...args),
-@@ -141,6 +143,7 @@ jest.mock('../../middleware/modelBoundContent', () => {
- import { initializeAgent } from '../initialize';
- import { primeResources } from '../resources';
+@@ -150,2 +152,3 @@ import { primeResources } from '../resources';
  import { isFatalAgentInitializationError } from '../errors';
 +import { createSubagentResolutionFailureHandler } from '../initialization';
  import { canAgentGraphPause } from '../hitl/admission';
- 
- const realUtils = jest.requireActual<typeof import('~/utils')>('~/utils');
-@@ -295,6 +298,53 @@ describe('initializeAgent — execution context', () => {
-     jest.clearAllMocks();
-   });
+@@ -305,2 +308,49 @@ describe('initializeAgent — execution context', () => {
  
 +  it.each(['provider', 'tools', 'skills'] as const)(
 +    'tags actual %s initialization rejection without leaking the exception',
@@ -146,33 +116,30 @@ index ce7310b63ca262d1fc021988176ce6a931f73a95..a26e8cde2d54f12aef2bab6e6ef38fb1
 +  );
 +
    it.each(['prefer', 'defer', 'off'] as const)(
-     'uses saved repository instruction mode %s in definitions-only initialization',
-     async (mode) => {
+@@ -7391,2 +7441,3 @@ describe('snapshot destination admission invariants', () => {
+       req,
++      ragApiUrl: 'http://rag.test',
+       agentToolContexts: new Map([['agent-1', result]]),
 diff --git a/packages/api/src/agents/__tests__/run-codeTools.test.ts b/packages/api/src/agents/__tests__/run-codeTools.test.ts
 index fe2bc395e196b407df9e6ec497a155c6ce4e3105..3b98f25ab16578efc64304f1f73a25baef07c9c5 100644
 --- a/packages/api/src/agents/__tests__/run-codeTools.test.ts
 +++ b/packages/api/src/agents/__tests__/run-codeTools.test.ts
-@@ -1,14 +1,16 @@
+@@ -1 +1,2 @@
 +import { logger } from '@librechat/data-schemas';
  import { FileContext } from 'librechat-data-provider';
- import type { AgentInputs, SubagentTaskConfig, SubagentResolveContext } from '@librechat/agents';
- import type { FileProvisionCommit } from '@librechat/data-schemas';
+@@ -4,2 +5,3 @@ import type { FileProvisionCommit } from '@librechat/data-schemas';
  import type { TFile } from 'librechat-data-provider';
 +import type { RunConfig } from '@librechat/agents';
  import type { ProvisionCallbackDeps, ProvisionToolContext } from '~/files/provision/callback';
- import type { HostSubagentTaskConfig } from '~/agents/subagentDelivery';
+@@ -7,3 +9,2 @@ import type { HostSubagentTaskConfig } from '~/agents/subagentDelivery';
  import type { ServerRequest } from '~/types';
 -import { reportSubagentResolutionFailure } from '~/agents/failures/subagent';
  import { createProvisionFilesCallback } from '~/files/provision/callback';
- import { SUBAGENT_COMPLETION_DELIVERY } from '~/agents/subagentDelivery';
+@@ -11,2 +12,3 @@ import { SUBAGENT_COMPLETION_DELIVERY } from '~/agents/subagentDelivery';
  import { mergeCodeFilesIntoContext } from '~/agents/codeFilesSession';
 +import { SubagentInitializationError } from '~/agents/initialization';
  import { createFileProvisionRecovery } from '../../files/operations';
- import { CHECK_BACKGROUND_TASK_NAME } from '~/agents/background';
- import { createRun } from '~/agents/run';
-@@ -117,6 +119,34 @@ async function captureAgentsRunConfig(
- describe('createRun code-tool eager/session wiring', () => {
-   beforeEach(() => jest.clearAllMocks());
+@@ -119,2 +121,30 @@ describe('createRun code-tool eager/session wiring', () => {
  
 +  it('wires correlated safe resolution diagnostics into the SDK run', async () => {
 +    await captureRunConfig();
@@ -203,11 +170,7 @@ index fe2bc395e196b407df9e6ec497a155c6ce4e3105..3b98f25ab16578efc64304f1f73a25ba
 +  });
 +
    it('includes queued paths in model instructions and reserves live paths across agents', async () => {
-     const file: TFile = {
-       file_id: 'uploaded',
-@@ -529,9 +559,26 @@ describe('createRun code-tool eager/session wiring', () => {
-     );
-   });
+@@ -531,5 +561,22 @@ describe('createRun code-tool eager/session wiring', () => {
  
 -  it('reports why a subagent could not start instead of leaving the SDK to guess', async () => {
 +  it('reports why a subagent could not start alongside safe initialization classification', async () => {
@@ -232,15 +195,11 @@ index fe2bc395e196b407df9e6ec497a155c6ce4e3105..3b98f25ab16578efc64304f1f73a25ba
 +      expect.objectContaining({ causes: [{ name: 'Error' }] }),
 +    );
    });
- 
-   it('passes the trusted per-agent code-session partition to the SDK', async () => {
 diff --git a/packages/api/src/agents/index.ts b/packages/api/src/agents/index.ts
-index 31129d3ef48f0856656968e0985a19bd51356e13..2db7e028efcdac95a8b99d911077712840ba9fa5 100644
+index 64bb7f04b12f08420664c1d7cb61237652d33d82..81214dfe9ca6249fee3c3bfdc4b86baf81e57cd6 100644
 --- a/packages/api/src/agents/index.ts
 +++ b/packages/api/src/agents/index.ts
-@@ -101,4 +101,5 @@ export * from './remote';
- export * from './queuedTurns';
- export * from './queuedTurnHttp';
+@@ -105,2 +105,3 @@ export * from './queuedTurnHttp';
  export * from './files/index';
 +export * from './initialization';
  export { captureAuthoredSkills, restoreAuthoredSkills } from './authored';
@@ -593,20 +552,14 @@ index 0000000000000000000000000000000000000000..1a2a85bc3d8a2cc46a3a9aa65b1292f2
 +  };
 +}
 diff --git a/packages/api/src/agents/initialize.ts b/packages/api/src/agents/initialize.ts
-index 58849173700efc0ad8c3073c727ef3fc7d7eeb16..1760de680ab75a27c5d754909883f894872ec237 100644
+index af3160ff0b1e7d6a15c51bc184a27dd785efa066..70c92ee6bd72624c6a34ad531736a252468390b3 100644
 --- a/packages/api/src/agents/initialize.ts
 +++ b/packages/api/src/agents/initialize.ts
-@@ -141,6 +141,7 @@ import { createRequestAgentExecutionContext } from './runtime';
- import { resolveTurnDeliveryRouting } from './files/delivery';
- import { filterFilesByEndpointRuntimeConfig } from '~/files';
+@@ -145,2 +145,3 @@ import { filterFilesByEndpointRuntimeConfig } from '~/files';
  import { isFatalAgentInitializationError } from './errors';
 +import { withInitializationStage } from './initialization';
  import { assertToolOptionsWithinLimits } from './options';
- import { hasActiveFilePolicy } from '../protection/files';
- import { resolveAgentCodeExecution } from '~/code/agent';
-@@ -1434,37 +1435,40 @@ export async function initializeAgent(
-   let perSkillExtras: Map<string, string[]> = new Map();
-   let resolvedSkillCatalog: ResolvedSkillCatalog | undefined;
+@@ -1439,33 +1440,36 @@ export async function initializeAgent(
    if (hasSkillAccess) {
 -    const [manualPrimesResult, alwaysApplyPrimesResult, catalogResult] = await Promise.all([
 -      params.manualSkills?.length && db.getSkillByName
@@ -674,11 +627,7 @@ index 58849173700efc0ad8c3073c727ef3fc7d7eeb16..1760de680ab75a27c5d754909883f894
 +        ]),
 +      );
  
-     manualSkillPrimes = manualPrimesResult;
-     alwaysApplySkillPrimes = alwaysApplyPrimesResult;
-@@ -1558,10 +1562,14 @@ export async function initializeAgent(
-    * policy reads the endpoint's own name, but the route each attachment takes also depends on
-    * the backing client and on the Responses API decision `getOptions` makes, and nothing
+@@ -1563,6 +1567,10 @@ export async function initializeAgent(
     * between here and tool loading feeds either. */
 -  const { getOptions, overrideProvider, customEndpointConfig } = getProviderConfig({
 -    provider,
@@ -693,11 +642,7 @@ index 58849173700efc0ad8c3073c727ef3fc7d7eeb16..1760de680ab75a27c5d754909883f894
 +      }),
 +  );
    if (overrideProvider !== agent.provider) {
-     agent.provider = overrideProvider;
-   }
-@@ -1579,17 +1587,19 @@ export async function initializeAgent(
-   );
-   const finalModelOptions = pinAgentModel(modelOptions, agent.model);
+@@ -1584,13 +1592,15 @@ export async function initializeAgent(
  
 -  const options: InitializeResultBase = await getOptions({
 -    runtime: {
@@ -724,11 +669,7 @@ index 58849173700efc0ad8c3073c727ef3fc7d7eeb16..1760de680ab75a27c5d754909883f894
 +    }),
 +  );
  
-   const llmConfig = options.llmConfig as Record<string, unknown>;
-   const webSearchDenied =
-@@ -2194,18 +2204,20 @@ export async function initializeAgent(
-    * the empty fallback — the agent's own tools are the problem.
-    */
+@@ -2233,14 +2243,16 @@ export async function initializeAgent(
    const callLoadTools = async (tools: string[]) =>
 -    loadTools?.({
 -      provider,
@@ -757,20 +698,12 @@ index 58849173700efc0ad8c3073c727ef3fc7d7eeb16..1760de680ab75a27c5d754909883f894
 +      }),
 +    );
  
-   let loadToolsResult;
-   const initialFailedSilently = (result: unknown) =>
-@@ -2224,7 +2236,7 @@ export async function initializeAgent(
-     if (extraAllowedToolNames.length > 0) {
-       logger.warn(
+@@ -2263,3 +2275,3 @@ export async function initializeAgent(
          `[allowedTools] loadTools threw with ${extraAllowedToolNames.length} skill-added extra(s); retrying without them`,
 -        { errorName: err instanceof Error ? err.name : 'UnknownError' },
 +        getSafeErrorMetadata(err),
        );
-       if (!baseToolNames.includes(Tools.file_search)) {
-         dropFileSearchResources();
-@@ -2664,30 +2676,32 @@ export async function initializeAgent(
-    * invoke what it creates later in the same conversation.
-    */
+@@ -2703,26 +2715,28 @@ export async function initializeAgent(
    if ((accessibleSkillIds && accessibleSkillIds.length > 0) || skillAuthoringAvailable) {
 -    const skillResult = await injectSkillCatalog({
 -      agent,
@@ -823,33 +756,21 @@ index 58849173700efc0ad8c3073c727ef3fc7d7eeb16..1760de680ab75a27c5d754909883f894
 +      }),
 +    );
      toolDefinitions = skillResult.toolDefinitions;
-     skillCount = skillResult.skillCount;
-     executableSkillIds = skillResult.activeSkillIds;
 diff --git a/packages/api/src/agents/run.ts b/packages/api/src/agents/run.ts
-index 1cc6973eeaad59bb48169a63a5539f00eea7d81a..2c55b584001788af123302b55c2b86d759ab7dce 100644
+index 1e50a4c50ff503b39ca73cf67e72f95d082df54f..809dd7c80c02c9cebdeaa975a4d7ab36924e5024 100644
 --- a/packages/api/src/agents/run.ts
 +++ b/packages/api/src/agents/run.ts
-@@ -123,6 +123,7 @@ import { reportSubagentResolutionFailure } from '~/agents/failures/subagent';
- import { createScheduledMCPRunPolicy } from '~/schedules/authorization/run';
- import { CREATE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME } from '~/agents/tools';
+@@ -134,2 +134,3 @@ import { CREATE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME } from '~/agents/tools';
  import { buildAgentInitialToolSessions } from '~/agents/codeFilesSession';
 +import { createSubagentResolutionFailureHandler } from './initialization';
  import { getDirectDispatcher, getProxyDispatcher } from '~/utils/proxy';
- import { getAzureCredentials, constructAzureURL } from '~/utils/azure';
- import { buildEffectiveToolApprovalPolicy } from '~/agents/hitl/allow';
-@@ -3074,6 +3075,9 @@ export async function createRun({
-         }
-       : customHandlers;
+@@ -3227,2 +3228,5 @@ export async function createRun({
  
 +  const classifySubagentFailure = createSubagentResolutionFailureHandler((message, metadata) =>
 +    logger.warn(message, metadata),
 +  );
    const runConfig = {
-     runId: resolvedRunId,
-     graphConfig,
-@@ -3087,7 +3091,24 @@ export async function createRun({
-     subagentUsageSink,
-     subagentTasks: activeSubagentTasks,
+@@ -3240,3 +3244,20 @@ export async function createRun({
      // Without it a subagent that cannot start logs nothing beyond the SDK's fixed `cause`.
 -    onSubagentResolutionFailure: reportSubagentResolutionFailure,
 +    onSubagentResolutionFailure: (
@@ -871,15 +792,11 @@ index 1cc6973eeaad59bb48169a63a5539f00eea7d81a..2c55b584001788af123302b55c2b86d7
 +      return cause;
 +    },
      ...(runFilesActive &&
-       runFiles != null && {
-         subagentContext: { prepare: runFiles.prepare, complete: runFiles.complete },
 diff --git a/packages/api/src/utils/errors.spec.ts b/packages/api/src/utils/errors.spec.ts
 index 960786a16cc191e0d44c5190504f86fe282d1186..1e2d3cc62f2098e01b9e4a6cd184dea3d2489081 100644
 --- a/packages/api/src/utils/errors.spec.ts
 +++ b/packages/api/src/utils/errors.spec.ts
-@@ -1,6 +1,20 @@
- import { getSafeErrorMetadata, getSafeErrorText, isAbortError, isOwnedAbortError } from './errors';
- 
+@@ -3,2 +3,16 @@ import { getSafeErrorMetadata, getSafeErrorText, isAbortError, isOwnedAbortError
  describe('getSafeErrorMetadata', () => {
 +  it('survives hostile property and prototype traps', () => {
 +    const error = new Proxy(
@@ -896,15 +813,11 @@ index 960786a16cc191e0d44c5190504f86fe282d1186..1e2d3cc62f2098e01b9e4a6cd184dea3
 +    expect(getSafeErrorMetadata(error)).toEqual({ type: 'UnknownError' });
 +  });
    it('keeps bounded diagnostic fields without serializing raw provider data', () => {
-     const rawValue = 'PRIVATE-SUBMITTED-CONTENT';
-     const error = Object.assign(new Error(`Provider echoed ${rawValue}`), {
 diff --git a/packages/api/src/utils/errors.ts b/packages/api/src/utils/errors.ts
 index a7e69f253c15f2c427fa552e7c7d576177825842..43fcf4eaebfc1b710e10bd71923c0fe396ac0e34 100644
 --- a/packages/api/src/utils/errors.ts
 +++ b/packages/api/src/utils/errors.ts
-@@ -35,8 +35,14 @@ export function getSafeErrorMetadata(error: unknown): SafeErrorMetadata {
-       ? statusCandidate
-       : undefined;
+@@ -37,4 +37,10 @@ export function getSafeErrorMetadata(error: unknown): SafeErrorMetadata {
  
 +  let type = 'UnknownError';
 +  try {
@@ -916,5 +829,3 @@ index a7e69f253c15f2c427fa552e7c7d576177825842..43fcf4eaebfc1b710e10bd71923c0fe3
 -    type: error instanceof Error ? 'Error' : 'UnknownError',
 +    type,
      ...(status !== undefined && { status }),
-   };
- }

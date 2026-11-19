@@ -7,12 +7,14 @@
       "requires": [
         "packages/api/package.json",
         "packages/api/src/mcp/__tests__/ping.integration.spec.ts",
-        "packages/api/src/mcp/__tests__/ping.spec.ts"
+        "packages/api/src/mcp/__tests__/ping.spec.ts",
+        "packages/api/src/mcp/__tests__/MCPConnectionPing.test.ts"
       ],
       "runner": "jest",
       "files": [
         "packages/api/src/mcp/__tests__/ping.integration.spec.ts",
-        "packages/api/src/mcp/__tests__/ping.spec.ts"
+        "packages/api/src/mcp/__tests__/ping.spec.ts",
+        "packages/api/src/mcp/__tests__/MCPConnectionPing.test.ts"
       ]
     },
     {
@@ -44,7 +46,7 @@
         "static-checks",
         "--",
         "--against",
-        "e6567c7a681ce67869dce31486a21d3a25d6931b"
+        "d4e85d2205c78413ee27d631d7e3b7313556f21d"
       ]
     }
   ]

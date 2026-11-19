@@ -1,6 +1,6 @@
 # 编辑前缀、fold 决策与恢复
 
-状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`keep`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 一起保留服务端 capture/admission、provenance、恰好一次投影、fold 三态和 multipart/index/phase 语义；覆盖正常 final、断线、prefix-only、stop/error 和 approval continuation。
 
@@ -21,9 +21,11 @@
 
 本基线保留上游 manual compaction 恢复：先在 generation-local 快照执行 `restoreSummaryState`，再合并保留前缀，避免索引偏移丢失 `summarizing`。上游已移除 activity path 高亮调用，本组不恢复失去调用方的 boundary-offset helper。
 
+v0.8.9 通过上游 `readIf` 保留消息 ACL，并沿用 fork 的捕获、存储与恰好一次投影。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

@@ -1,10 +1,10 @@
 # 未知 provider 的 MCP 显示图片
 
-状态：`awaiting-upstream`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态 `keep`。应用基线 `d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 保留未知 provider 的图片到附件持久化回调，避免 UI 图片丢失。
 
-依赖：无；以固定基线已有模块为前提。
+依赖 `sdk`。合同使用应用实际安装的 SDK 验证工具调用。
 
 ## 载荷与来源
 
@@ -14,11 +14,11 @@
 
 - [3901f87f3dad8b87a60599e61fc3a76581750f40](https://github.com/Ricky-Hao/LibreChat/commit/3901f87f3dad8b87a60599e61fc3a76581750f40)
 
-上游 #18000 已合入 dev，PR head 为 b8f7c5d2b97557ed85a71027c933f61c33bd806a（不是 merge SHA）。目标确含时采用 display-only imageAttachments，不声明未知 provider 支持 vision。fallback 模型文本的 base64 膨胀仍未解决；#17569 已完成。
+固定基线包含上游 [#18000](https://github.com/LibreChat-AI/LibreChat/pull/18000) 的替代提交 `9554046d5a2d36f120f87766ffffcf08b0bc7042`。单独和嵌入的 MCP 图片复用 `imageAttachments` 与 `getImageAttachmentContent`，由 Agent 和 Responses 附件回调交付。已知视觉 provider 保留模型图片内容。载荷继续过滤未知 provider 回退文本中的内联图片字节，校验支持格式，并覆盖 parser、真实 SDK 调用和 host 持久化。
 
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：
@@ -28,4 +28,4 @@ python3 tools/patchset.py test --target /path/to/application --only mcp-images -
 ```
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
-2026-11-11：本组 2 项 focused 与 API 类型检查通过，覆盖 parser 和必要主机消费方。固定基线仍需本地载荷。项目门禁汇总见[根 README](../../README.md#验证)。
+2026-11-11 在上一轮基线通过本组 2 项 focused 与 API 类型检查，覆盖 parser 和主机消费方。[历史验收](../../README.md#历史验收2026-11-11)

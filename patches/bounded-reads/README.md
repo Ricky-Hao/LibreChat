@@ -1,6 +1,6 @@
 # 有界 MCP 消息读取
 
-状态：`feature`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`feature`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 保留数据库 projection、wire budget、逐页授权、UTF-8 continuation、revision writes 和 DocumentDB 兼容表达式；普通 pagination/preview 不等价。
 
@@ -19,9 +19,11 @@
 
 无完整上游替代证据。历史 Lighthouse 为 NO_FCP，不能据此标性能验收通过。应用指南为 docs/mcp-message-reads-patch.md。
 
+v0.8.9 合并上游配置 schema 的现有字段与 fork 的读取预算，逐页 ACL、revision 和 DocumentDB 回退继续由本组验证。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

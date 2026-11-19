@@ -1,10 +1,8 @@
 diff --git a/api/app/clients/specs/BaseClient.test.js b/api/app/clients/specs/BaseClient.test.js
-index 9d2f844e2bb8f5d2c1212b726ab58769b4e14000..ad4dc8c1d899d37d41650c72307b283bb1b493fb 100644
+index 2d3fd9c4e75098d4e8069c229d21b925ca700cd8..70519e1527d8dc73b78e7577a203f4017719d2cc 100644
 --- a/api/app/clients/specs/BaseClient.test.js
 +++ b/api/app/clients/specs/BaseClient.test.js
-@@ -657,6 +657,41 @@ describe('BaseClient', () => {
-   });
- 
+@@ -786,2 +786,37 @@ describe('BaseClient', () => {
    describe('sendMessage', () => {
 +    test('waits for an MCP image artifact before persisting the ordinary response', async () => {
 +      saveMessage.mockClear();
@@ -42,15 +40,11 @@ index 9d2f844e2bb8f5d2c1212b726ab58769b4e14000..ad4dc8c1d899d37d41650c72307b283b
 +    });
 +
      test('sendMessage should return a response message', async () => {
-       const expectedResult = expect.objectContaining({
-         sender: TestClient.sender,
 diff --git a/api/server/services/MCP.spec.js b/api/server/services/MCP.spec.js
-index 7ead0a2c0acc23e9006c1b559d5d9f1d6b5f3b2f..75b6b95d97b1ee15ba27e6688d457e2c36516fc7 100644
+index f2482aac37fafb7051acb7a6df152c85f7d60d3c..69a37f7598c291304a851649e8e70b189f2faa44 100644
 --- a/api/server/services/MCP.spec.js
 +++ b/api/server/services/MCP.spec.js
-@@ -109,6 +109,16 @@ jest.mock('./OboPolicyService', () => ({
-   createOboTrustChecker: jest.fn(() => jest.fn()),
- }));
+@@ -111,2 +111,12 @@ jest.mock('./OboPolicyService', () => ({
  
 +jest.mock('~/server/services/Files/process', () => ({ saveBase64Image: jest.fn() }));
 +jest.mock('~/server/services/Files/Citations', () => ({ processFileCitations: jest.fn() }));
@@ -63,11 +57,7 @@ index 7ead0a2c0acc23e9006c1b559d5d9f1d6b5f3b2f..75b6b95d97b1ee15ba27e6688d457e2c
 +}));
 +
  describe('tests for the new helper functions used by the MCP connection status endpoints', () => {
-   let mockGetMCPManager;
-   let mockGetFlowStateManager;
-@@ -1622,6 +1632,185 @@ describe('User parameter passing tests', () => {
-   });
- 
+@@ -1645,2 +1655,187 @@ describe('User parameter passing tests', () => {
    describe('createMCPTool', () => {
 +    describe('image artifact contract', () => {
 +      afterEach(() => jest.restoreAllMocks());
@@ -215,7 +205,13 @@ index 7ead0a2c0acc23e9006c1b559d5d9f1d6b5f3b2f..75b6b95d97b1ee15ba27e6688d457e2c
 +            user,
 +          );
 +          expect(callback).toHaveBeenCalledTimes(1);
-+          expect(outputs[0].artifact?.content?.length ?? 0).toBe(1);
++          if (expectedProvider === 'openai' || expectedProvider === 'anthropic') {
++            expect(outputs[0].artifact?.content).toHaveLength(1);
++            expect(outputs[0].artifact?.imageAttachments).toBeUndefined();
++          } else {
++            expect(outputs[0].artifact?.content).toEqual([]);
++            expect(outputs[0].artifact?.imageAttachments).toHaveLength(1);
++          }
 +          expect(outputs[0].content === text).toBe(true);
 +          expect(outputs[0].status).toBe(isError ? 'error' : 'success');
 +          expect(artifactPromises.length).toBe(1);
@@ -249,28 +245,33 @@ index 7ead0a2c0acc23e9006c1b559d5d9f1d6b5f3b2f..75b6b95d97b1ee15ba27e6688d457e2c
 +    });
 +
      it('preserves the full MCP tuple for the Assistants required-action sink', async () => {
-       const mockUser = { id: 'assistants-app-user', role: 'USER' };
-       const mockRes = { write: jest.fn(), flush: jest.fn() };
 diff --git a/packages/api/src/mcp/__tests__/parsers.test.ts b/packages/api/src/mcp/__tests__/parsers.test.ts
-index 110e126379291b83f241809062710723bc980428..c72192a0424b3f49fef5db86df981e96231c871d 100644
+index a2955ef7c8b6d5fed3b722d5c6b0570f280a46a1..925c7feb26d5710fa2f508d65392f8029697f605 100644
 --- a/packages/api/src/mcp/__tests__/parsers.test.ts
 +++ b/packages/api/src/mcp/__tests__/parsers.test.ts
-@@ -1,3 +1,5 @@
+@@ -1 +1,3 @@
 +import sharp from 'sharp';
 +import { createHash } from 'node:crypto';
  import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
- import { isMcpAppMimeType, MCP_APP_MIME_TYPE } from 'librechat-data-provider';
- import type * as t from '../types';
-@@ -38,17 +40,156 @@ describe('formatToolContent', () => {
-       expect(content).toBe('(No response)');
-       expect(artifacts).toBeUndefined();
-     });
-+  });
+@@ -41,3 +43,3 @@ describe('formatToolContent', () => {
  
 -    it('should preserve the image payload in the string for unrecognized providers', () => {
--      const result: t.MCPToolCallResponse = {
--        content: [{ type: 'image', data: 'iVBORw0KGgoAAAA...', mimeType: 'image/png' }],
--      };
++    it('should preserve the image as a display attachment for unrecognized providers', () => {
+       const result: t.MCPToolCallResponse = {
+@@ -54,4 +56,4 @@ describe('formatToolContent', () => {
+       });
+-      expect(content).toContain('iVBORw0KGgoAAAA...');
+-      expect(content).toContain('image/png');
++      expect(content).not.toContain('iVBORw0KGgoAAAA...');
++      expect(content).toBe('');
+     });
+@@ -81,3 +83,3 @@ describe('formatToolContent', () => {
+         expect(content).toContain('Partial result');
+-        expect(content).toContain('data:IMAGE/PNG;base64,aW1hZ2U=');
++        expect(content).not.toContain('data:IMAGE/PNG;base64,aW1hZ2U=');
+         expect(artifacts?.content).toEqual([]);
+@@ -97,2 +99,154 @@ describe('formatToolContent', () => {
+ 
 +  describe('synthetic image artifact contract', () => {
 +    const providers = ['openai', 'anthropic', 'unknown', undefined] as const;
 +    const metadata = Object.freeze({ fixture: 'synthetic-2x2', immutable: true });
@@ -280,8 +281,7 @@ index 110e126379291b83f241809062710723bc980428..c72192a0424b3f49fef5db86df981e96
 +    let hashes: string[];
 +    let jpegBytes: number;
 +    const originalMaxImageBytes = process.env.MCP_IMAGE_DATA_MAX_BYTES;
- 
--      const [content, artifacts] = formatToolContent(result, 'unknown' as t.Provider);
++
 +    beforeAll(async () => {
 +      const buffers = await Promise.all(
 +        (['jpeg', 'png', 'webp'] as const).map((format) =>
@@ -306,10 +306,7 @@ index 110e126379291b83f241809062710723bc980428..c72192a0424b3f49fef5db86df981e96
 +        expect(`image/${dimensions.format}`).toBe(image.mimeType);
 +      }
 +    });
- 
--      expect(artifacts).toBeUndefined();
--      expect(content).toContain('iVBORw0KGgoAAAA...');
--      expect(content).toContain('image/png');
++
 +    afterEach(() => {
 +      if (originalMaxImageBytes === undefined) {
 +        delete process.env.MCP_IMAGE_DATA_MAX_BYTES;
@@ -319,9 +316,10 @@ index 110e126379291b83f241809062710723bc980428..c72192a0424b3f49fef5db86df981e96
 +    });
 +
 +    function checkImages(artifacts: t.Artifacts, expected: number[]) {
-+      expect(artifacts?.content?.length ?? 0).toBe(expected.length);
++      const imagesForDisplay = artifacts?.imageAttachments ?? artifacts?.content ?? [];
++      expect(imagesForDisplay).toHaveLength(expected.length);
 +      expected.forEach((imageIndex, index) => {
-+        const part = artifacts?.content?.[index];
++        const part = imagesForDisplay[index];
 +        expect(part?.type).toBe('image_url');
 +        if (part?.type !== 'image_url') {
 +          throw new Error('Missing image artifact');
@@ -423,166 +421,44 @@ index 110e126379291b83f241809062710723bc980428..c72192a0424b3f49fef5db86df981e96
 +          undefined,
 +        ]);
 +      });
-     });
-   });
- 
-@@ -1252,6 +1393,16 @@ describe('formatToolContent', () => {
-   });
- 
-   describe('MCP apps on unrecognized providers', () => {
-+    let imageData: string;
-+    beforeAll(async () => {
-+      imageData = (
-+        await sharp({
-+          create: { width: 2, height: 2, channels: 3, background: '#4287ab' },
-+        })
-+          .png()
-+          .toBuffer()
-+      ).toString('base64');
 +    });
-     it('does not promote an unlinked embedded App while keeping its html out of model text', () => {
-       const result: t.MCPToolCallResponse = {
-         content: [
-@@ -1325,7 +1476,7 @@ describe('formatToolContent', () => {
-     it('preserves ordinary unrecognized-provider image output beside an unlinked App resource', () => {
-       const result: t.MCPToolCallResponse = {
-         content: [
--          { type: 'image', data: 'base64data', mimeType: 'image/png' },
-+          { type: 'image', data: imageData, mimeType: 'image/png' },
-           {
-             type: 'resource',
-             resource: { uri: 'ui://app', mimeType: 'text/html;profile=mcp-app', text: '<p>a</p>' },
-@@ -1340,14 +1491,14 @@ describe('formatToolContent', () => {
-       });
++  });
++
+   describe('recognized providers', () => {
+@@ -250,3 +404,3 @@ describe('formatToolContent', () => {
  
-       expect(artifacts?.ui_resources).toBeUndefined();
--      expect(artifacts?.content).toBeUndefined();
+-    it('should reject oversized image data for unrecognized providers before stringifying', () => {
++    it('should reject oversized image data for unrecognized providers before creating display attachments', () => {
+       process.env.MCP_IMAGE_DATA_MAX_BYTES = '3';
+@@ -1387,3 +1541,3 @@ describe('formatToolContent', () => {
+       expect(artifacts?.imageAttachments).toHaveLength(1);
 -      expect(content).toContain('base64data');
-+      expect(artifacts?.content).toHaveLength(1);
-+      expect(content.includes(imageData)).toBe(false);
++      expect(content).not.toContain('base64data');
      });
- 
--    it('keeps bounded standalone images in model output beside a legacy UI attachment', () => {
-+    it('keeps bounded standalone images as artifacts beside a legacy UI attachment', () => {
-       const result: t.MCPToolCallResponse = {
-         content: [
--          { type: 'image', data: 'base64data', mimeType: 'image/png' },
-+          { type: 'image', data: imageData, mimeType: 'image/png' },
-           {
-             type: 'resource',
-             resource: { uri: 'ui://legacy', mimeType: 'text/html', text: '<p>view</p>' },
-@@ -1358,19 +1509,19 @@ describe('formatToolContent', () => {
-       const [content, artifacts] = formatToolContent(result, 'vertexai' as t.Provider);
- 
+@@ -1404,3 +1558,3 @@ describe('formatToolContent', () => {
        const resource = artifacts?.ui_resources?.data?.[0];
 -      expect(content).toContain('base64data');
-+      expect(content.includes(imageData)).toBe(false);
++      expect(content).not.toContain('base64data');
        expect(content).toContain(`UI Resource Marker: \\ui{${resource?.resourceId}}`);
-       expect(content.split(`UI Resource Marker: \\ui{${resource?.resourceId}}`)).toHaveLength(2);
--      expect(artifacts?.content).toBeUndefined();
-+      expect(artifacts?.content).toHaveLength(1);
-       expect(resource).toMatchObject({ uri: 'ui://legacy', mimeType: 'text/html' });
-     });
- 
--    it('keeps bounded embedded image blobs in model output beside a legacy UI attachment', () => {
-+    it('keeps bounded embedded image blobs as artifacts beside a legacy UI attachment', () => {
-       const result: t.MCPToolCallResponse = {
-         content: [
-           {
-             type: 'resource',
--            resource: { uri: 'file:///chart.png', mimeType: 'image/png', blob: 'aW1hZ2U=' },
-+            resource: { uri: 'file:///chart.png', mimeType: 'image/png', blob: imageData },
-           },
-           {
-             type: 'resource',
-@@ -1381,8 +1532,8 @@ describe('formatToolContent', () => {
- 
-       const [content, artifacts] = formatToolContent(result, 'vertexai' as t.Provider);
+@@ -1428,3 +1582,3 @@ describe('formatToolContent', () => {
  
 -      expect(content).toContain('data:image/png;base64,aW1hZ2U=');
--      expect(artifacts?.content).toBeUndefined();
-+      expect(content.includes(imageData)).toBe(false);
-+      expect(artifacts?.content).toHaveLength(1);
-       expect(artifacts?.ui_resources?.data).toHaveLength(1);
-     });
- 
++      expect(content).not.toContain('data:image/png;base64,aW1hZ2U=');
+       expect(artifacts?.content).toEqual([]);
 diff --git a/packages/api/src/mcp/parsers.ts b/packages/api/src/mcp/parsers.ts
-index 14c8cc295bf2473529ea45d30504b30be0e1a539..807227ac5532e61ac46fe982eb21d73996272adc 100644
+index 5ed8cd9e110ae889e4721974792fb0b4d30d422f..72a18caf4473f865d8b32d6ffa4824e83b60dcac 100644
 --- a/packages/api/src/mcp/parsers.ts
 +++ b/packages/api/src/mcp/parsers.ts
-@@ -247,7 +247,10 @@ function describeResourceLink(item: t.ResourceLink): string[] {
-   return lines;
- }
- 
--function parseAsString(result: t.MCPToolCallResponse): string {
-+function parseAsString(
-+  result: t.MCPToolCallResponse,
-+  collectImage: (item: t.ImageContent) => void,
-+): string {
-   const content = result?.content ?? [];
-   if (!content.length) {
-     return '(No response)';
-@@ -269,8 +272,7 @@ function parseAsString(result: t.MCPToolCallResponse): string {
-           if (body.text) {
+@@ -270,5 +270,2 @@ function parseAsString(result: t.MCPToolCallResponse): string {
              resourceText.push(body.text);
-           } else if (body.image) {
+-          } else if (body.image) {
 -            assertImageDataWithinLimit(body.image);
 -            resourceText.push(`data:${body.image.mimeType};base64,${body.image.data}`);
-+            collectImage(body.image);
            } else if (body.binaryBytes != null) {
-             resourceText.push(describeBinaryResource(body.binaryBytes));
-           }
-@@ -284,7 +286,8 @@ function parseAsString(result: t.MCPToolCallResponse): string {
-         return resourceText.join('\n');
+@@ -285,4 +282,5 @@ function parseAsString(result: t.MCPToolCallResponse): string {
        }
++      // The image handler attaches the payload separately from the model text.
        if (isImageContent(item)) {
 -        assertImageDataWithinLimit(item);
-+        collectImage(item);
 +        return '';
        }
-       return JSON.stringify(item, null, 2);
-     })
-@@ -319,7 +322,8 @@ export function isRenderableUiResource(item: t.ToolContentPart): boolean {
- /**
-  * Converts MCPToolCallResponse content into a plain-text string plus optional artifacts
-  * (images, UI resources). All providers receive string content; images are separated into
-- * artifacts and merged back by the agents package via formatArtifactPayload / formatAnthropicArtifactContent.
-+ * artifacts for UI attachments regardless of provider. Model-specific artifact merging remains
-+ * the agents package's responsibility; preserving an attachment does not imply model vision support.
-  *
-  * @param provider - Used only to distinguish recognized vs. unrecognized providers.
-  * All recognized providers currently produce identical string output;
-@@ -348,11 +352,6 @@ export function formatToolContent(
-     metadata.toolName &&
-     metadata.serverBinding
-   );
--  const hasUiResource = result?.content?.some((item) => isUiResource(item));
--  if (!isRecognizedProvider && !hasSyntheticApp && !hasUiResource) {
--    return [parseAsString(result), undefined];
--  }
--
-   const content = result?.content ?? [];
-   if (!content.length && !hasSyntheticApp) {
-     return ['(No response)', undefined];
-@@ -361,8 +360,7 @@ export function formatToolContent(
-   const imageUrls: t.FormattedContent[] = [];
-   const uiResources: UIResource[] = [];
-   let placementMarkerCount = 0;
--  // Assistants submits only this string; keep its bounded conversion independent from host UI data.
--  let currentTextBlock = isRecognizedProvider ? '' : parseAsString(result);
-+  let currentTextBlock = '';
- 
-   type ContentHandler = undefined | ((item: t.ToolContentPart) => void);
- 
-@@ -379,6 +377,11 @@ export function formatToolContent(
-     }
-   };
- 
-+  // String-only consumers keep their text formatting, but image bytes belong in artifacts.
-+  if (!isRecognizedProvider) {
-+    currentTextBlock = parseAsString(result, collectImage);
-+  }
-+
-   const contentHandlers: {
-     text: (item: Extract<t.ToolContentPart, { type: 'text' }>) => void;
-     image: (item: t.ToolContentPart) => void;

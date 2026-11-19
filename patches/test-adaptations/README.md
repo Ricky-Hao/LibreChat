@@ -1,6 +1,6 @@
 # 现有测试合同的适配
 
-状态：`local`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`local`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 保留 pinned drag 测量与 pagination 对齐、sender-seen/unread 时序、stream budget/recovery、activity fold 和滚动 fixture 的最终修正。
 
@@ -25,9 +25,11 @@
 
 本基线保留当前 activity-fold 断言；上游 `0491d60ae6ae6c6606ea87d03a192968a185125c` 已删除 path 高亮调用和旧布局夹具。pinned helper 沿用 `scrollIntoView({ block: 'nearest' })`，等待 draggable 并在 hover 后检测命中，起拖后滚动再测量目标。unseen-replies 等 sender acknowledgment 后离开会话，再恢复 unread 夹具。
 
+侧栏恢复测试在进入目标路由并观察到认证配置请求后释放配置。历史读取须等配置，并按 `recent` 请求。恢复仍验证第一次附着、终止预算、重连后的持久记录和会话身份。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

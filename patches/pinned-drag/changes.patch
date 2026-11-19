@@ -1,0 +1,91 @@
+diff --git a/client/src/components/Conversations/PinnedSection.tsx b/client/src/components/Conversations/PinnedSection.tsx
+index 688de3f46..3014a4a31 100644
+--- a/client/src/components/Conversations/PinnedSection.tsx
++++ b/client/src/components/Conversations/PinnedSection.tsx
+@@ -461,6 +461,9 @@ const PinnedSection = ({
+    * drag cannot clobber the in-flight arrangement. */
+   const dragEntriesRef = useRef<PinnedEntry[]>(orderedEntries);
+   const dragMembershipRef = useRef(naturalEntries);
++  /* Drag end only writes when a row actually moved. A move updates the refs
++   * immediately, while React may render before the matching state update. */
++  const hasReorderedRef = useRef(false);
+   const [liveEntries, setLiveEntries] = useState<PinnedEntry[] | null>(null);
+   const [announcement, setAnnouncement] = useState('');
+   /** `RenameForm` has no blur cancellation, so a second row's form can open
+@@ -483,7 +486,11 @@ const PinnedSection = ({
+     });
+   }, []);
+ 
+-  if (orderedEntries !== dragEntriesRef.current && liveEntries === null) {
++  if (
++    orderedEntries !== dragEntriesRef.current &&
++    liveEntries === null &&
++    !hasReorderedRef.current
++  ) {
+     dragEntriesRef.current = orderedEntries;
+     dragMembershipRef.current = naturalEntries;
+   }
+@@ -501,10 +508,6 @@ const PinnedSection = ({
+     [],
+   );
+ 
+-  /* Every drag end runs the commit, including drags that only filed a chat
+-   * into a project and drags that were abandoned without passing a row. Only a
+-   * drag that actually reordered something is worth a write. */
+-  const hasReorderedRef = useRef(false);
+   /* Bumped by every move. A write that settles after the user has already
+    * arranged the list again must not clear the snapshot showing that newer
+    * arrangement, or the rows would snap back to the older order while the drag
+diff --git a/client/src/components/Conversations/__tests__/PinnedSection.spec.tsx b/client/src/components/Conversations/__tests__/PinnedSection.spec.tsx
+index 99cb1b3b0..2eba95712 100644
+--- a/client/src/components/Conversations/__tests__/PinnedSection.spec.tsx
++++ b/client/src/components/Conversations/__tests__/PinnedSection.spec.tsx
+@@ -1,4 +1,5 @@
+-import React from 'react';
++import React, { startTransition } from 'react';
++import { flushSync } from 'react-dom';
+ import { render, screen, fireEvent, act } from '@testing-library/react';
+ import '@testing-library/jest-dom';
+ import { DndProvider } from 'react-dnd';
+@@ -550,6 +551,41 @@ describe('PinnedSection unified list', () => {
+     },
+   );
+ 
++  it('saves the dragged order when a render runs ahead of the hover state update', () => {
++    const rows = [pinnedConvo('c1', 'First'), pinnedConvo('c2', 'Second')];
++    const view = renderSection(rows);
++    const [target, source] = screen
++      .getAllByTestId('pinned-convo')
++      .map((node) => node.parentElement as HTMLElement);
++    jest.spyOn(target, 'getBoundingClientRect').mockReturnValue({
++      top: 0,
++      bottom: 40,
++      left: 0,
++      right: 100,
++      width: 100,
++      height: 40,
++      x: 0,
++      y: 0,
++      toJSON: () => ({}),
++    });
++    const frames = jest.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0);
++    const drag = (node: HTMLElement, type: string, clientY: number) =>
++      fireEvent(node, new MouseEvent(type, { bubbles: true, clientX: 10, clientY }));
++
++    drag(source, 'dragstart', 60);
++    drag(target, 'dragover', 10);
++    act(() => frames.mock.lastCall![0](0));
++    drag(target, 'dragover', 10);
++    act(() => {
++      startTransition(() => frames.mock.lastCall![0](0));
++      flushSync(() => view.rerender(renderTree([...rows])));
++    });
++
++    expect(itemLabels()).toEqual(['Second', 'First']);
++    drag(source, 'drop', 10);
++    expect(mockUpdatePinnedOrder).toHaveBeenCalledWith(['convo:c2', 'convo:c1'], expect.anything());
++  });
++
+   /* An arrangement that arrives while the order is reconciling is held and
+    * written when the fresh order lands. The flush runs on every settle, so it
+    * has to stay quiet when there is nothing being held: reposting a committed

@@ -252,13 +252,14 @@ index 2e394626afe5354ea30704032266618f0f982644..7309abdc3dad5494521185a7eb9acb3e
              id,
            ),
 diff --git a/e2e/specs/mock/streaming.spec.ts b/e2e/specs/mock/streaming.spec.ts
-index 360b35e437ed3a7c8b7844c066ff261af5806de3..7ca3f7216dec0970d76bd603c388be77253774a6 100644
+index 360b35e43..3291a1af8 100644
 --- a/e2e/specs/mock/streaming.spec.ts
 +++ b/e2e/specs/mock/streaming.spec.ts
-@@ -1,9 +1,13 @@
+@@ -1,9 +1,14 @@
 +import { randomUUID } from 'node:crypto';
  import { expect, test } from '@playwright/test';
 +import { ContentTypes } from 'librechat-data-provider';
++import type { Request } from '@playwright/test';
 +import type { HistoryPage } from 'librechat-data-provider';
  import {
    MOCK_ENDPOINTS,
@@ -269,7 +270,7 @@ index 360b35e437ed3a7c8b7844c066ff261af5806de3..7ca3f7216dec0970d76bd603c388be77
    sendMessageAndWaitForCompletion,
  } from './helpers';
  
-@@ -16,6 +20,383 @@ const orderedPieces = () =>
+@@ -16,6 +21,386 @@ const orderedPieces = () =>
    );
  
  test.describe('stream transport fidelity', () => {
@@ -292,8 +293,11 @@ index 360b35e437ed3a7c8b7844c066ff261af5806de3..7ca3f7216dec0970d76bd603c388be77
 +      const configReady = new Promise<void>((resolve) => {
 +        releaseConfig = resolve;
 +      });
++      let configReleased = false;
++      const isAuthenticatedConfig = (request: Request) =>
++        new URL(request.url()).pathname === '/api/config' && !!request.headers().authorization;
 +      await page.route('**/api/config', async (route) => {
-+        if (!route.request().headers().authorization) {
++        if (!isAuthenticatedConfig(route.request())) {
 +          await route.continue();
 +          return;
 +        }
@@ -317,6 +321,7 @@ index 360b35e437ed3a7c8b7844c066ff261af5806de3..7ca3f7216dec0970d76bd603c388be77
 +            await route.continue();
 +            return;
 +          }
++          expect(configReleased).toBe(true);
 +          const response = await route.fetch();
 +          expect(response.ok()).toBe(true);
 +          expect(new URL(route.request().url()).searchParams.get('history')).toBe('recent');
@@ -364,10 +369,9 @@ index 360b35e437ed3a7c8b7844c066ff261af5806de3..7ca3f7216dec0970d76bd603c388be77
 +        attachments++;
 +        await route.fulfill({ status: 404, json: { error: 'Stream expired' } });
 +      });
-+      const configResponse = page.waitForResponse(
-+        (response) =>
-+          new URL(response.url()).pathname === '/api/config' &&
-+          !!response.request().headers().authorization,
++      const configRequest = page.waitForRequest(isAuthenticatedConfig);
++      const configResponse = page.waitForResponse((response) =>
++        isAuthenticatedConfig(response.request()),
 +      );
 +      const unnegotiated = page.waitForResponse(
 +        (response) =>
@@ -378,14 +382,14 @@ index 360b35e437ed3a7c8b7844c066ff261af5806de3..7ca3f7216dec0970d76bd603c388be77
 +        /** A row for the current URL is intentionally a no-op; enter from new chat. */
 +        await page.goto(NEW_CHAT_PATH);
 +        await page.locator(`[data-conversation-id="${conversationId}"]`).click();
-+        await expect(messagesView(page)).toContainText('Pending recovery');
-+        expect(new URL(page.url()).pathname).toBe(`/c/${conversationId}`);
++        await expect(page).toHaveURL((url) => url.pathname === `/c/${conversationId}`);
++        await configRequest;
 +        /** Sidebar navigation drops the initial model-spec query parameter. */
 +        const resumedUrl = page.url();
-+        /** Resume must wait for startup config: upstream needs its forced-retention
-+         * policy before rebuilding a submission. The late retry policy applies to
-+         * the first attachment too. */
++        /** History needs the window policy before requesting messages. The late
++         * retry policy must apply from the first resume attachment. */
 +        expect(attachments).toBe(0);
++        configReleased = true;
 +        releaseConfig();
 +        await (await configResponse).finished();
 +        await unnegotiated;

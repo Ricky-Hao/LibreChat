@@ -4,9 +4,8 @@
 
 今后同步上游默认按[上游同步默认流程](docs/maintenance.md#上游同步默认流程)执行：固定官方 upstream main 完整 SHA → 有序补丁重放与验证 → 合入 `patches` → CI 镜像 → 按 digest 部署。每轮按用户请求完成相应阶段，发布和部署按当次授权执行。
 
-固定应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`（upstream main）。原始完整 fork 源：`38c026db83d0ca12a067083b5c1551c1bca2754b`。
-共有 27 个状态条目、25 份标准 Git diff：`keep` 10、`feature` 4、`awaiting-upstream` 3、`local` 8、`upstream` 2。
-此前基线适配中，12 组可直接应用，12 组完成冲突或接口适配；2 组使用固定基线的等价实现，其中 vendor-chunks 退役，index-retry 延续原有替代。随后新增 [file-search-provisioning](patches/file-search-provisioning/README.md)，修复 PTC 附件按实际搜索准备及无 RAG 配置行为。
+应用基线固定为官方 upstream main 的 `d4e85d2205c78413ee27d631d7e3b7313556f21d`（v0.8.9）。原始完整 fork 源为 `38c026db83d0ca12a067083b5c1551c1bca2754b`。
+28 个状态条目包含 25 份标准 Git diff，状态为 `keep` 12、`feature` 4、`local` 9、`upstream` 3。两个应用消费方使用 vendored `4.2.11-ricky.1`。[SDK 组](patches/sdk/README.md)
 
 [manifest.json](manifest.json) 是唯一有序清单，负责状态、依赖、载荷路径和测试合同。每个 `patches/<id>/` 包含行为说明、来源、维护步骤及非空 `tests.json`；活动条目另有 `changes.patch`。
 
@@ -32,7 +31,7 @@ python3 tools/patchset.py test --target /path/to/application --tier all --plan
 
 `--only history-window` 会按清单顺序纳入传递依赖；`--status keep feature` 按状态选择并纳入依赖。先用相同参数执行 `list` 查看实际选择。更换选择必须从干净固定基线重新生成，不在已应用的 checkout 追加。
 
-三项 `awaiting-upstream` 在此固定基线上仍需应用。`vendor-chunks` 和 `index-retry` 已由固定基线中的实现替代。上游 dev 已合入不代表所选应用基线已有替代；只有核实目标包含等价行为后才修改状态。
+`vendor-chunks`、`sidebar-focus` 和 `index-retry` 采用固定基线中的等价实现。`mcp-ping` 与 `mcp-images` 保留上游尚未覆盖的合同和实现。[替代证据](docs/status.md#替代证据)
 
 ## 验证
 
@@ -47,7 +46,9 @@ python3 tools/patchset.py test --target /path/to/application --tier project
 
 runner 在应用 checkout 执行：Jest 精确 discovery、逐文件结果与非空断言，Playwright 精确文件 discovery、禁用重试与非空结果；跳过或失败均非完整通过。`project` 保留应用静态检查及适用 Lighthouse 门禁。共享命令去重，重型检查串行。
 
-2026-11-11，在此固定基线上完成完整重放、26 组传递依赖闭包预检和 71 项去重合同验收：54 项 focused、6 项 types、9 项 browser 和 2 项 project 全部通过。最终有效结果去重后为 106 个 Jest suites、6074 个 tests，以及 80 个 Playwright tests，无失败、跳过、todo 或 Playwright 自动重试。intent-labels 的完整浏览器文件复用 test-adaptations 中更新后执行的结果。
+### 历史验收（2026-11-11）
+
+上一轮在 `e6567c7a681ce67869dce31486a21d3a25d6931b` 完成完整重放、26 组传递依赖闭包预检和 71 项去重合同验收：54 项 focused、6 项 types、9 项 browser 和 2 项 project 全部通过。最终有效结果去重后为 106 个 Jest suites、6074 个 tests，以及 80 个 Playwright tests，无失败、跳过、todo 或 Playwright 自动重试。intent-labels 的完整浏览器文件复用 test-adaptations 中更新后执行的结果。
 
 业务验收版本的正式重放与[应用提交 `4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79`](https://github.com/Ricky-Hao/LibreChat/commit/4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79) 的 tree 均为 `dcc8f4edc32c510e7eea8e9b514ef0117c02c90c`。
 

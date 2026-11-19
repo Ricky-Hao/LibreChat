@@ -43,7 +43,8 @@
         "client/src/data-provider/Messages/__tests__/window.test.ts",
         "client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx",
         "client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx",
-        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx"
+        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx",
+        "client/src/routes/__tests__/Record.spec.tsx"
       ],
       "runner": "jest",
       "files": [
@@ -57,7 +58,8 @@
         "client/src/data-provider/Messages/__tests__/window.test.ts",
         "client/src/hooks/Chat/__tests__/useChatFunctions.regenerate.spec.tsx",
         "client/src/hooks/Conversations/__tests__/useExportConversation.spec.tsx",
-        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx"
+        "client/src/hooks/Messages/__tests__/useHistoryPaging.spec.tsx",
+        "client/src/routes/__tests__/Record.spec.tsx"
       ]
     },
     {
@@ -66,11 +68,13 @@
       "cwd": "packages/api",
       "requires": [
         "packages/api/package.json",
-        "packages/api/src/messages/history.spec.ts"
+        "packages/api/src/messages/history.spec.ts",
+        "packages/api/src/messages/historyWindow.spec.ts"
       ],
       "runner": "jest",
       "files": [
-        "packages/api/src/messages/history.spec.ts"
+        "packages/api/src/messages/history.spec.ts",
+        "packages/api/src/messages/historyWindow.spec.ts"
       ]
     },
     {
@@ -82,6 +86,7 @@
         "packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx",
         "packages/chat/src/components/pane/__tests__/messages.spec.tsx",
         "packages/chat/test/consumer.spec.tsx",
+        "packages/chat/src/react/messages/__tests__/offscreen.spec.tsx",
         "packages/chat/src/react/messages/__tests__/rows.spec.tsx"
       ],
       "runner": "jest",
@@ -89,6 +94,7 @@
         "packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx",
         "packages/chat/src/components/pane/__tests__/messages.spec.tsx",
         "packages/chat/test/consumer.spec.tsx",
+        "packages/chat/src/react/messages/__tests__/offscreen.spec.tsx",
         "packages/chat/src/react/messages/__tests__/rows.spec.tsx"
       ]
     },
@@ -226,7 +232,7 @@
         "static-checks",
         "--",
         "--against",
-        "e6567c7a681ce67869dce31486a21d3a25d6931b"
+        "d4e85d2205c78413ee27d631d7e3b7313556f21d"
       ]
     },
     {

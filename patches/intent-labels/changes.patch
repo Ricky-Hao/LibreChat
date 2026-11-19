@@ -1,332 +1,30 @@
 diff --git a/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx b/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx
-index 176732719bb9482de11f16d62fb7a7efcc1e1580..57c9b7d195f6d8afab24215d993ea5a36262126b 100644
+index 178d567375469e3ff52f1cda7755abe450a4fba2..091ad9c3965ba60388b59365d0248b30dceca6b2 100644
 --- a/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx
 +++ b/client/src/components/Chat/Messages/Content/CodeAnalyze.tsx
-@@ -48,7 +48,7 @@ export default function CodeAnalyze({
-       <span className="sr-only" aria-live="polite" aria-atomic="true">
-         {phase === 'running' ? localize('com_ui_analyzing') : localize('com_ui_analyzing_finished')}
+@@ -50,3 +50,3 @@ export default function CodeAnalyze({
        </span>
--      <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5">
-+      <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5">
+-      <div className="relative my-1.5 flex h-5 shrink-0 items-center gap-2.5">
++      <div className="relative my-1.5 flex min-h-5 shrink-0 items-center gap-2.5">
          <ProgressText
-           phase={phase}
-           onClick={handleToggleCode}
 diff --git a/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx b/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx
-index ebc70a94832c0c29c968466509595aab476a6754..79893cb4afd4bce8b2d00406136c9a03ab987606 100644
+index 73be1e2897f4dd71b6ca4145519bb7122f5a4948..e3c13427559a252b86bcefc76d0685f81937492b 100644
 --- a/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx
 +++ b/client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx
-@@ -73,7 +73,7 @@ export default function MemoryCall({
-     <>
-       <BareStatus phase={phase} active={bare} text={finishedText} />
+@@ -75,3 +75,3 @@ export default function MemoryCall({
        {!bare && (
--        <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
-+        <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
+-        <div className="relative my-1.5 flex h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
++        <div className="relative my-1.5 flex min-h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
            <ProgressText
-             phase={phase}
-             onClick={toggleCode}
-diff --git a/client/src/components/Chat/Messages/Content/ProgressText.tsx b/client/src/components/Chat/Messages/Content/ProgressText.tsx
-index 5808d169393fe2a70064084fc0d03ccd446440af..3aa0f67d0a6dc39c7d8010ba8624c8d1d1fd0666 100644
---- a/client/src/components/Chat/Messages/Content/ProgressText.tsx
-+++ b/client/src/components/Chat/Messages/Content/ProgressText.tsx
-@@ -16,13 +16,11 @@ import { cn, getRunStepDurationLabels } from '~/utils';
- import { useLocalize } from '~/hooks';
- 
- const wrapperClass =
--  'progress-text-wrapper text-text-secondary relative -mt-[0.046875rem] h-5 w-full leading-5';
-+  'progress-text-wrapper text-text-secondary relative -mt-[0.046875rem] min-h-5 min-w-0 w-full leading-5';
- 
--/** `right-0` and `max-w-full` cap the absolutely-positioned line at the message
-- *  column; the label span truncates itself, so overflow stays visible for the
-- *  button's focus ring. */
--const contentClass =
--  'progress-text-content absolute left-0 right-0 top-0 max-w-full overflow-visible whitespace-nowrap';
-+/** Stay in flow so wrapped intents and metadata also size the caller's row.
-+ *  Overflow remains visible for the disclosure's focus ring. */
-+const contentClass = 'progress-text-content max-w-full overflow-visible';
- 
- const Wrapper = ({
-   popover,
-@@ -157,7 +155,7 @@ export default function ProgressText({
-     toolExecutionDurationMs != null &&
-     Number.isFinite(toolExecutionDurationMs) &&
-     toolExecutionDurationMs >= 50;
--  /** Pinned beside the chevron: "2.4s (prepared in 0.3s)". */
-+  /** Compact intervals: "2.4s (prepared in 0.3s)". */
-   const durationParts =
-     phase !== 'completed'
-       ? []
-@@ -190,13 +188,16 @@ export default function ProgressText({
-               ]
-             : []),
-         ];
-+  const showTimer = isRunning && phaseStartAt != null && localPhaseStart != null;
-+  const hasMetadata =
-+    subtitle || errorSuffix || timer != null || showTimer || durationParts.length > 0;
- 
-   return (
-     <Wrapper popover={popover} rootRef={rootRef}>
-       <Button
-         type="button"
-         variant="disclosure"
--        className="group/disclosure"
-+        className="group/disclosure items-start text-left whitespace-normal"
-         disabled={!hasInput}
-         tabIndex={hasInput ? 0 : -1}
-         onClick={hasInput ? onClick : undefined}
-@@ -207,69 +208,48 @@ export default function ProgressText({
-             {icon}
-           </span>
-         )}
--        {/* The label names the card and stays whole; a subtitle can be
--            arbitrary authored text (a question, an error line), so it takes
--            ALL of the shrink and ellipsizes instead of pushing the line past
--            the message column. All, not most: a weighted share left the label
--            a fraction of a pixel short of its text, and that fraction is
--            enough for `truncate` to swap its last letters for an ellipsis.
--            The pair sits in its own shrinking box so the verdict, the
--            duration and the chevron after it never lose width: the box gives
--            up the subtitle first, and a label wider than the box truncates at
--            the box (`max-w-full`), not past the row. */}
--        <span className="flex min-w-0 items-center gap-2">
-+        {/* Phones give the intent its own full-width line. Larger layouts
-+            stay inline when they fit, but can wrap inside nested panels too. */}
-+        <span className="flex min-w-0 flex-1 flex-col gap-x-2 gap-y-1 sm:flex-initial sm:flex-row sm:flex-wrap sm:items-baseline">
-           <span
-             className={cn(
-               showShimmer ? 'shimmer' : '',
--              'max-w-full min-w-0 truncate font-medium',
--              subtitle && 'shrink-0',
-+              'max-w-full min-w-0 font-medium [overflow-wrap:anywhere]',
-             )}
-           >
-             {text}
-           </span>
--          {subtitle && (
--            <span className="text-text-secondary min-w-0 shrink truncate font-normal">
--              {subtitle}
-+          {hasMetadata && (
-+            <span className="text-text-secondary flex max-w-full min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 font-normal [overflow-wrap:anywhere]">
-+              {subtitle && <span>{subtitle}</span>}
-+              {errorSuffix && <span className="text-status-error">· {verdict || errorSuffix}</span>}
-+              {timer}
-+              {timer == null && showTimer && <ElapsedTimer start={localPhaseStart} />}
-+              {durationParts.map(({ label, phrase, duration }) => (
-+                <span key={label} className="text-xs tabular-nums">
-+                  <span aria-hidden="true">
-+                    {phrase
-+                      ? localize(phrase, { 0: localize(duration.key, duration.values) })
-+                      : localize(duration.key, duration.values)}
-+                  </span>
-+                  <span className="sr-only">
-+                    {label && `${label} `}
-+                    {localize(duration.announcedKey, duration.announcedValues)}
-+                  </span>
-+                </span>
-+              ))}
-             </span>
-           )}
-         </span>
--        {/* A reason ("timed out", "exit code 2") already says the call failed,
--            so it replaces the generic word instead of following it. */}
--        {errorSuffix && (
--          <span className="text-status-error shrink-0 font-normal">· {verdict || errorSuffix}</span>
-+        {hasInput && (
-+          <ChevronDown
-+            className={cn(
-+              disclosureChevronVariants({ expanded: isExpanded }),
-+              'size-4 shrink-0 translate-y-[0.0625rem]',
-+            )}
-+            aria-hidden="true"
-+          />
-         )}
--        {/* Pinned to the row's end so every row's time and chevron line up. */}
--        <span className="ms-auto flex shrink-0 items-center gap-2">
--          {timer}
--          {timer == null && isRunning && phaseStartAt != null && localPhaseStart != null && (
--            <ElapsedTimer start={localPhaseStart} />
--          )}
--          {durationParts.map(({ label, phrase, duration }) => (
--            <span
--              key={label}
--              className="text-text-secondary shrink-0 text-xs font-normal tabular-nums"
--            >
--              <span aria-hidden="true">
--                {phrase
--                  ? localize(phrase, { 0: localize(duration.key, duration.values) })
--                  : localize(duration.key, duration.values)}
--              </span>
--              <span className="sr-only">
--                {label && `${label} `}
--                {localize(duration.announcedKey, duration.announcedValues)}
--              </span>
--            </span>
--          ))}
--          {hasInput && (
--            <ChevronDown
--              className={cn(
--                disclosureChevronVariants({ expanded: isExpanded }),
--                'size-4 shrink-0 translate-y-[0.0625rem]',
--              )}
--              aria-hidden="true"
--            />
--          )}
--        </span>
-       </Button>
-     </Wrapper>
-   );
-diff --git a/client/src/components/Chat/Messages/Content/RetrievalCall.tsx b/client/src/components/Chat/Messages/Content/RetrievalCall.tsx
-index d864939b3a626c049a2e5d89285b2e6df81ddd16..8b6da3664e7ee940da1c6cf5d32b86ec669d46a8 100644
---- a/client/src/components/Chat/Messages/Content/RetrievalCall.tsx
-+++ b/client/src/components/Chat/Messages/Content/RetrievalCall.tsx
-@@ -476,7 +476,7 @@ export default function RetrievalCall({
-         })()}
-       </span>
-       {!bare && (
--        <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
-+        <div className="relative my-1 flex min-h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
-           <ProgressText
-             phase={phase}
-             onClick={hasExpandableContent ? handleToggleOutput : undefined}
-diff --git a/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx b/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx
-index b73e3e42dba53ffb78f136456868199eb1f18e02..aaf0a2633fccf9642e31c4cceba72307a9c8baed 100644
---- a/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx
-+++ b/client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx
-@@ -1,6 +1,6 @@
- import React from 'react';
- import { FailedRevealContext } from '@librechat/chat/components';
--import { fireEvent, render, screen } from '@testing-library/react';
-+import { act, fireEvent, render, screen } from '@testing-library/react';
- import ProgressText from '../ProgressText';
- 
- function mockLocalize(key: string, values?: Record<string, string | number>): string {
-@@ -94,6 +94,39 @@ describe('ProgressText duration', () => {
-     clock.mockRestore();
-   });
- 
-+  it('ticks while running and replaces the live timer with measured intervals on completion', () => {
-+    jest.useFakeTimers();
-+    try {
-+      const { rerender } = renderProgressText({ phase: 'running', phaseStartAt: 1_000 });
-+      const initial = screen.getByTestId('stream-elapsed').textContent;
-+      act(() => jest.advanceTimersByTime(3000));
-+      expect(screen.getByTestId('stream-elapsed').textContent).not.toBe(initial);
-+      rerender(
-+        <ProgressText
-+          {...defaults}
-+          toolPreparationDurationMs={13_000}
-+          toolExecutionDurationMs={1000}
-+        />,
-+      );
-+      expect(screen.queryByTestId('stream-elapsed')).not.toBeInTheDocument();
-+      expect(screen.getByText('(prepared in 13s)')).toBeInTheDocument();
-+      expect(screen.getByText('1s')).toBeInTheDocument();
-+    } finally {
-+      jest.useRealTimers();
-+    }
-+  });
-+
-+  it('uses an injected timer without also rendering the phase timer', () => {
-+    const injectedTimer = 'Injected timer';
-+    renderProgressText({
-+      phase: 'running',
-+      phaseStartAt: 1_000,
-+      timer: <span>{injectedTimer}</span>,
-+    });
-+    expect(screen.getAllByText(injectedTimer)).toHaveLength(1);
-+    expect(screen.queryByTestId('stream-elapsed')).not.toBeInTheDocument();
-+  });
-+
-   it('does not render while the step is still running', () => {
-     renderProgressText({ phase: 'running', durationMs: 3500 });
-     expect(screen.queryByText('3.5s')).not.toBeInTheDocument();
-@@ -173,28 +206,43 @@ describe('ProgressText disclosure', () => {
-   });
- 
-   it('renders no chevron or disclosure state without expandable content', () => {
--    renderProgressText({ hasInput: false });
-+    const onClick = jest.fn();
-+    renderProgressText({ hasInput: false, onClick });
- 
-     const button = screen.getByRole('button', { name: 'Completed foo' });
- 
-     expect(button).toBeDisabled();
-     expect(button).not.toHaveAttribute('aria-expanded');
-     expect(button.querySelector('svg')).toBeNull();
-+    fireEvent.click(button);
-+    expect(onClick).not.toHaveBeenCalled();
-   });
- });
- 
--describe('ProgressText subtitle', () => {
--  it('gives the subtitle every bit of the shrink so the label keeps its last letters', () => {
--    renderProgressText({ subtitle: 'HTTP 429 from github.com' });
--    const label = screen.getByText('Completed foo');
--    const subtitle = screen.getByText('HTTP 429 from github.com');
--    expect(label).toHaveClass('shrink-0', 'max-w-full', 'truncate');
--    expect(subtitle).toHaveClass('shrink', 'min-w-0', 'truncate');
-+describe('ProgressText label and metadata', () => {
-+  it.each([
-+    '核对全部十二项配置检查结果',
-+    'Checking all the older configuration entries before creating a complete comparison report. '.repeat(
-+      4,
-+    ),
-+    'CheckEveryConfigurationEntryWithoutBreakingTheOriginalIntent'.repeat(4),
-+  ])('preserves the entire label in the disclosure name: %s', (finishedText) => {
-+    renderProgressText({
-+      finishedText,
-+      subtitle: 'Synthetic status details',
-+      toolPreparationDurationMs: 13_000,
-+      toolExecutionDurationMs: 1000,
-+    });
-+    expect(screen.getByText(finishedText.trim()).textContent).toBe(finishedText);
-+    expect(screen.getByRole('button')).toHaveAccessibleName(
-+      `${finishedText.trim()} Synthetic status details Tool call took 1 second Preparation took 13 seconds`,
-+    );
-   });
- 
--  it('lets a lone label shrink into its own ellipsis', () => {
--    renderProgressText();
--    expect(screen.getByText('Completed foo')).not.toHaveClass('shrink-0');
-+  it('keeps authentication text ahead of the running intent', () => {
-+    renderProgressText({ phase: 'running', authText: 'Authentication required' });
-+    expect(screen.getByRole('button')).toHaveAccessibleName('Authentication required');
-+    expect(screen.queryByText(defaults.inProgressText)).not.toBeInTheDocument();
-   });
- });
- 
-@@ -263,21 +311,6 @@ describe('ProgressText failed reveal', () => {
-   });
- });
- 
--describe('ProgressText fixed siblings', () => {
--  it('keeps the verdict, duration and chevron out of the shrinking label box', () => {
--    const { container } = renderProgressText({
--      phase: 'completed',
--      subtitle: 'a very long subtitle',
--      durationMs: 3500,
--    });
--    const box = screen.getByText('Completed foo').parentElement;
--    expect(box).toHaveClass('min-w-0');
--    expect(box).toContainElement(screen.getByText('a very long subtitle'));
--    expect(screen.getByText('3.5s').parentElement).toHaveClass('shrink-0');
--    expect(container.querySelector('svg')).toHaveClass('shrink-0');
--  });
--});
--
- describe('ProgressText verdict', () => {
-   it('names the failure reason inside the button on a failed card', () => {
-     renderProgressText({ phase: 'failed', verdict: 'exit code 2' });
 diff --git a/e2e/specs/mock/activity-fold.spec.ts b/e2e/specs/mock/activity-fold.spec.ts
-index 6e229a3e7f310dfcbb4cdf09cb87e93226737e02..683d2506ccc476a9af46eca7dee50cf3cdc82d19 100644
+index 9bd0e2f3725a1c2894dd0257f1213cd225dc8011..da3dde465010cbaa1973f533f6978370be6d25b2 100644
 --- a/e2e/specs/mock/activity-fold.spec.ts
 +++ b/e2e/specs/mock/activity-fold.spec.ts
-@@ -1,8 +1,16 @@
- import fs from 'fs';
+@@ -2,2 +2,3 @@ import fs from 'fs';
  import path from 'path';
 +import { randomUUID } from 'crypto';
  import { expect, test } from '@playwright/test';
--import type { APIRequestContext, Page } from '@playwright/test';
-+import type { APIRequestContext, Locator, Page } from '@playwright/test';
+@@ -5,2 +6,9 @@ import type { APIRequestContext, Locator, Page } from '@playwright/test';
  import { NEW_CHAT_PATH, messagesView, selectMockEndpoint, sendMessage } from './helpers';
 +import {
 +  deleteConversations,
@@ -336,11 +34,7 @@ index 6e229a3e7f310dfcbb4cdf09cb87e93226737e02..683d2506ccc476a9af46eca7dee50cf3
 +} from './db';
 +import { getE2EUser } from '../../setup/user';
  
- const PHASE_ENDPOINT = { label: 'Mock Provider F', model: 'mock-model-f' };
- const MCP_SERVER_TITLE = 'E2E Memory';
-@@ -12,6 +20,232 @@ const SHOT_DIR = process.env.E2E_FOLD_SHOTS || '';
- 
- const uniqueLabel = () => `fold-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+@@ -14,2 +22,228 @@ const uniqueLabel = () => `fold-${Date.now()}-${Math.floor(Math.random() * 1e4)}
  
 +const MOBILE_INTENTS = [
 +  '核对十二项配置并生成报告',
@@ -569,13 +263,11 @@ index 6e229a3e7f310dfcbb4cdf09cb87e93226737e02..683d2506ccc476a9af46eca7dee50cf3
 +}
 +
  async function shot(page: Page, name: string) {
-   if (!SHOT_DIR) {
-     return;
 diff --git a/packages/api/src/agents/intent.spec.ts b/packages/api/src/agents/intent.spec.ts
 index 27dd8bed069f1bb901e0f3ccfff3054114bfa65b..4f8cf6919f8f9f862269f6f2520f00133c495119 100644
 --- a/packages/api/src/agents/intent.spec.ts
 +++ b/packages/api/src/agents/intent.spec.ts
-@@ -1,5 +1,17 @@
+@@ -1,3 +1,15 @@
  import { logger } from '@librechat/data-schemas';
 -import type { LCTool, LCToolRegistry } from '@librechat/agents';
 +import {
@@ -592,11 +284,7 @@ index 27dd8bed069f1bb901e0f3ccfff3054114bfa65b..4f8cf6919f8f9f862269f6f2520f0013
 +} from '@librechat/agents';
 +import type { LCTool, LCToolRegistry, JsonSchemaType } from '@librechat/agents';
  import {
-   INTENT_ARG,
-   NATIVE_INTENT_TOOL_NAMES,
-@@ -18,6 +30,14 @@ import { applyBackgroundToolCalls, CHECK_BACKGROUND_TASK_NAME } from './backgrou
- import { mergeSynthesizedToolOptions, TOOL_SELECTION_WILDCARD } from './selection';
- import { toolOptionsSchema } from './validation';
+@@ -20,2 +32,10 @@ import { toolOptionsSchema } from './validation';
  
 +const CONCISE_INTENT_DESCRIPTION =
 +  'ALWAYS write this field FIRST, before any other argument. ' +
@@ -607,21 +295,13 @@ index 27dd8bed069f1bb901e0f3ccfff3054114bfa65b..4f8cf6919f8f9f862269f6f2520f0013
 +  'No explanation, tool names, or ending punctuation. Distinguish sibling calls with a short object.';
 +
  const mcpDef = (name: string): LCTool =>
-   ({
-     name,
-@@ -34,8 +54,7 @@ const sdkNativeDef = (name: string): LCTool =>
-       properties: {
-         intent: {
+@@ -36,4 +56,3 @@ const sdkNativeDef = (name: string): LCTool =>
            type: 'string',
 -          description:
 -            'ALWAYS write this field FIRST, before any other argument. One short sentence…',
 +          description: SDK_INTENT_DESCRIPTION,
          },
-         query: { type: 'string' },
-       },
-@@ -111,6 +130,16 @@ describe('injectIntentParam', () => {
-     expect((injected.parameters as { required?: string[] }).required).toEqual(['q']);
-   });
+@@ -113,2 +132,12 @@ describe('injectIntentParam', () => {
  
 +  it('uses the bare-action prompt without adding validation or truncating labels', () => {
 +    const injected = injectIntentParam(mcpDef('search_mcp_docs'));
@@ -634,20 +314,12 @@ index 27dd8bed069f1bb901e0f3ccfff3054114bfa65b..4f8cf6919f8f9f862269f6f2520f0013
 +  });
 +
    it('creates an object schema when the tool declares no parameters', () => {
-     const def = { name: 'no_params' } as unknown as LCTool;
-     const injected = injectIntentParam(def);
-@@ -515,7 +544,7 @@ describe('sanitizeIntentLabels', () => {
-     expect(INTENT_ARG in (skill.parameters as { properties: object }).properties).toBe(true);
-   });
+@@ -517,3 +546,3 @@ describe('sanitizeIntentLabels', () => {
  
 -  it('leaves defs untouched when the capability is on and nothing opted out', () => {
 +  it('overrides SDK label prose and is idempotent once normalized', () => {
      const skill = sdkNativeDef('skill');
-     const defs = [skill];
-     const { toolDefinitions, semanticIntentToolNames } = sanitizeIntentLabels({
-@@ -524,8 +553,177 @@ describe('sanitizeIntentLabels', () => {
-       toolOptions: undefined,
-       capabilityEnabled: true,
+@@ -526,4 +555,173 @@ describe('sanitizeIntentLabels', () => {
      });
 -    expect(toolDefinitions).toBe(defs);
 +    expect(toolDefinitions[0].parameters?.properties?.intent?.description).toBe(
@@ -822,15 +494,11 @@ index 27dd8bed069f1bb901e0f3ccfff3054114bfa65b..4f8cf6919f8f9f862269f6f2520f0013
 +    expect(context.markToolsAsDiscovered(['deferred'])).toBe(true);
 +    expect(bind()).toMatchObject({ defaultOptions: { tools: expectedTools(toolDefinitions) } });
    });
- 
-   it('projects only surviving marker-verified intent schemas for compaction', () => {
 diff --git a/packages/api/src/agents/intent.ts b/packages/api/src/agents/intent.ts
 index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee06346a13 100644
 --- a/packages/api/src/agents/intent.ts
 +++ b/packages/api/src/agents/intent.ts
-@@ -2,9 +2,8 @@
-  * @fileoverview Tool intent labels.
-  *
+@@ -4,5 +4,4 @@
   * Injects an optional `intent` string as the FIRST property of a tool's
 - * schema so the model can declare, per call, one sentence stating what that
 - * specific call is about to do ("Searching for OAuth handling in the
@@ -838,11 +506,7 @@ index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee
 + * schema so the model can declare a concise action and object in the user's
 + * language ("读取配置"). Because the property is first, it is the first key
   * providers stream in the tool-call args, and the client renders it as the
-  * call's live status label — the args already reach the client verbatim, so
-  * no new event plumbing is involved. The label is inert server-side: the
-@@ -25,11 +24,7 @@
- 
- import { logger } from '@librechat/data-schemas';
+@@ -27,7 +26,3 @@ import { logger } from '@librechat/data-schemas';
  import { Tools, Constants } from 'librechat-data-provider';
 -import {
 -  Constants as AgentConstants,
@@ -851,11 +515,7 @@ index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee
 -} from '@librechat/agents';
 +import { Constants as AgentConstants, INTENT_LABEL_MARKER } from '@librechat/agents';
  import type { LCTool, LCToolRegistry, JsonSchemaType } from '@librechat/agents';
- import type { AgentToolOptions } from 'librechat-data-provider';
- import type { CapabilityToolNames } from './selection';
-@@ -132,14 +127,22 @@ export function stripIntentArg(args: unknown): unknown {
-   return rest;
- }
+@@ -134,2 +129,11 @@ export function stripIntentArg(args: unknown): unknown {
  
 +/** Host prompt override; the SDK marker remains the shared label discriminator. */
 +const INTENT_DESCRIPTION =
@@ -867,9 +527,7 @@ index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee
 +  'No explanation, tool names, or ending punctuation. Distinguish sibling calls with a short object.';
 +
  /**
-  * Canonical (frozen) shape of the injected property. Injection embeds a
-  * copy so downstream schema tooling that mutates subschemas (JSON-schema
-  * dereferencers stamp URI markers) never trips on a frozen shared instance.
+@@ -139,5 +143,4 @@ export function stripIntentArg(args: unknown): unknown {
   *
 - * The description is the SDK's, not a local copy: host-injected tools and
 - * SDK-native tools must present the model with one identical instruction, and
@@ -877,11 +535,7 @@ index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee
 + * Final sanitization applies this same prompt to SDK-native label schemas.
 + * Length guidance is prose only; no schema limit or runtime truncation.
   */
- const INTENT_PROPERTY: JsonSchemaType = Object.freeze<JsonSchemaType>({
-   type: 'string',
-@@ -208,6 +211,30 @@ function isIntentLabelProperty(property: JsonSchemaType | undefined): boolean {
-   );
- }
+@@ -210,2 +213,26 @@ function isIntentLabelProperty(property: JsonSchemaType | undefined): boolean {
  
 +/** Overrides only label prose, preserving property order and schema constraints. */
 +function overrideIntentDescription(def: LCTool): LCTool {
@@ -908,20 +562,12 @@ index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee
 +}
 +
  /** Returns a copy of the def without the intent LABEL property (marker-guarded). */
- function removeIntentParam(def: LCTool): LCTool {
-   const params = def.parameters;
-@@ -393,6 +420,8 @@ export function applyIntentLabels(params: {
-  * advertised: every one when the capability is disabled (the admin kill
-  * switch over SDK-native schemas, which otherwise pay the token cost with
+@@ -395,2 +422,4 @@ export function applyIntentLabels(params: {
   * the feature off), or the explicitly opted-out ones when it is enabled.
 + * Surviving labels receive the host prompt override, including registry-only
 + * definitions used for deferred discovery.
   * Marker-guarded, so a tool's own `intent` business parameter survives.
-  */
- export function sanitizeIntentLabels(params: {
-@@ -426,31 +455,27 @@ export function sanitizeIntentLabels(params: {
-     semanticIntentBlockedToolNames.add(def.name);
-   };
+@@ -428,9 +457,7 @@ export function sanitizeIntentLabels(params: {
    const nextDefs = defs.map((def) => {
 -    if (!shouldStrip(def.name)) {
 -      projectSemanticTrust(def);
@@ -936,7 +582,7 @@ index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee
 +    projectSemanticTrust(sanitized);
 +    if (sanitized !== def) {
        changed = true;
-       const registryEntry = toolRegistry?.get(def.name);
+@@ -438,6 +465,6 @@ export function sanitizeIntentLabels(params: {
        if (registryEntry) {
 -        toolRegistry?.set(def.name, { ...registryEntry, parameters: stripped.parameters });
 +        toolRegistry?.set(def.name, { ...registryEntry, parameters: sanitized.parameters });
@@ -945,7 +591,7 @@ index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee
 -    return stripped;
 +    return sanitized;
    });
-   if (toolRegistry) {
+@@ -445,10 +472,8 @@ export function sanitizeIntentLabels(params: {
      for (const [name, entry] of toolRegistry) {
 -      if (!shouldStrip(name)) {
 -        projectSemanticTrust(entry);
@@ -962,13 +608,257 @@ index a7b945dbf6a45b1b7f40c6045fd993c78c87f7e0..d6134aa04dd1255c403c9ca8bb6101ee
 +      if (sanitized !== entry) {
 +        toolRegistry.set(name, sanitized);
        }
-     }
-   }
+diff --git a/packages/chat/src/components/parts/ProgressText.tsx b/packages/chat/src/components/parts/ProgressText.tsx
+index 8a6a70071104d5e4b7a2179227bd4f62d675a619..a46236284f4c0ca0963b915bd8454ff0ff93eaa8 100644
+--- a/packages/chat/src/components/parts/ProgressText.tsx
++++ b/packages/chat/src/components/parts/ProgressText.tsx
+@@ -25,5 +25,2 @@ const wrapperClass = PROGRESS_TEXT_WRAPPER;
+ 
+-/** `right-0` and `max-w-full` cap the absolutely-positioned line at the message
+- *  column; the label span truncates itself, so overflow stays visible for the
+- *  button's focus ring. */
+ const contentClass = PROGRESS_TEXT_CONTENT;
+@@ -185,3 +182,3 @@ export default function ProgressText({
+     toolExecutionDurationMs >= 50;
+-  /** Pinned beside the chevron: "2.4s (prepared in 0.3s)". */
++  /** Compact intervals: "2.4s (prepared in 0.3s)". */
+   const durationParts =
+@@ -218,2 +215,5 @@ export default function ProgressText({
+         ];
++  const showTimer = isRunning && phaseStartAt != null && localPhaseStart != null;
++  const hasMetadata =
++    hasSubtitle || errorSuffix || timer != null || showTimer || durationParts.length > 0;
+ 
+@@ -224,3 +224,3 @@ export default function ProgressText({
+         variant="disclosure"
+-        className="group/disclosure"
++        className="group/disclosure items-start text-left whitespace-normal"
+         disabled={!hasInput}
+@@ -235,16 +235,8 @@ export default function ProgressText({
+         )}
+-        {/* The label names the card and stays whole; a subtitle can be
+-            arbitrary authored text (a question, an error line), so it takes
+-            ALL of the shrink and ellipsizes instead of pushing the line past
+-            the message column. All, not most: a weighted share left the label
+-            a fraction of a pixel short of its text, and that fraction is
+-            enough for `truncate` to swap its last letters for an ellipsis.
+-            The pair sits in its own shrinking box so the verdict, the
+-            duration and the chevron after it never lose width: the box gives
+-            up the subtitle first, and a label wider than the box truncates at
+-            the box (`max-w-full`), not past the row. */}
+-        <span className="flex min-w-0 items-center gap-2">
++        {/* Phones give the intent its own full-width line. Larger layouts
++            stay inline when they fit, but can wrap inside nested panels too. */}
++        <span className="flex min-w-0 flex-1 flex-col gap-x-2 gap-y-1 sm:flex-initial sm:flex-row sm:flex-wrap sm:items-baseline">
+           <Shimmer
+             active={showShimmer}
+-            className={cn('max-w-full min-w-0 truncate font-medium', hasSubtitle && 'shrink-0')}
++            className="max-w-full min-w-0 font-medium [overflow-wrap:anywhere]"
+           >
+@@ -252,5 +244,21 @@ export default function ProgressText({
+           </Shimmer>
+-          {hasSubtitle && (
+-            <span className="text-text-secondary min-w-0 shrink truncate font-normal">
+-              {subtitle}
++          {hasMetadata && (
++            <span className="text-text-secondary flex max-w-full min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 font-normal [overflow-wrap:anywhere]">
++              {hasSubtitle && <span>{subtitle}</span>}
++              {errorSuffix && <span className="text-status-error">· {verdict || errorSuffix}</span>}
++              {timer}
++              {timer == null && showTimer && <ElapsedTimer start={localPhaseStart} />}
++              {durationParts.map(({ label, phrase, duration }) => (
++                <span key={label} className="text-xs tabular-nums">
++                  <span aria-hidden="true">
++                    {phrase
++                      ? localize(phrase, { 0: localize(duration.key, duration.values) })
++                      : localize(duration.key, duration.values)}
++                  </span>
++                  <span className="sr-only">
++                    {label && `${label} `}
++                    {localize(duration.announcedKey, duration.announcedValues)}
++                  </span>
++                </span>
++              ))}
+             </span>
+@@ -258,39 +266,11 @@ export default function ProgressText({
+         </span>
+-        {/* A reason ("timed out", "exit code 2") already says the call failed,
+-            so it replaces the generic word instead of following it. */}
+-        {errorSuffix && (
+-          <span className="text-status-error shrink-0 font-normal">· {verdict || errorSuffix}</span>
++        {hasInput && (
++          <ChevronDown
++            className={cn(
++              disclosureChevronVariants({ expanded: isExpanded }),
++              'size-4 shrink-0 translate-y-[0.0625rem]',
++            )}
++            aria-hidden="true"
++          />
+         )}
+-        {/* Pinned to the row's end so every row's time and chevron line up. */}
+-        <span className="ms-auto flex shrink-0 items-center gap-2">
+-          {timer}
+-          {timer == null && isRunning && phaseStartAt != null && localPhaseStart != null && (
+-            <ElapsedTimer start={localPhaseStart} />
+-          )}
+-          {durationParts.map(({ label, phrase, duration }) => (
+-            <span
+-              key={label}
+-              className="text-text-secondary shrink-0 text-xs font-normal tabular-nums"
+-            >
+-              <span aria-hidden="true">
+-                {phrase
+-                  ? localize(phrase, { 0: localize(duration.key, duration.values) })
+-                  : localize(duration.key, duration.values)}
+-              </span>
+-              <span className="sr-only">
+-                {label && `${label} `}
+-                {localize(duration.announcedKey, duration.announcedValues)}
+-              </span>
+-            </span>
+-          ))}
+-          {hasInput && (
+-            <ChevronDown
+-              className={cn(
+-                disclosureChevronVariants({ expanded: isExpanded }),
+-                'size-4 shrink-0 translate-y-[0.0625rem]',
+-              )}
+-              aria-hidden="true"
+-            />
+-          )}
+-        </span>
+       </Button>
+diff --git a/packages/chat/src/components/parts/Retrieval.tsx b/packages/chat/src/components/parts/Retrieval.tsx
+index 2aeb6cb777740b42695557e8b93ea779d3af37c5..b6fe293faef5aeb3da145dcd66a7ebb6875be9ca 100644
+--- a/packages/chat/src/components/parts/Retrieval.tsx
++++ b/packages/chat/src/components/parts/Retrieval.tsx
+@@ -506,3 +506,3 @@ export default function RetrievalCall({
+       {!bare && (
+-        <div className="relative my-1.5 flex h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
++        <div className="relative my-1.5 flex min-h-5 shrink-0 items-center gap-2.5" ref={rowRef}>
+           {renderProgress({
+diff --git a/packages/chat/src/components/parts/__tests__/ProgressText.spec.tsx b/packages/chat/src/components/parts/__tests__/ProgressText.spec.tsx
+index c75c81518d8405f4fd5625037d3e6f1386697d2b..486a4957af0d56e51cb506674be2095fe13d3314 100644
+--- a/packages/chat/src/components/parts/__tests__/ProgressText.spec.tsx
++++ b/packages/chat/src/components/parts/__tests__/ProgressText.spec.tsx
+@@ -5,3 +5,3 @@ import i18next from 'i18next';
+ import { createStore, Provider } from 'jotai';
+-import { fireEvent, render, screen } from '@testing-library/react';
++import { act, fireEvent, render, screen } from '@testing-library/react';
+ import type { ComponentProps } from 'react';
+@@ -127,2 +127,35 @@ describe('ProgressText duration', () => {
+ 
++  it('ticks while running and replaces the live timer with measured intervals on completion', () => {
++    jest.useFakeTimers();
++    try {
++      const { rerender } = renderProgressText({ phase: 'running', phaseStartAt: 1_000 });
++      const initial = screen.getByTestId('stream-elapsed').textContent;
++      act(() => jest.advanceTimersByTime(3000));
++      expect(screen.getByTestId('stream-elapsed').textContent).not.toBe(initial);
++      rerender(
++        <ProgressText
++          {...defaults}
++          toolPreparationDurationMs={13_000}
++          toolExecutionDurationMs={1000}
++        />,
++      );
++      expect(screen.queryByTestId('stream-elapsed')).not.toBeInTheDocument();
++      expect(screen.getByText('(prepared in 13s)')).toBeInTheDocument();
++      expect(screen.getByText('1s')).toBeInTheDocument();
++    } finally {
++      jest.useRealTimers();
++    }
++  });
++
++  it('uses an injected timer without also rendering the phase timer', () => {
++    const injectedTimer = 'Injected timer';
++    renderProgressText({
++      phase: 'running',
++      phaseStartAt: 1_000,
++      timer: <span>{injectedTimer}</span>,
++    });
++    expect(screen.getAllByText(injectedTimer)).toHaveLength(1);
++    expect(screen.queryByTestId('stream-elapsed')).not.toBeInTheDocument();
++  });
++
+   it('does not render while the step is still running', () => {
+@@ -206,3 +239,4 @@ describe('ProgressText disclosure', () => {
+   it('renders no chevron or disclosure state without expandable content', () => {
+-    renderProgressText({ hasInput: false });
++    const onClick = jest.fn();
++    renderProgressText({ hasInput: false, onClick });
+ 
+@@ -213,2 +247,4 @@ describe('ProgressText disclosure', () => {
+     expect(button.querySelector('svg')).toBeNull();
++    fireEvent.click(button);
++    expect(onClick).not.toHaveBeenCalled();
+   });
+@@ -216,14 +252,26 @@ describe('ProgressText disclosure', () => {
+ 
+-describe('ProgressText subtitle', () => {
+-  it('gives the subtitle every bit of the shrink so the label keeps its last letters', () => {
+-    renderProgressText({ subtitle: 'HTTP 429 from github.com' });
+-    const label = screen.getByText('Completed foo');
+-    const subtitle = screen.getByText('HTTP 429 from github.com');
+-    expect(label).toHaveClass('shrink-0', 'max-w-full', 'truncate');
+-    expect(subtitle).toHaveClass('shrink', 'min-w-0', 'truncate');
++describe('ProgressText label and metadata', () => {
++  it.each([
++    '核对全部十二项配置检查结果',
++    'Checking all the older configuration entries before creating a complete comparison report. '.repeat(
++      4,
++    ),
++    'CheckEveryConfigurationEntryWithoutBreakingTheOriginalIntent'.repeat(4),
++  ])('preserves the entire label in the disclosure name: %s', (finishedText) => {
++    renderProgressText({
++      finishedText,
++      subtitle: 'Synthetic status details',
++      toolPreparationDurationMs: 13_000,
++      toolExecutionDurationMs: 1000,
++    });
++    expect(screen.getByText(finishedText.trim()).textContent).toBe(finishedText);
++    expect(screen.getByRole('button')).toHaveAccessibleName(
++      `${finishedText.trim()} Synthetic status details Tool call took 1 second Preparation took 13 seconds`,
++    );
+   });
+ 
+-  it('lets a lone label shrink into its own ellipsis', () => {
+-    renderProgressText();
+-    expect(screen.getByText('Completed foo')).not.toHaveClass('shrink-0');
++  it('keeps authentication text ahead of the running intent', () => {
++    renderProgressText({ phase: 'running', authText: 'Authentication required' });
++    expect(screen.getByRole('button')).toHaveAccessibleName('Authentication required');
++    expect(screen.queryByText(defaults.inProgressText)).not.toBeInTheDocument();
+   });
+@@ -240,4 +288,3 @@ describe('ProgressText subtitle', () => {
+     const label = screen.getByText('Completed foo');
+-    expect(label).toHaveClass('shrink-0');
+-    expect(label.nextElementSibling).toBeEmptyDOMElement();
++    expect(label.nextElementSibling?.firstElementChild).toBeEmptyDOMElement();
+   });
+@@ -317,17 +364,2 @@ describe('ProgressText failed reveal', () => {
+ 
+-describe('ProgressText fixed siblings', () => {
+-  it('keeps the verdict, duration and chevron out of the shrinking label box', () => {
+-    const { container } = renderProgressText({
+-      phase: 'completed',
+-      subtitle: 'a very long subtitle',
+-      durationMs: 3500,
+-    });
+-    const box = screen.getByText('Completed foo').parentElement;
+-    expect(box).toHaveClass('min-w-0');
+-    expect(box).toContainElement(screen.getByText('a very long subtitle'));
+-    expect(screen.getByText('3.5s').parentElement).toHaveClass('shrink-0');
+-    expect(container.querySelector('svg')).toHaveClass('shrink-0');
+-  });
+-});
+-
+ describe('ProgressText verdict', () => {
 diff --git a/packages/chat/src/components/parts/rows.ts b/packages/chat/src/components/parts/rows.ts
-index 545817ef11947aa27c9088950795502b3d92c677..693b5be697e8d363d935b803e99a71d98ce49486 100644
+index 8bb910abf841b46d5342b5e2cc4b31ad8861e6f2..6ff0c83fee75ca9d263b30a47b3c7a5457fd03d5 100644
 --- a/packages/chat/src/components/parts/rows.ts
 +++ b/packages/chat/src/components/parts/rows.ts
-@@ -1,11 +1,9 @@
+@@ -1,17 +1,14 @@
  /**
 - * The vertical box of a live tool row: a 20px line with 6px margins above and
 - * below, shared by every call card header and by the streaming cursor a
@@ -982,11 +872,18 @@ index 545817ef11947aa27c9088950795502b3d92c677..693b5be697e8d363d935b803e99a71d9
 -export const TOOL_ROW_CLASSES = 'relative my-1.5 flex h-5 shrink-0 items-center gap-2.5';
 +export const TOOL_ROW_CLASSES = 'relative my-1.5 flex min-h-5 shrink-0 items-center gap-2.5';
  
- /** Leave an 8px gap beside MessageNav's hit area in full-width chat. */
- export const ARTIFACT_ROW_NAV_SPACING = 'pe-3 md:pe-17';
-@@ -19,9 +17,8 @@ export const FOLD_GLYPH_CLASS = 'fold-glyph';
-  * phase check and the 12px cursor dot all center in it, so every row's glyph
-  * sits on the avatar's axis, and with the row's 8px gap every row's text
+-/** The absolutely positioned line inside a tool row, shared by every progress header. */
++/** The wrapper that lets each progress header grow with its text. */
+ export const PROGRESS_TEXT_WRAPPER =
+-  'progress-text-wrapper text-text-secondary relative -mt-[0.046875rem] h-5 w-full leading-5';
++  'progress-text-wrapper text-text-secondary relative -mt-[0.046875rem] min-h-5 min-w-0 w-full leading-5';
+ 
+ /** Caps that line at the message column while leaving the focus ring visible. */
+-export const PROGRESS_TEXT_CONTENT =
+-  'progress-text-content absolute top-0 right-0 left-0 max-w-full overflow-visible whitespace-nowrap';
++export const PROGRESS_TEXT_CONTENT = 'progress-text-content max-w-full overflow-visible';
+ 
+@@ -36,5 +33,4 @@ export const FOLD_GLYPH_CLASS = 'fold-glyph';
   * starts where the header's name does. `min-w` rather than `w`, so a stacked
 - * icon strip can run wider without overlapping its label; never taller than
 - * `TOOL_ROW_CLASSES`, whose `ProgressText` content is absolutely positioned
@@ -994,23 +891,15 @@ index 545817ef11947aa27c9088950795502b3d92c677..693b5be697e8d363d935b803e99a71d9
 + * icon strip can run wider without overlapping its label. The slot stays on
 + * the first line when a tool row wraps. `fold-glyph` is a
   * hook, not a style: see `FOLD_GLYPH_SELECTOR`.
-  */
- export const ROW_GLYPH_SLOT: string = `${FOLD_GLYPH_CLASS} flex h-5 min-w-6 shrink-0 items-center justify-center`;
 diff --git a/packages/chat/src/core/parts/__tests__/activityLabels.spec.ts b/packages/chat/src/core/parts/__tests__/activityLabels.spec.ts
 index 3fba903dda5868a1831fe3b4296a5905cbe4ddc2..26408c30a48751179c99b633de3cecab652fbedc 100644
 --- a/packages/chat/src/core/parts/__tests__/activityLabels.spec.ts
 +++ b/packages/chat/src/core/parts/__tests__/activityLabels.spec.ts
-@@ -6,7 +6,6 @@ import {
-   groupActivityPhases,
-   lastCursorContentIdx,
+@@ -8,3 +8,2 @@ import {
    lastVisibleContentIdx,
 -  offsetActivityPhaseBoundary,
    findActivityLabelMessageIndex,
- } from '../activityLabels';
- 
-@@ -201,15 +200,6 @@ describe('lastCursorContentIdx', () => {
-   });
- });
+@@ -203,11 +202,2 @@ describe('lastCursorContentIdx', () => {
  
 -describe('offsetActivityPhaseBoundary', () => {
 -  it('folds only boundaries covered by the merged first completion part', () => {
@@ -1022,15 +911,11 @@ index 3fba903dda5868a1831fe3b4296a5905cbe4ddc2..26408c30a48751179c99b633de3cecab
 -});
 -
  describe('groupActivityPhases', () => {
-   const text = { type: ContentTypes.TEXT, text: 'final answer' } as TMessageContentParts;
-   const tool = {
 diff --git a/packages/chat/src/core/parts/activityLabels.ts b/packages/chat/src/core/parts/activityLabels.ts
 index 40cd49134c225837aa2e73b81dcc96201bd4786c..210f2893511300feca5226ca7bed4a00ea22ae81 100644
 --- a/packages/chat/src/core/parts/activityLabels.ts
 +++ b/packages/chat/src/core/parts/activityLabels.ts
-@@ -138,15 +138,6 @@ export function getActivityLabelText(part: ActivityLabelPart | undefined): strin
-   return typeof label === 'string' ? label.trim() : '';
- }
+@@ -140,11 +140,2 @@ export function getActivityLabelText(part: ActivityLabelPart | undefined): strin
  
 -/** Maps a completion-local half-open boundary into edited-response coordinates. */
 -export function offsetActivityPhaseBoundary(
@@ -1042,15 +927,11 @@ index 40cd49134c225837aa2e73b81dcc96201bd4786c..210f2893511300feca5226ca7bed4a00
 -}
 -
  /**
-  * Mirrors `SUBSTANTIAL_TEXT_CHARS` in `activityPhases/runtime.ts`. Short
-  * commentary belongs inside a phase; a real block of prose ends one.
 diff --git a/tool-intent-spec.md b/tool-intent-spec.md
 index 5286de44a23fc0500835752edd7bcc16de00fb0c..0248af2fdcfe1c573a2e04b869953bc7dff30f4d 100644
 --- a/tool-intent-spec.md
 +++ b/tool-intent-spec.md
-@@ -116,6 +116,33 @@ const INTENT_PROPERTY: JsonSchemaType = Object.freeze<JsonSchemaType>({
- 
- The "distinguish siblings" clause is load-bearing for the reference case. Without it, models emit identical intents for parallel calls to the same tool.
+@@ -118,2 +118,29 @@ The "distinguish siblings" clause is load-bearing for the reference case. Withou
  
 +#### Fork override: concise, user-language labels
 +
@@ -1080,5 +961,3 @@ index 5286de44a23fc0500835752edd7bcc16de00fb0c..0248af2fdcfe1c573a2e04b869953bc7
 +the vendored SDK.
 +
  ### 4.2 Outcome, and who authors it
- 
- The model cannot know the outcome at call time, so `outcome` is never a model-authored arg. Two sources, in precedence order:

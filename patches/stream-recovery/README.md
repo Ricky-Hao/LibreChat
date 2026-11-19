@@ -1,6 +1,6 @@
 # 前台恢复与 terminal recovery budget
 
-状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`keep`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 保留 frozen-OPEN 恢复、attachment/epoch fence、缺失与读取失败的区分、online rearm，以及默认/自定义/零预算和已有 stream 上的晚到策略。
 
@@ -21,9 +21,11 @@
 
 上游 reconnect 只覆盖部分合同；旧 PR 固定 MAX_RETRIES 不能替代配置与晚到策略。恢复及预算共用 resumable 状态机，合为一组。
 
+v0.8.9 保留上游 steering 终态对账。fork 继续处理暂时不可读的历史、断线后晚到的终态和用户配置的恢复预算。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

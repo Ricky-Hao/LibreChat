@@ -219,7 +219,7 @@ index 9553e7a702b27b7f21e784b0c7c0bef58be4621f..998f53ae50735799714072a8b292eb12
        queuedSendLockTimeoutMs: ui?.queuedSendLockTimeoutMs,
        queuedTurnReconciliationTimeoutMs: ui?.queuedTurnReconciliationTimeoutMs,
 diff --git a/librechat.example.yaml b/librechat.example.yaml
-index cd3af21ceab69967f0cfb0b1dd9e0af239ab866e..8054ad41b9d475f43979f991c631a790f31710fc 100644
+index 1e6f6a946ec47028c7dfc4334ea2675e6bc8525f..f4cb49621dbbfa7d37b476a43c549012a84b1a73 100644
 --- a/librechat.example.yaml
 +++ b/librechat.example.yaml
 @@ -51,6 +51,11 @@ projects:
@@ -310,10 +310,10 @@ index c9e68b617bc0ac84959667278991fef4185b865e..5c768b7a0daabdb348f71e662e80b200
   * Retrieves the balance configuration object
   * */
 diff --git a/packages/chat/src/core/__fixtures__/resumable.ts b/packages/chat/src/core/__fixtures__/resumable.ts
-index 1c6bd0d85b1e54bebdd78125b90fd735ee33387f..b35cc1408af845887c1ae9c8b615da0ee3ac85d7 100644
+index e3ce5d129c0e6746f8ae2a2e8bdf79acb7eb016e..9f31b183df091f6d9d745f29554e6d60f52b99f3 100644
 --- a/packages/chat/src/core/__fixtures__/resumable.ts
 +++ b/packages/chat/src/core/__fixtures__/resumable.ts
-@@ -159,7 +159,6 @@ export const createHost = (
+@@ -160,7 +160,6 @@ export const createHost = (
        findSteerTarget: jest.fn(() => -1),
        applyActivityLabel: jest.fn((message) => message),
        findActivityLabelTarget: jest.fn(() => -1),
@@ -432,7 +432,7 @@ index bb64390d6be2ed0f2f760ae8ac725514b13c9674..32f873942b320fce8bb86025aeac8f7d
  });
  
 diff --git a/packages/chat/src/core/__tests__/terminal.spec.ts b/packages/chat/src/core/__tests__/terminal.spec.ts
-index 548b8df8596ce9a323eb34a7397fc65e642ca737..565b17856344f9bcbb02681eeac2ca11aa9007be 100644
+index f26401e859166a4c4d9542e8f9e8f264dcde5f56..9894290834ecd3f6a4b39e0897170e3ba78f647d 100644
 --- a/packages/chat/src/core/__tests__/terminal.spec.ts
 +++ b/packages/chat/src/core/__tests__/terminal.spec.ts
 @@ -11,6 +11,7 @@ import {
@@ -463,8 +463,8 @@ index 548b8df8596ce9a323eb34a7397fc65e642ca737..565b17856344f9bcbb02681eeac2ca11
      expect(host.subscribe).toHaveBeenCalledWith(
        expect.objectContaining({ streamId: 'c-1', isResume: true, generationCreatedAt: 2000 }),
      );
-@@ -150,15 +153,39 @@ describe('reconcileGenerationLifecycle', () => {
-     expect(run.reconnectAttempt).toBe(0);
+@@ -173,15 +176,39 @@ describe('reconcileGenerationLifecycle', () => {
+     );
    });
  
 -  it('reports an error when history could not be read for a completed run', async () => {
@@ -666,7 +666,7 @@ index c423df933d2cbac74a3ddb6300bc0274384bc528..9478ccdb41e8b9045b13c7dc8124a766
  
    // 404 → job completed & was cleaned up; messages are persisted in DB.
 diff --git a/packages/chat/src/core/resumable/frames.ts b/packages/chat/src/core/resumable/frames.ts
-index d6796e224edeca26b5efba6f2a21b270be3a1cf0..07d63650b493f99f886f018224d9f27467d0337b 100644
+index b83928a2223dfb462423337cf4f3571dbbcbcc1b..df8eb6cf9f07d786f18c2cf36ee56e79347b4dec 100644
 --- a/packages/chat/src/core/resumable/frames.ts
 +++ b/packages/chat/src/core/resumable/frames.ts
 @@ -51,6 +51,7 @@ async function handleFinal(ctx: StreamContext, data: ChatFinalFrame): Promise<vo
@@ -678,10 +678,10 @@ index d6796e224edeca26b5efba6f2a21b270be3a1cf0..07d63650b493f99f886f018224d9f274
      aborted: data.aborted,
      conversationId: data.conversation?.conversationId,
 diff --git a/packages/chat/src/core/resumable/host.ts b/packages/chat/src/core/resumable/host.ts
-index 23a5902abf4874ea004668ed5928a872523d7c03..d4b80cb7ebf4d80eb08ed4a1fe21130ee3ae8d25 100644
+index 2c51954db0cfa90279499afbddba9cc916543cab..2b225d119fb42dded26fe09a05c10c5c1ec95b5f 100644
 --- a/packages/chat/src/core/resumable/host.ts
 +++ b/packages/chat/src/core/resumable/host.ts
-@@ -36,6 +36,8 @@ export interface PageVisibility {
+@@ -37,6 +37,8 @@ export interface PageVisibility {
    isVisible: () => boolean;
    /** Calls `listener` on every visibility change; returns the unsubscribe. */
    subscribe: (listener: () => void) => () => void;
@@ -690,7 +690,7 @@ index 23a5902abf4874ea004668ed5928a872523d7c03..d4b80cb7ebf4d80eb08ed4a1fe21130e
  }
  
  /** The document's own visibility. */
-@@ -45,6 +47,10 @@ export const documentVisibility: PageVisibility = {
+@@ -46,6 +48,10 @@ export const documentVisibility: PageVisibility = {
      document.addEventListener('visibilitychange', listener);
      return () => document.removeEventListener('visibilitychange', listener);
    },
@@ -701,7 +701,7 @@ index 23a5902abf4874ea004668ed5928a872523d7c03..d4b80cb7ebf4d80eb08ed4a1fe21130e
  };
  
  /** The status route's answer for a conversation's generation. */
-@@ -97,6 +103,8 @@ export interface SubscriptionHost {
+@@ -98,6 +104,8 @@ export interface SubscriptionHost {
    fetchStatus: FetchStreamStatus;
    /** Attaches a fresh subscription to `target`; how a subscription re-attaches itself. */
    subscribe: (target: SubscriptionTarget) => void;
@@ -855,7 +855,7 @@ index 06b4f5736a44f8a1eab00ce4d5223b74af26c607..b9fecedba6574fb010270640948ef668
    // Clear reconnect timeout if submission is cleared
    run.clearReconnectTimeout();
 diff --git a/packages/chat/src/core/resumable/reconcile.ts b/packages/chat/src/core/resumable/reconcile.ts
-index a0ff8003fdcb59e36ba673132be75a2d97dec47e..e549e28f54eee1eec3db1406e148cc196c3a5a61 100644
+index 2b85bc4f79e7048af30dd4d32618855048d033a1..721fd92e10cc017f4a26526dfd0f6a30dc56ccd2 100644
 --- a/packages/chat/src/core/resumable/reconcile.ts
 +++ b/packages/chat/src/core/resumable/reconcile.ts
 @@ -4,12 +4,14 @@ import type { StreamStatusResponse } from './host';
@@ -997,7 +997,7 @@ index a0ff8003fdcb59e36ba673132be75a2d97dec47e..e549e28f54eee1eec3db1406e148cc19
    const authoritativeValues = [
      ...(persistedMessages ?? []),
      ...(status?.resumeState?.aggregatedContent ?? status?.aggregatedContent ?? []),
-@@ -200,15 +164,12 @@ export async function reconcileGenerationLifecycle(
+@@ -206,15 +170,12 @@ export async function reconcileGenerationLifecycle(
    });
    host.pane.setIsSubmitting(false);
    host.pane.setShowStopButton(false);
@@ -1227,10 +1227,10 @@ index 83cac50ac3416530464b0bf7c38588f2d528dbb1..02401a097f8a405898d5a9a2a0996a90
          dispatch({ type: 'open' });
        });
 diff --git a/packages/data-provider/src/config.spec.ts b/packages/data-provider/src/config.spec.ts
-index 97927ecfe00767e14e3808fb57c5f972f4c5df5f..731e1e2776a7827526a3b1b5f6f5cdcd0b2509f1 100644
+index 795aad4e43d19b4c6cf6929d21444a9803f38843..ec5e312945413f4ade0b706f055277b5be97285f 100644
 --- a/packages/data-provider/src/config.spec.ts
 +++ b/packages/data-provider/src/config.spec.ts
-@@ -424,6 +424,41 @@ describe('passkey enrollment config', () => {
+@@ -456,6 +456,41 @@ describe('passkey enrollment config', () => {
    });
  });
  
@@ -1273,10 +1273,10 @@ index 97927ecfe00767e14e3808fb57c5f972f4c5df5f..731e1e2776a7827526a3b1b5f6f5cdcd
    it('ships the exact-count budget a deployment can raise or lower', () => {
      /** The save path tokenizes a stopped turn's retained tool results to add an
 diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
-index 39199452d3162b89aca2e82d43d732a5200f37fa..d2f15429e81fa6f6a33449b1b089b7955a8f9db5 100644
+index a97475f9aa58fdfca81a795af07d1a0973ad84b7..232b3925c52da83c7b0f827f458735cf56e46bd1 100644
 --- a/packages/data-provider/src/config.ts
 +++ b/packages/data-provider/src/config.ts
-@@ -3741,6 +3741,7 @@ export type TStartupConfig = {
+@@ -4022,6 +4022,7 @@ export type TStartupConfig = {
     * is advertised. */
    codeWorkspaceInheritanceVersion?: typeof CODE_WORKSPACE_INHERITANCE_VERSION;
    interface?: TInterfaceConfig;
@@ -1284,7 +1284,7 @@ index 39199452d3162b89aca2e82d43d732a5200f37fa..d2f15429e81fa6f6a33449b1b089b795
    turnstile?: TTurnstileConfig;
    balance?: TBalanceConfig;
    transactions?: TTransactionsConfig;
-@@ -4489,3 +4490,17 @@ export type TMessageReadsConfig = z.infer<typeof messageReadsConfigSchema>;
+@@ -4800,3 +4801,17 @@
 +export const DEFAULT_TERMINAL_RECOVERY_MAX_RETRIES = 5;
 +
 +export const resumableStreamsSchema = z
@@ -1300,11 +1300,11 @@ index 39199452d3162b89aca2e82d43d732a5200f37fa..d2f15429e81fa6f6a33449b1b089b795
 +  .prefault({});
 +
  export const configSchema = z.object({
+   persistence: persistenceConfigSchema,
    version: z.string(),
-   telemetry: telemetrySchema.optional(),
-@@ -4499,6 +4514,7 @@ export const configSchema = z.object({
+@@ -4828,6 +4843,7 @@ export const configSchema = z.object({
+     .strict()
      .optional(),
-   cache: z.boolean().default(true),
    projects: chatProjectsConfigSchema,
 +  resumableStreams: resumableStreamsSchema,
    ocr: ocrSchema.optional(),

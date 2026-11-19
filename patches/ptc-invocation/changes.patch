@@ -1,5 +1,5 @@
 diff --git a/packages/api/src/agents/handlers.spec.ts b/packages/api/src/agents/handlers.spec.ts
-index b36a490783e00a0da8e5775213bb5b438a3dd79c..12314931f85d7741e453a0a40f053150355d0095 100644
+index b38a2d621bc1a6c7f99cd59e39aad2aa2a9151d1..4f62d984d2ac3408782fb95548ce93a8ca9b1ff4 100644
 --- a/packages/api/src/agents/handlers.spec.ts
 +++ b/packages/api/src/agents/handlers.spec.ts
 @@ -1,3 +1,4 @@
@@ -59,7 +59,7 @@ index b36a490783e00a0da8e5775213bb5b438a3dd79c..12314931f85d7741e453a0a40f053150
        const capturedArgs: unknown[] = [];
        const tool = createMockTool(Constants.BASH_PROGRAMMATIC_TOOL_CALLING, [], {
 diff --git a/packages/api/src/agents/handlers.ts b/packages/api/src/agents/handlers.ts
-index f76707eb15d62d1f9b2aae05b557edf0c3bd4cd8..c30537c77c157d45b26ed1feec325c02836da1d5 100644
+index bd5a51ae91fe9a836e196b37523e3f46e7255160..7516804d063362da0376b59c28007d40f312fd7d 100644
 --- a/packages/api/src/agents/handlers.ts
 +++ b/packages/api/src/agents/handlers.ts
 @@ -1,6 +1,6 @@
@@ -70,7 +70,7 @@ index f76707eb15d62d1f9b2aae05b557edf0c3bd4cd8..c30537c77c157d45b26ed1feec325c02
  import {
    logger,
    normalizeSkillFrontmatterKeys,
-@@ -142,17 +142,12 @@ import {
+@@ -143,17 +143,12 @@ import {
    contentFilterModelBoundBlockResponse,
    isContentFilterError,
  } from '~/middleware/contentFilter';
@@ -89,7 +89,7 @@ index f76707eb15d62d1f9b2aae05b557edf0c3bd4cd8..c30537c77c157d45b26ed1feec325c02
  import { mergeCodeFilesIntoContext } from './codeFilesSession';
  import { toolValidationFeedback } from './validationFeedback';
  import { explainWorkspacePathRejection } from '~/code/paths';
-@@ -3250,37 +3245,6 @@ function toolDeclaresRunInBackgroundParam(tool: StructuredToolInterface): boolea
+@@ -3252,37 +3247,6 @@ function toolDeclaresRunInBackgroundParam(tool: StructuredToolInterface): boolea
    );
  }
  
@@ -128,15 +128,15 @@ index f76707eb15d62d1f9b2aae05b557edf0c3bd4cd8..c30537c77c157d45b26ed1feec325c02
    base: Record<string, unknown> | undefined,
    loaded: Record<string, unknown> | undefined,
 diff --git a/packages/api/src/agents/ptc.ts b/packages/api/src/agents/ptc.ts
-index aaa47d274f6c034c88e5a14555bdeb7c9647f6f7..249355b2590aa8857784dd8afc482692d0521a48 100644
+index a4849576373b7522cb7a1595d05c910e33706acb..3c4e6b0244da3b0297d1862fe26724625a8ff530 100644
 --- a/packages/api/src/agents/ptc.ts
 +++ b/packages/api/src/agents/ptc.ts
 @@ -1,3 +1,4 @@
 +import { PROGRAMMATIC_TOOL_INPUT } from '@librechat/agents';
  import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
  import type { PtcToolCallEvent } from 'librechat-data-provider';
- 
-@@ -155,7 +156,15 @@ export function instrumentPtcToolMap({
+ import type { ToolExecutionIdentity } from '~/telemetry/tools';
+@@ -161,7 +162,15 @@ export function instrumentPtcToolMap({
                call_id: callId,
                name,
                status: 'running',
