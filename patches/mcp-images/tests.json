@@ -7,11 +7,13 @@
       "requires": [
         "api/package.json",
         "api/app/clients/specs/BaseClient.test.js",
+        "api/server/services/Endpoints/agents/mcpImages.spec.js",
         "api/server/services/MCP.spec.js"
       ],
       "runner": "jest",
       "files": [
         "api/app/clients/specs/BaseClient.test.js",
+        "api/server/services/Endpoints/agents/mcpImages.spec.js",
         "api/server/services/MCP.spec.js"
       ]
     },
