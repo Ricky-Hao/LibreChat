@@ -1,22 +1,16 @@
 diff --git a/README.md b/README.md
-index 67dd3b4393b6c3017924d50e4b09edcdabd19654..41fd1cbc353e0552f8bbc62de0212827d07a8495 100644
+index 30ea086e024aa4c3ebb35f7156d556ceb9824de7..110a8d06edd87fa4f38a89838111e40947e15dc9 100644
 --- a/README.md
 +++ b/README.md
-@@ -85,6 +85,7 @@ Read the [full v0.8.8 changelog](https://www.librechat.ai/changelog/v0.8.8).
-   - Open-Source & Self-Hostable: powered by [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter)
- 
+@@ -84,2 +84,3 @@ Read the [full v0.8.9 changelog](https://www.librechat.ai/changelog/v0.8.9).
  - 🔦 **Agents & Tools Integration**:  
 +  - [External task callbacks](docs/task-callbacks.md): optionally resume an Agent conversation when an external executor delivers its terminal result.
    - **[LibreChat Agents](https://www.librechat.ai/docs/features/agents)**:
-     - No-Code Custom Assistants: Build specialized, AI-driven helpers
-     - Agent Marketplace: Discover and deploy community-built agents
 diff --git a/api/app/clients/tools/manifest.json b/api/app/clients/tools/manifest.json
 index c6ffa08c1c35a260ed1a5d7a407841727b338d3c..79e53e67bbfe9634bf66f884abd1c7f8e9b3bcbf 100644
 --- a/api/app/clients/tools/manifest.json
 +++ b/api/app/clients/tools/manifest.json
-@@ -91,6 +91,13 @@
-     "agentsOnly": true,
-     "authConfig": []
+@@ -93,2 +93,9 @@
    },
 +  {
 +    "name": "External Task Callback",
@@ -26,15 +20,11 @@ index c6ffa08c1c35a260ed1a5d7a407841727b338d3c..79e53e67bbfe9634bf66f884abd1c7f8
 +    "authConfig": []
 +  },
    {
-     "name": "Stable Diffusion",
-     "pluginKey": "stable-diffusion",
 diff --git a/api/app/clients/tools/util/handleTools.js b/api/app/clients/tools/util/handleTools.js
-index 9bba962364edb25af5916252bd20bcabdac7a7ef..d38b7da6c51a351502c57ac40f876c45be76db25 100644
+index fa8c3cad2eca112799042d2a3f3081db887f19b5..34e6fd8a7901b48dbea5ce53de837127fca05502 100644
 --- a/api/app/clients/tools/util/handleTools.js
 +++ b/api/app/clients/tools/util/handleTools.js
-@@ -23,8 +23,10 @@ const {
-   SET_MEMORY_TOOL_NAME,
-   buildWebSearchContext,
+@@ -25,4 +25,6 @@ const {
    DELETE_MEMORY_TOOL_NAME,
 -  createAskUserQuestionTool,
 -  ASK_USER_QUESTION_TOOL_NAME,
@@ -43,11 +33,7 @@ index 9bba962364edb25af5916252bd20bcabdac7a7ef..d38b7da6c51a351502c57ac40f876c45
 +  encryptV2,
 +  decryptV2,
    resolveWebSearchSSRFAgents,
-   buildWebSearchDynamicContext,
-   codeExecutionAuthHeaders,
-@@ -427,8 +429,15 @@ const loadTools = async ({
-         });
-       };
+@@ -429,4 +431,11 @@ const loadTools = async ({
        continue;
 -    } else if (tool === ASK_USER_QUESTION_TOOL_NAME) {
 -      requestedTools[tool] = async () => createAskUserQuestionTool();
@@ -61,36 +47,24 @@ index 9bba962364edb25af5916252bd20bcabdac7a7ef..d38b7da6c51a351502c57ac40f876c45
 +          decrypt: decryptV2,
 +        });
        continue;
-     } else if (tool === SET_MEMORY_TOOL_NAME || tool === DELETE_MEMORY_TOOL_NAME) {
-       requestedTools[tool] = () =>
 diff --git a/api/server/routes/agents/index.js b/api/server/routes/agents/index.js
-index e1ea153581d24b515ea2568874d2b0666653c8dd..41ae51cf9f78f3704410ce425cb0ee23602b4dda 100644
+index 48dfd4a3bf4b3912b0301a730f5cf20bac7fc6aa..e9613b319dcf71e33cb77d23955a6a8c37406ad2 100644
 --- a/api/server/routes/agents/index.js
 +++ b/api/server/routes/agents/index.js
-@@ -153,6 +153,10 @@ router.use('/v1/skills', skills);
-  */
- router.use('/v1', openai);
+@@ -162,2 +162,6 @@ router.use('/v1', openai);
  
 +router.post('/task-callbacks', (req, res, next) =>
 +  require('~/server/services/Agents/triggers').taskCallbackHandler(req, res, next),
 +);
 +
  router.use(requireJwtAuth);
- // Capture the short-lived trigger identity immediately after authentication. Downstream
- // middleware reads this stable decision instead of re-verifying an expired token.
-@@ -785,7 +789,8 @@ router.post('/chat/abort', chatConfigMiddleware, async (req, res, next) => {
-          * reconciliation frame instead of an unsafe normal FINAL. */
-         beforePublish: async (pendingAbortResult) => {
+@@ -817,3 +821,4 @@ router.post('/chat/abort', chatConfigMiddleware, async (req, res, next) => {
            const persistenceErrors = [];
 -          const { jobData, text, content } = pendingAbortResult;
 +          const { jobData, text, content, userSubmittedPaths, userSubmittedMessageFieldPaths } =
 +            pendingAbortResult;
            /** `abortJob` treats a delivered `created` event as a real turn even
-            * when every streamed part is filtered out (for example, an
-            * interrupt before the model's first non-whitespace token). Its
-@@ -843,14 +848,8 @@ router.post('/chat/abort', chatConfigMiddleware, async (req, res, next) => {
-               unfinished: abortPersistencePlan.responseUnfinished,
-               error: false,
+@@ -875,10 +880,4 @@ router.post('/chat/abort', chatConfigMiddleware, async (req, res, next) => {
                isCreatedByUser: false,
 -              ...(Array.isArray(jobData.userSubmittedPaths) &&
 -                jobData.userSubmittedPaths.length > 0 && {
@@ -103,15 +77,11 @@ index e1ea153581d24b515ea2568874d2b0666653c8dd..41ae51cf9f78f3704410ce425cb0ee23
 +              userSubmittedPaths,
 +              userSubmittedMessageFieldPaths,
                /** The run published its compact context meta onto the job ahead
-                * of each model call; the stopped response must carry it so the
-                * next turn seeds the same tiers. A job with none unsets what an
 diff --git a/api/server/services/Agents/triggers.js b/api/server/services/Agents/triggers.js
-index 3bbf64be6ec38db68bf247d10644bd7acb233f02..04a14afaa014cbdb396e20b33db778ece50392db 100644
+index 7b3890452648a633347f954bfa51c1a2328c7c6b..be35db89895ff6e89613fb63cb46ef0fbb78e75c 100644
 --- a/api/server/services/Agents/triggers.js
 +++ b/api/server/services/Agents/triggers.js
-@@ -11,8 +11,11 @@ const {
-   createAgentQueuedTurnLifecycle,
-   AGENT_QUEUED_TURN_SOURCE,
+@@ -14,4 +14,7 @@ const {
    GenerationJobManager,
 +  createTaskCallbackLifecycle,
 +  TASK_CALLBACK_SOURCE,
@@ -119,11 +89,7 @@ index 3bbf64be6ec38db68bf247d10644bd7acb233f02..04a14afaa014cbdb396e20b33db778ec
  const methods = require('~/models');
 +const { getAppConfig } = require('~/server/services/Config/app');
  
- const getGenerationAdmissionEvidence = (userId, clientRequestId, streamId, conversationId) =>
-   GenerationJobManager.getGenerationAdmissionEvidence(
-@@ -56,6 +59,12 @@ const eventActorAdapter = createAgentEventContinueResolver({
-   getGenerationJob: (conversationId) => GenerationJobManager.getJob(conversationId),
- });
+@@ -59,2 +62,8 @@ const eventActorAdapter = createAgentEventContinueResolver({
  let service;
 +const taskCallbacks = createTaskCallbackLifecycle({
 +  methods,
@@ -132,45 +98,27 @@ index 3bbf64be6ec38db68bf247d10644bd7acb233f02..04a14afaa014cbdb396e20b33db778ec
 +  enqueue: (...args) => service.enqueue(...args),
 +});
  const queuedTurnLifecycle = createAgentQueuedTurnLifecycle({
-   methods,
-   getGenerationJob: (conversationId) => GenerationJobManager.getJob(conversationId),
-@@ -80,18 +89,21 @@ service = createAgentTriggerService({
-       [SUBAGENT_COMPLETION_SOURCE, subagentCompletionAdapter],
-       [BACKGROUND_TOOL_COMPLETION_SOURCE, backgroundToolCompletionAdapter],
+@@ -86,2 +95,3 @@ service = createAgentTriggerService({
        [AGENT_QUEUED_TURN_SOURCE, queuedTurnLifecycle.prepareContinue],
 +      [TASK_CALLBACK_SOURCE, taskCallbacks.prepareContinue],
      ]),
-   }),
- });
- 
- const initializeAgentTriggerService = async (options) => {
+@@ -92,2 +102,3 @@ const initializeAgentTriggerService = async (options) => {
    await service.initialize(options);
 +  await taskCallbacks.initialize();
    await queuedTurnLifecycle.initialize({
-     maxIdleIntervalMs: options?.idlePolling?.queuedTurnMaxIntervalMs,
-   });
- };
- 
+@@ -98,2 +109,3 @@ const initializeAgentTriggerService = async (options) => {
  const stopAgentTriggerService = async () => {
 +  await taskCallbacks.stop();
    await queuedTurnLifecycle.stop();
-   await service.stop();
- };
-@@ -101,6 +113,7 @@ const purgeAgentTriggerDeliveriesForUser = async (userId) => {
- };
- 
- module.exports = {
+@@ -108,2 +120,3 @@ module.exports = {
+   isAgentTriggerServiceReady: service.isReady,
 +  taskCallbackHandler: taskCallbacks.handler,
    initializeAgentTriggerService,
-   stopAgentTriggerService,
-   dispatchAgentTrigger: service.dispatch,
 diff --git a/api/server/services/Agents/triggers.spec.js b/api/server/services/Agents/triggers.spec.js
-index ed99ccab28542d5a70e0f6dd18956ab3801d1d41..335c9abdc856d51a676582986325104cb3643498 100644
+index c41b5e88f1e89e7fcbb2c56cc0d6e958a6035b81..ecc600b0f89ad45fca6f3aba1650dd757b82a3e8 100644
 --- a/api/server/services/Agents/triggers.spec.js
 +++ b/api/server/services/Agents/triggers.spec.js
-@@ -16,6 +16,12 @@ const mockQueuedTurnLifecycle = {
-   schedule: jest.fn(),
-   cancel: jest.fn(),
+@@ -18,2 +18,8 @@ const mockQueuedTurnLifecycle = {
  };
 +const mockTaskCallbacks = {
 +  prepareContinue: jest.fn(),
@@ -179,75 +127,47 @@ index ed99ccab28542d5a70e0f6dd18956ab3801d1d41..335c9abdc856d51a676582986325104c
 +  stop: jest.fn(),
 +};
  
- jest.mock('@librechat/api', () => ({
-   createCheckpointDeletionReclaimer: jest.fn((getJobs) => () => getJobs('owner', 'tenant')),
-@@ -27,6 +33,8 @@ jest.mock('@librechat/api', () => ({
-     mockCreateBackgroundToolCompletionWakeupResolver(...args),
-   createSubagentCompletionWakeupResolver: jest.fn(() => jest.fn()),
+@@ -29,2 +35,4 @@ jest.mock('@librechat/api', () => ({
    createAgentQueuedTurnLifecycle: jest.fn(() => mockQueuedTurnLifecycle),
 +  createTaskCallbackLifecycle: jest.fn(() => mockTaskCallbacks),
 +  TASK_CALLBACK_SOURCE: 'external-task-callback',
    BACKGROUND_TOOL_COMPLETION_SOURCE: 'background-tool-completion',
-   SUBAGENT_COMPLETION_SOURCE: 'subagent-completion',
-   AGENT_QUEUED_TURN_SOURCE: 'agent-queued-turn',
-@@ -36,6 +44,7 @@ jest.mock('@librechat/api', () => ({
- jest.mock('~/models', () => ({
-   isAgentTriggerPrincipalActive: jest.fn(),
- }));
+@@ -42,2 +50,3 @@ jest.mock('../ChannelAuthority', () => {
+ });
 +jest.mock('~/server/services/Config/app', () => ({ getAppConfig: jest.fn() }));
  
- describe('agent trigger service composition', () => {
-   beforeEach(() => {
-@@ -96,6 +105,7 @@ describe('agent trigger service composition', () => {
-       options,
-     );
+@@ -115,2 +124,3 @@ describe('agent trigger service composition', () => {
      expect(mockQueuedTurnLifecycle.initialize).toHaveBeenCalledWith({ maxIdleIntervalMs: 60_000 });
 +    expect(mockTaskCallbacks.initialize).toHaveBeenCalledTimes(1);
    });
- 
-   it('injects the configured background completion batch size', async () => {
 diff --git a/api/server/services/ToolService.js b/api/server/services/ToolService.js
-index b6b9f4c96a086f0c4b09bc8d5a9f8bdfc0a5d4f2..6847f8cf6bcd5403ff9b2b1b26ca90bb81e72c39 100644
+index 76a6bf903620e9c864b41443f5b2653cf3cba9be..4fc6d8c911774612b27494476b63104dc5029582 100644
 --- a/api/server/services/ToolService.js
 +++ b/api/server/services/ToolService.js
-@@ -44,7 +44,7 @@ const {
-   isContentFilterError,
-   isFileAuthoringToolDefinition,
+@@ -44,3 +44,3 @@ const {
    normalizeActionToolName,
 -  ASK_USER_QUESTION_TOOL_NAME,
 +  nativeAgentToolCapability,
    splitMCPToolKey,
-   buildServerNameAliases,
-   findShadowedServerNames,
-@@ -935,8 +935,8 @@ async function loadToolDefinitionsWrapper({
-     if (tool === Tools.memory) {
-       return checkCapability(AgentCapabilities.memory);
+@@ -936,4 +936,4 @@ async function loadToolDefinitionsWrapper({
      }
 -    if (tool === ASK_USER_QUESTION_TOOL_NAME) {
 -      return checkCapability(AgentCapabilities.ask_user_question);
 +    if (nativeAgentToolCapability(tool)) {
 +      return checkCapability(nativeAgentToolCapability(tool));
      }
-     if (isActionTool(tool)) {
-       return actionsEnabled;
-@@ -1784,8 +1784,8 @@ async function loadAgentTools({
-       return includesWebSearch;
-     } else if (tool === Tools.memory) {
+@@ -1733,4 +1733,4 @@ async function loadAgentTools({
        return checkCapability(AgentCapabilities.memory);
 -    } else if (tool === ASK_USER_QUESTION_TOOL_NAME) {
 -      return checkCapability(AgentCapabilities.ask_user_question);
 +    } else if (nativeAgentToolCapability(tool)) {
 +      return checkCapability(nativeAgentToolCapability(tool));
      } else if (isActionTool(tool)) {
-       return actionsEnabled;
-     } else if (tool?.includes(Constants.mcp_delimiter)) {
 diff --git a/api/server/services/__tests__/ToolService.spec.js b/api/server/services/__tests__/ToolService.spec.js
-index 0872784d0644760a77e0b1e0afdbb8984e08f6ee..c7cebb3adf843b51068d38d00803edb069f6ace7 100644
+index baf93a0fe09295b0bc94a33eb40a8cf14130747d..c016ceb1e088ece5d5dd206b0db5a98809dd6f74 100644
 --- a/api/server/services/__tests__/ToolService.spec.js
 +++ b/api/server/services/__tests__/ToolService.spec.js
-@@ -3918,6 +3918,74 @@ describe('ToolService - Action Capability Gating', () => {
-       expect([...result.configurable.ptcToolMap.keys()]).toEqual(['programmatic_tool']);
-     });
+@@ -4076,2 +4076,70 @@ describe('ToolService - Action Capability Gating', () => {
  
 +    it.each([
 +      { label: 'explicit bound opt-in', allowed: true },
@@ -318,41 +238,27 @@ index 0872784d0644760a77e0b1e0afdbb8984e08f6ee..c7cebb3adf843b51068d38d00803edb0
 +    });
 +
      it('intersects PTC loading with the SDK live caller projection', async () => {
-       const capabilities = [
-         AgentCapabilities.tools,
 diff --git a/api/server/services/start/tools.js b/api/server/services/start/tools.js
 index eff91036734c9ef4637565f9b4ffc26f9dcfbb4c..fdfe5d6dc433c8431fb98df325324cb3e9e86c76 100644
 --- a/api/server/services/start/tools.js
 +++ b/api/server/services/start/tools.js
-@@ -11,6 +11,7 @@ const {
-   oaiToolkit,
-   geminiToolkit,
+@@ -13,2 +13,3 @@ const {
    createAskUserQuestionTool,
 +  createTaskCallbackTool,
    toToolParameters,
- } = require('@librechat/api');
- const { toolkits } = require('~/app/clients/tools/manifest');
-@@ -90,6 +91,7 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
-   const basicToolInstances = [
-     new Calculator(),
+@@ -92,2 +93,3 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
      createAskUserQuestionTool(),
 +    createTaskCallbackTool(),
      ...Object.values(oaiToolkit),
-     ...Object.values(geminiToolkit),
-   ];
 diff --git a/client/src/components/Chat/Messages/Content/Markdown.tsx b/client/src/components/Chat/Messages/Content/Markdown.tsx
-index 521549ab1e13c8033faf5150af58fa1f648f7e86..fead6aa213f7c9a5dc411a2536e6e2d795ee5a7b 100644
+index 0e2e212b59e6e09795d928ccdae4c5a938b252cb..254b1de8db89989b6dfa8b800d3fb7e62f0e3d71 100644
 --- a/client/src/components/Chat/Messages/Content/Markdown.tsx
 +++ b/client/src/components/Chat/Messages/Content/Markdown.tsx
-@@ -1,4 +1,5 @@
+@@ -1,2 +1,3 @@
  import React, { memo, useRef, useEffect } from 'react';
 +import { redactTaskCallbackIds } from 'librechat-data-provider';
- import { getRemarkPlugins, getRehypePlugins, getMarkdownComponents } from './markdownConfig';
- import { useMessagePartsHost } from '~/Providers/MessagePartsHostContext';
- import useSmoothStreaming from '~/hooks/Messages/useSmoothStreaming';
-@@ -11,7 +12,11 @@ type TContentProps = {
-   isLatestMessage: boolean;
- };
+ import { FADE_HYDRATION_THRESHOLD } from '@librechat/chat/components';
+@@ -13,3 +14,7 @@ type TContentProps = {
  
 -const Markdown = memo(function Markdown({ content = '', isLatestMessage }: TContentProps) {
 +const Markdown = memo(function Markdown({
@@ -360,16 +266,12 @@ index 521549ab1e13c8033faf5150af58fa1f648f7e86..fead6aa213f7c9a5dc411a2536e6e2d7
 +  isLatestMessage,
 +}: TContentProps) {
 +  const content = redactTaskCallbackIds(rawContent);
-   const { useMessage, useLaTeXParsing } = useMessagePartsHost();
-   const { isSubmitting = false } = useMessage();
-   const smoothStreaming = useSmoothStreaming();
+   const { useMessage, useLaTeXParsing, useSmoothStreaming } = useMessagePartsHost();
 diff --git a/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts b/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts
 index 96e70c5e7347214f1102fd1894b6df71eb19f69f..9a8368cc73e968e1663205e5f4f64c3f8496b9c6 100644
 --- a/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts
 +++ b/client/src/components/SidePanel/Agents/Tools/items/__tests__/catalog.spec.ts
-@@ -72,6 +72,25 @@ describe('buildCatalog', () => {
-     expect(systemDefined?.kind === 'builtin' && systemDefined.userProvidedAuth).toBe(false);
-   });
+@@ -74,2 +74,21 @@ describe('buildCatalog', () => {
  
 +  test('surfaces task callbacks as a capability-gated built-in', () => {
 +    const plugin = makePlugin({
@@ -391,15 +293,11 @@ index 96e70c5e7347214f1102fd1894b6df71eb19f69f..9a8368cc73e968e1663205e5f4f64c3f
 +  });
 +
    test('surfaces ask_user_question as a BUILTIN (not a plugin) when the server lists it', () => {
-     const askPlugin = makePlugin({ pluginKey: 'ask_user_question', name: 'Ask User' });
-     const items = buildCatalog({ ...askInputs, regularTools: [askPlugin] });
 diff --git a/client/src/components/SidePanel/Agents/Tools/items/catalog.ts b/client/src/components/SidePanel/Agents/Tools/items/catalog.ts
 index a4f95b90a5c35dcfcefdf911128c8fc835ee6d2d..413ae2880a09447f34da7e900abd5a02d86e572a 100644
 --- a/client/src/components/SidePanel/Agents/Tools/items/catalog.ts
 +++ b/client/src/components/SidePanel/Agents/Tools/items/catalog.ts
-@@ -180,6 +180,19 @@ export function buildCatalog(inputs: BuildCatalogInputs): AgentItem[] {
-     });
-   }
+@@ -182,2 +182,15 @@ export function buildCatalog(inputs: BuildCatalogInputs): AgentItem[] {
  
 +  if (
 +    enabled.has(AgentCapabilities.task_callbacks) &&
@@ -415,108 +313,73 @@ index a4f95b90a5c35dcfcefdf911128c8fc835ee6d2d..413ae2880a09447f34da7e900abd5a02
 +  }
 +
    if (inputs.showMemory) {
-     items.push({
-       kind: 'builtin',
-@@ -212,7 +225,7 @@ export function buildCatalog(inputs: BuildCatalogInputs): AgentItem[] {
- 
-   if (enabled.has(AgentCapabilities.tools)) {
+@@ -214,3 +227,3 @@ export function buildCatalog(inputs: BuildCatalogInputs): AgentItem[] {
      for (const plugin of inputs.regularTools) {
 -      if (plugin.pluginKey === 'ask_user_question') {
 +      if (plugin.pluginKey === 'ask_user_question' || plugin.pluginKey === 'create_task_callback') {
          continue; // surfaced as a builtin above — don't double-list as a plugin
-       }
-       items.push({
 diff --git a/client/src/components/SidePanel/Agents/Tools/items/icons.ts b/client/src/components/SidePanel/Agents/Tools/items/icons.ts
 index 3ddd5461c54eeaac8cb4ec01fd443bcc434ee57e..96f7d1f7afcc1287fa022a721bd02dbc536ef96b 100644
 --- a/client/src/components/SidePanel/Agents/Tools/items/icons.ts
 +++ b/client/src/components/SidePanel/Agents/Tools/items/icons.ts
-@@ -60,6 +60,7 @@ const BUILTIN_ICONS: Record<string, ItemIcon> = {
-     Icon: MessageCircleQuestion,
-     colorClass: 'bg-series-3/15 text-series-3',
+@@ -62,2 +62,3 @@ const BUILTIN_ICONS: Record<string, ItemIcon> = {
    },
 +  create_task_callback: { Icon: Layers, colorClass: 'bg-series-7/15 text-series-7' },
  };
- 
- const KIND_FALLBACK_ICONS: Record<AgentItem['kind'], ItemIcon> = {
 diff --git a/client/src/components/SidePanel/Agents/Tools/items/mutations.ts b/client/src/components/SidePanel/Agents/Tools/items/mutations.ts
 index f7debe7dc4dc98aa0c24923c5230d7d47a020b0b..ae8386bc9a953032fb0f32d341a585f2868c8641 100644
 --- a/client/src/components/SidePanel/Agents/Tools/items/mutations.ts
 +++ b/client/src/components/SidePanel/Agents/Tools/items/mutations.ts
-@@ -22,7 +22,7 @@ function builtinTogglePatch(id: string, selected: boolean): TogglePatch {
-   if (id === 'handoffs') {
-     return selected ? { type: 'handoffs-remove' } : { type: 'configure' };
+@@ -24,3 +24,3 @@ function builtinTogglePatch(id: string, selected: boolean): TogglePatch {
    }
 -  if (id === 'ask_user_question') {
 +  if (id === 'ask_user_question' || id === 'create_task_callback') {
      // Native tool presented as a builtin — it has no capability field; the
-     // toggle edits agent.tools exactly like a plugin.
-     return selected ? { type: 'tool-remove', id } : { type: 'tool-add', id };
 diff --git a/client/src/components/SidePanel/Agents/Tools/items/selectors.ts b/client/src/components/SidePanel/Agents/Tools/items/selectors.ts
 index 2735f490c96e4d6c4d33d63253a0529bab1ef1b3..d8cfc152f6971229ee52eb789d31db9da05885e1 100644
 --- a/client/src/components/SidePanel/Agents/Tools/items/selectors.ts
 +++ b/client/src/components/SidePanel/Agents/Tools/items/selectors.ts
-@@ -60,6 +60,8 @@ function isBuiltinSelected(item: AgentItem, form: FormSelection): boolean {
-     case 'ask_user_question':
-       // Native tool presented as a builtin — selection lives in agent.tools.
+@@ -62,2 +62,4 @@ function isBuiltinSelected(item: AgentItem, form: FormSelection): boolean {
        return form.tools.includes('ask_user_question');
 +    case 'create_task_callback':
 +      return form.tools.includes('create_task_callback');
      default:
-       return false;
-   }
 diff --git a/client/src/components/SidePanel/Agents/Tools/items/types.ts b/client/src/components/SidePanel/Agents/Tools/items/types.ts
 index 43e0f1872cd3cf4dc5c3e70727c9e78d7ea3915b..42b40bf7ad5c700e64a3ade13753606b398c7f86 100644
 --- a/client/src/components/SidePanel/Agents/Tools/items/types.ts
 +++ b/client/src/components/SidePanel/Agents/Tools/items/types.ts
-@@ -22,6 +22,7 @@ export type BuiltinId =
-    * in `selectors.ts` / `mutations.ts`.
-    */
+@@ -24,2 +24,3 @@ export type BuiltinId =
    | 'ask_user_question'
 +  | 'create_task_callback'
    | `${AgentCapabilities.subagents}`
-   | 'handoffs';
- 
 diff --git a/client/src/hooks/Messages/useCopyToClipboard.ts b/client/src/hooks/Messages/useCopyToClipboard.ts
 index 4353d4048caed7f426fc1235cefb0c0068c7493f..a6c0dec45ad9e60fbb972cfe8bd8b5cd6e7ba703 100644
 --- a/client/src/hooks/Messages/useCopyToClipboard.ts
 +++ b/client/src/hooks/Messages/useCopyToClipboard.ts
-@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
- import copy from 'copy-to-clipboard';
- import { useRecoilValue } from 'recoil';
+@@ -4,3 +4,3 @@ import { useRecoilValue } from 'recoil';
  import { parseWakeupMessage } from '@librechat/chat';
 -import { ContentTypes, SearchResultData } from 'librechat-data-provider';
 +import { ContentTypes, SearchResultData, redactTaskCallbackIds } from 'librechat-data-provider';
  import type { TMessage, TMessageContentParts } from 'librechat-data-provider';
- import type { MarkdownVariant, RichTextMode } from '~/utils/richtext';
- import {
-@@ -54,13 +54,13 @@ function getPartText(part: TMessageContentParts): string {
- 
- function getMessageParts({ text, content }: Partial<Pick<TMessage, 'text' | 'content'>>): string[] {
+@@ -56,3 +56,3 @@ function getMessageParts({ text, content }: Partial<Pick<TMessage, 'text' | 'con
    if (!Array.isArray(content) || content.length === 0) {
 -    const messageText = text ?? '';
 +    const messageText = redactTaskCallbackIds(text ?? '');
      return messageText.length > 0 ? [messageText] : [];
-   }
- 
-   const parts: string[] = [];
+@@ -62,3 +62,3 @@ function getMessageParts({ text, content }: Partial<Pick<TMessage, 'text' | 'con
    for (const part of content) {
 -    const partText = getPartText(part);
 +    const partText = redactTaskCallbackIds(getPartText(part));
      if (partText.length > 0) {
-       parts.push(partText);
-     }
 diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
-index d304109c41c3b281cfafc5846c72a33cfb6be3aa..b30400f4f72905b8f7c2ee12082b05881968d958 100644
+index ece65bff6afcf01cc0d0e76f730473702b7e4701..cf0551f2dca8b99abb2bea7572c46b0ab5f7b5ea 100644
 --- a/client/src/locales/en/translation.json
 +++ b/client/src/locales/en/translation.json
-@@ -1,5 +1,7 @@
- {
-   "com_ui_chat_target_failed": "Unable to load this chat’s model or agent.",
+@@ -183,2 +183,4 @@
+   "com_ui_channels_add": "Add channel",
 +  "com_ui_task_callback": "External Task Callback",
 +  "com_agents_task_callback_info": "Resume this conversation automatically when an external executor delivers its task result.",
    "com_ui_pr_account_checking": "Checking connection",
-   "com_ui_pr_account_connect": "Connect",
-   "com_ui_pr_account_connect_aria": "Connect {{0}}",
 diff --git a/docs/task-callbacks.md b/docs/task-callbacks.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..2083adbccf278873a4a37d7c59e8bd27e8e7d519
@@ -794,12 +657,10 @@ index 0000000000000000000000000000000000000000..2083adbccf278873a4a37d7c59e8bd27
 +while its pending callback deliveries remain. Live Agent/Skill configuration,
 +publication, deployments and production webhooks are separate operator actions.
 diff --git a/librechat.example.yaml b/librechat.example.yaml
-index d500db8375ffa19fd9cde3a5b86602416f3568b0..cd3af21ceab69967f0cfb0b1dd9e0af239ab866e 100644
+index 584b72bf32c5f8e76a39f36d0b2c2b0725e4deeb..1e6f6a946ec47028c7dfc4334ea2675e6bc8525f 100644
 --- a/librechat.example.yaml
 +++ b/librechat.example.yaml
-@@ -1020,6 +1020,19 @@ endpoints:
-   #   # uses its own bound listener; override only for an internal TLS/front-door route.
-   #   eventDriven:
+@@ -1025,2 +1025,15 @@ endpoints:
    #     # selfUrl: 'https://librechat.internal'
 +  #   # External executor results can resume the original Agent conversation.
 +  #   # Also opt in to "task_callbacks" in capabilities and attach create_task_callback.
@@ -815,8 +676,6 @@ index d500db8375ffa19fd9cde3a5b86602416f3568b0..cd3af21ceab69967f0cfb0b1dd9e0af2
 +  #     recoveryBatchSize: 25
 +  #     branchMessageLimit: 2000
    #   # (optional) Automatic conversational delivery for supported completed background tasks.
-   #   # Enabled by default; set false to keep background tools and subagents poll-only.
-   #   backgroundTasks:
 diff --git a/packages/api/src/agents/callbackDefinition.ts b/packages/api/src/agents/callbackDefinition.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..c711a0481738748f4ad25f94667d39655121a838
@@ -2453,19 +2312,18 @@ index 0000000000000000000000000000000000000000..ae603a926396680c8fcddee3da985e3b
 +  };
 +}
 diff --git a/packages/api/src/agents/index.ts b/packages/api/src/agents/index.ts
-index 2db7e028efcdac95a8b99d911077712840ba9fa5..900e1903d8cbe64e8b3542a13df403d726e8bc18 100644
+index 81214dfe9ca6249fee3c3bfdc4b86baf81e57cd6..73226d79a431f884ae9256854c690c18391064b6 100644
 --- a/packages/api/src/agents/index.ts
 +++ b/packages/api/src/agents/index.ts
-@@ -105 +105,2 @@ export * from './initialization';
+@@ -107,1 +107,2 @@
 +export * from './callbacks';
  export { captureAuthoredSkills, restoreAuthoredSkills } from './authored';
 diff --git a/packages/api/src/agents/ptc.ts b/packages/api/src/agents/ptc.ts
-index f06b8bf24cf898257cee72cef2b9fb378a8b5e1c..b3bb7359898f1506ddcd93babb6e0cd17d2a7b03 100644
+index 4ca36f4c1d8ae7bfb60feccfd44835fe8cd2502e..a6827442aba87af78bf9748079c741dd64935edc 100644
 --- a/packages/api/src/agents/ptc.ts
 +++ b/packages/api/src/agents/ptc.ts
-@@ -1,7 +1,119 @@
--import { PROGRAMMATIC_TOOL_INPUT } from '@librechat/agents';
--import { normalizeProgrammaticToolResponse } from '@librechat/agents';
+@@ -1,7 +1,120 @@
+-import { PROGRAMMATIC_TOOL_INPUT, normalizeProgrammaticToolResponse } from '@librechat/agents';
 -import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
 +import { isToolMessage } from '@librechat/agents/langchain/messages';
 +import {
@@ -2479,8 +2337,10 @@ index f06b8bf24cf898257cee72cef2b9fb378a8b5e1c..b3bb7359898f1506ddcd93babb6e0cd1
 +} from '@librechat/agents/langchain/tools';
 +import type { RunnableConfig } from '@librechat/agents/langchain/runnables';
  import type { PtcToolCallEvent } from 'librechat-data-provider';
+ import type { ToolExecutionIdentity } from '~/telemetry/tools';
 +import { TASK_CALLBACK_TOOL, TASK_CALLBACK_UNSUPPORTED_CONTEXT } from './callbackDefinition';
-+
+ import { observeToolExecution } from '~/telemetry/tools';
+ 
 +const PTC_TOOL_FAILED = 'PTC_TOOL_FAILED';
 +const CALLBACK_UNAVAILABLE = JSON.stringify({ error: 'CALLBACK_UNAVAILABLE' });
 +
@@ -2583,22 +2443,15 @@ index f06b8bf24cf898257cee72cef2b9fb378a8b5e1c..b3bb7359898f1506ddcd93babb6e0cd1
 +  };
 +  return ptcTool;
 +}
- 
++
  /** Whole-preview budget for one inner call's arguments. */
- const ARGS_PREVIEW_MAX_CHARS = 96;
-@@ -124,6 +236,9 @@ export function instrumentPtcToolMap({
-   traceExclusions,
-   emit,
+@@ -131,2 +244,5 @@ export function instrumentPtcToolMap({
  }: InstrumentPtcToolMapParams): Map<string, StructuredToolInterface> {
 +  // Later tools can receive the raw or encoded registration as input.
 +  const privateResults = toolMap.has(TASK_CALLBACK_TOOL);
 +  includePreviews = includePreviews && !privateResults;
    let sequence = 0;
-   /** Emission is telemetry: a dead stream must never fail the program. */
-   const safeEmit = (event: PtcToolCallEvent): void => {
-@@ -150,7 +265,13 @@ export function instrumentPtcToolMap({
-             return Reflect.get(target, property, target);
-           }
+@@ -157,3 +273,9 @@ export function instrumentPtcToolMap({
            return async (input: unknown, config?: unknown): Promise<unknown> => {
 -            const callId = `${toolCallId}:${sequence++}`;
 +            const innerId = (config as PtcInvocationConfig | undefined)?.[
@@ -2609,24 +2462,16 @@ index f06b8bf24cf898257cee72cef2b9fb378a8b5e1c..b3bb7359898f1506ddcd93babb6e0cd1
 +                ? JSON.stringify([toolCallId, innerId])
 +                : `${toolCallId}:${sequence++}`;
              const startedAt = Date.now();
-             safeEmit({
-               tool_call_id: toolCallId,
-@@ -203,7 +324,7 @@ export function instrumentPtcToolMap({
-                 durationMs: Date.now() - startedAt,
-                 ...(runId != null ? { runId } : {}),
+@@ -225,3 +347,3 @@ export function instrumentPtcToolMap({
                });
 -              throw error;
 +              throw privateResults ? new Error(PTC_TOOL_FAILED) : error;
              }
-           };
-         },
 diff --git a/packages/api/src/agents/triggers/README.md b/packages/api/src/agents/triggers/README.md
-index 40f737f1a4c68f7aa35d287ae9acee93d250b4d1..560d548c3dff24c3e376472ab6604164eea838ea 100644
+index 8433de2a98e8959dbb4f5fca7aaada0a2517bd51..6d0d8da805716bab2bb7f6451a2b244438fc2287 100644
 --- a/packages/api/src/agents/triggers/README.md
 +++ b/packages/api/src/agents/triggers/README.md
-@@ -116,6 +116,14 @@ migration is needed; optional activity reporting preserves the existing numeric/
- 
- ## Remote event ingress
+@@ -132,2 +132,10 @@ migration is needed; optional activity reporting preserves the existing numeric/
  
 +Generic external executors use the separately gated
 +[external task callback tool and webhook](../../../../../docs/task-callbacks.md).
@@ -2637,93 +2482,57 @@ index 40f737f1a4c68f7aa35d287ae9acee93d250b4d1..560d548c3dff24c3e376472ab6604164
 +the existing event-driven child actor semantics below are unchanged.
 +
  Authenticated controllers and source adapters can enqueue the same durable envelope through
- `POST /api/agents/v1/events`. The endpoint uses Remote Agents API-key authentication, the remote
- agents feature permission, and the target agent's existing remote-view ACL. Send exactly one
 diff --git a/packages/api/src/agents/triggers/service.delivery.spec.ts b/packages/api/src/agents/triggers/service.delivery.spec.ts
-index 287340c1dd6ef67ed7a34c63c53e4661a76e6b0f..2d94ab1aab9a2d42898a673860255746efa1ae66 100644
+index 9637102a68b1054052c460efdfc29d0a1f24baab..69c5cb011a6196e5bfb6cfdfaa7c1b39eec0a6f8 100644
 --- a/packages/api/src/agents/triggers/service.delivery.spec.ts
 +++ b/packages/api/src/agents/triggers/service.delivery.spec.ts
-@@ -5,6 +5,7 @@ import {
-   AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
-   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
-   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+@@ -8,2 +8,3 @@ import {
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V3,
 +  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
    getTenantId,
-   SYSTEM_TENANT_ID,
- } from '@librechat/data-schemas';
-@@ -190,6 +191,7 @@ describe('durable agent trigger service', () => {
-           AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_V1,
-           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
-           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+@@ -198,2 +199,3 @@ describe('durable agent trigger service', () => {
+           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V3,
 +          AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
            AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
-         ],
-       }),
-@@ -426,6 +428,7 @@ describe('durable agent trigger service', () => {
-           AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_V1,
-           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
-           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+@@ -435,2 +437,3 @@ describe('durable agent trigger service', () => {
+           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V3,
 +          AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
          ],
-       }),
-     );
 diff --git a/packages/api/src/agents/triggers/service.ts b/packages/api/src/agents/triggers/service.ts
-index 5993d8819cac93873255d1dfe8f6bf67afd58f93..fb6515b8be112a78ef2b1795d770d6b04a2fab63 100644
+index a9af46c30037be40ca6ce6525313551eb9e7e549..c6983763bea76ae0dcfe2dbae9469961e48459a5 100644
 --- a/packages/api/src/agents/triggers/service.ts
 +++ b/packages/api/src/agents/triggers/service.ts
-@@ -6,6 +6,7 @@ import {
-   AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
-   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
-   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+@@ -9,2 +9,3 @@ import {
+   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V3,
 +  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
    logger,
-   runAsSystem,
- } from '@librechat/data-schemas';
-@@ -280,6 +281,7 @@ function createDeliveryStore(
-           AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_V1,
-           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
-           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+@@ -324,2 +325,3 @@ function createDeliveryStore(
+           AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V3,
 +          AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
            ...(supportsDetachedActionCompletion()
-             ? [AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1]
-             : []),
 diff --git a/packages/api/src/code/command.ts b/packages/api/src/code/command.ts
 index 81e5750af312a1b0b4fc42aaa8826403537875c8..ed5ac470c12da56f5ec9b37066ae98d72e013ebf 100644
 --- a/packages/api/src/code/command.ts
 +++ b/packages/api/src/code/command.ts
-@@ -29,6 +29,7 @@ import {
-   WORKSPACE_QUEUE_MAX_WAIT_MS,
- } from './workspace';
+@@ -31,2 +31,3 @@ import {
  import { BACKGROUND_TOOL_INVOCATION_CONFIG_KEY } from '~/agents/invocation';
 +import { bindPtcCallbackContext } from '~/agents/ptc';
  
- const DEFAULT_OUTPUT_BYTES = 256 * 1024;
- 
-@@ -393,7 +394,7 @@ export function createContextProgrammaticBashTool(
-   const configuredDefault = attached
-     ? context.codeEnvironmentConfigSchema?.limits?.defaultCommandTimeoutMs
+@@ -395,3 +396,3 @@ export function createContextProgrammaticBashTool(
      : undefined;
 -  if (configuredDefault == null) return bashTool;
 +  if (configuredDefault == null) return bindPtcCallbackContext(bashTool);
  
-   const maxTimeoutMs = options.runTimeoutMs ?? WORKSPACE_COMMAND_DEFAULT_TIMEOUT_MS;
-   const schema = structuredClone(bashTool.schema) as ReturnType<
-@@ -417,7 +418,7 @@ export function createContextProgrammaticBashTool(
-     const params = input as { timeout?: number };
-     return execute({ ...params, timeout: params.timeout ?? defaultTimeoutMs }, ...args);
+@@ -419,3 +420,3 @@ export function createContextProgrammaticBashTool(
    };
 -  return bashTool;
 +  return bindPtcCallbackContext(bashTool);
  }
- 
- /** Apply authorship before the SDK prepares the script and its replay requests. */
 diff --git a/packages/api/src/langfuse/config.spec.ts b/packages/api/src/langfuse/config.spec.ts
 index 16dda9ec05d4adc493c2769f2142985b1073e235..89f0540f9b18b9dd466030038f4e75af85bcb6a0 100644
 --- a/packages/api/src/langfuse/config.spec.ts
 +++ b/packages/api/src/langfuse/config.spec.ts
-@@ -32,6 +32,15 @@ function clearEnv() {
- }
- 
+@@ -34,2 +34,11 @@ function clearEnv() {
  describe('buildLangfuseConfig', () => {
 +  it('redacts callback registration tool output when external callbacks are enabled', async () => {
 +    const { buildLangfuseConfig } = await import('./config');
@@ -2735,47 +2544,31 @@ index 16dda9ec05d4adc493c2769f2142985b1073e235..89f0540f9b18b9dd466030038f4e75af
 +    expect(config.toolOutputTracing?.redactedToolNames).toContain('create_task_callback');
 +  });
    beforeEach(() => {
-     clearEnv();
-     process.env.TENANT_ISOLATION_STRICT = 'true';
 diff --git a/packages/api/src/langfuse/config.ts b/packages/api/src/langfuse/config.ts
 index 10e626ed79ac96b155331f5d756ebf6c97064262..0121bf70e7dbafd18ad4d5d80b233e463386ef4b 100644
 --- a/packages/api/src/langfuse/config.ts
 +++ b/packages/api/src/langfuse/config.ts
-@@ -276,6 +276,9 @@ export function buildLangfuseConfig({
- 
-   const langfuse: LangfuseRunConfigWithTraceAttributes = {
+@@ -278,2 +278,5 @@ export function buildLangfuseConfig({
      deterministicTraceId: true,
 +    ...(appConfig?.endpoints?.agents?.taskCallbacks?.enabled === true && {
 +      toolOutputTracing: { redactedToolNames: ['create_task_callback'] },
 +    }),
    };
-   const traceUserId = resolveLangfuseTraceUserId(config?.trace, user);
-   if (traceUserId != null) {
 diff --git a/packages/api/src/tools/classification.ts b/packages/api/src/tools/classification.ts
 index 9ef234809bfde9a2786eff7d60f86c6eb35a4d92..0227fc365317d182e4d14ea5ca1fc6711c7356ba 100644
 --- a/packages/api/src/tools/classification.ts
 +++ b/packages/api/src/tools/classification.ts
-@@ -36,6 +36,7 @@ import { supportsProgrammaticCodeExecution } from '~/code/capabilities';
- import { createContextProgrammaticBashTool } from '~/code/command';
- import { sanitizeGeminiSchema } from '~/mcp/zod';
+@@ -38,2 +38,3 @@ import { sanitizeGeminiSchema } from '~/mcp/zod';
  import { capturePersistedToolOptions } from '~/agents/options';
 +import { TASK_CALLBACK_TOOL, TaskCallbackToolDefinition } from '~/agents/callbackDefinition';
  
- export type { LCTool, LCToolRegistry, AllowedCaller, JsonSchemaType };
- 
-@@ -431,7 +432,8 @@ export async function buildToolClassification(
-   const additionalTools: GenericTool[] = [];
- 
+@@ -433,3 +434,4 @@ export async function buildToolClassification(
    const mcpTools = loadedTools.filter(isMCPTool);
 -  if (mcpTools.length === 0) {
 +  const hasTaskCallback = loadedTools.some((tool) => tool.name === TASK_CALLBACK_TOOL);
 +  if (mcpTools.length === 0 && !hasTaskCallback) {
      return {
-       additionalTools,
-       toolDefinitions: [],
-@@ -445,6 +447,18 @@ export async function buildToolClassification(
-   const mcpToolAliases = collectMCPToolAliases(mcpToolDefs);
-   aliasMCPToolOptions(mcpToolAliases, agentToolOptions);
+@@ -447,2 +449,14 @@ export async function buildToolClassification(
    const toolRegistry: LCToolRegistry = buildToolRegistry(mcpToolDefs, agentToolOptions);
 +  if (hasTaskCallback) {
 +    toolRegistry.set(TASK_CALLBACK_TOOL, {
@@ -2790,33 +2583,19 @@ index 9ef234809bfde9a2786eff7d60f86c6eb35a4d92..0227fc365317d182e4d14ea5ca1fc671
 +    });
 +  }
  
-   /** Clean up temporary mcpJsonSchema property from tools now that registry is populated */
-   cleanupMCPToolSchemas(mcpTools);
 diff --git a/packages/api/src/tools/definitions.spec.ts b/packages/api/src/tools/definitions.spec.ts
-index fa87c3c6e2544f193055e9e9f93edfc92d0961dc..a0949d3f5c1bba22875536debee723c27577a65b 100644
+index 6ede0dcfe22278847a30c9d74c2c329f70c4af41..acb07dc9812fd340273ac40e8e2630201072224e 100644
 --- a/packages/api/src/tools/definitions.spec.ts
 +++ b/packages/api/src/tools/definitions.spec.ts
-@@ -1,10 +1,16 @@
--import { Providers, WebSearchToolDefinition, GitHubCompareToolDefinition } from '@librechat/agents';
-+import {
+@@ -2,2 +2,3 @@ import { ChatBedrockConverse } from '@langchain/aws';
+ import {
 +  Constants,
-+  Providers,
-+  WebSearchToolDefinition,
-+  GitHubCompareToolDefinition,
-+} from '@librechat/agents';
- import type {
-   LoadToolDefinitionsParams,
-   LoadToolDefinitionsDeps,
-   ActionToolDefinition,
- } from './definitions';
+   Providers,
+@@ -16,2 +17,3 @@ import { loadToolDefinitions, orderMCPServerNames } from './definitions';
  import { toolkitExpansion, toolkitParent } from './toolkits/mapping';
 +import { TASK_CALLBACK_TOOL } from '~/agents/callbackDefinition';
  import { getToolDefinition } from './registry/definitions';
- import { getToolApprovalIdentity } from './approval';
- import { loadToolDefinitions } from './definitions';
-@@ -34,6 +40,56 @@ describe('definitions.ts', () => {
-   });
- 
+@@ -44,2 +46,52 @@ describe('definitions.ts', () => {
    describe('loadToolDefinitions', () => {
 +    it.each<{ callers?: Array<'direct' | 'code_execution'> }>([
 +      {},
@@ -2869,46 +2648,30 @@ index fa87c3c6e2544f193055e9e9f93edfc92d0961dc..a0949d3f5c1bba22875536debee723c2
 +    });
 +
      it.each([undefined, false, true])(
-       'gates selected comparison definitions on explicit opt-in (%p)',
-       async (githubCompareEnabled) => {
 diff --git a/packages/api/src/tools/definitions.ts b/packages/api/src/tools/definitions.ts
-index ebbcfa3b0f73addf11d8bd6f85a8773ff053c002..f38e918f9f098fe4c51674c22b3cd3b9ee681d8e 100644
+index 399c95ba424fd9708a87ed0512539f6081f78cae..62c89654b8899b266e3c7e8f16b875f30ae357c9 100644
 --- a/packages/api/src/tools/definitions.ts
 +++ b/packages/api/src/tools/definitions.ts
-@@ -25,6 +25,7 @@ import { buildToolClassification } from './classification';
- import { getToolDefinition } from './registry/definitions';
- import { toolkitExpansion } from './toolkits/mapping';
+@@ -29,2 +29,3 @@ import { toolkitExpansion } from './toolkits/mapping';
  import { isMCPAllPlaceholder } from '~/mcp/utils';
 +import { TASK_CALLBACK_TOOL } from '~/agents/callbackDefinition';
  
- export interface MCPServerTool {
-   function?: {
-@@ -405,6 +406,10 @@ export async function loadToolDefinitions(
-       getToolApprovalIdentity(def),
-     ),
+@@ -537,2 +538,6 @@ export async function loadToolDefinitions(
    ) as unknown as GenericTool[];
 +  // Classification must see this binding before deciding whether to add the PTC runner.
 +  if (builtInToolDefs.some((definition) => definition.name === TASK_CALLBACK_TOOL)) {
 +    loadedTools.push({ name: TASK_CALLBACK_TOOL } as GenericTool);
 +  }
  
-   const classificationResult = await buildToolClassification({
-     userId,
 diff --git a/packages/api/src/tools/registry/definitions.ts b/packages/api/src/tools/registry/definitions.ts
 index 846a4268816986fe32e66ef09bf2e99cc3f5e3a8..8d5979005951e6cc71d95d746ff3b03da5650ab7 100644
 --- a/packages/api/src/tools/registry/definitions.ts
 +++ b/packages/api/src/tools/registry/definitions.ts
-@@ -5,6 +5,7 @@ import {
- } from '@librechat/agents';
- import type { ExtendedJsonSchema } from './schema';
+@@ -7,2 +7,3 @@ import type { ExtendedJsonSchema } from './schema';
  import { AskUserQuestionToolDefinition } from '~/agents/hitl/askUserQuestionTool';
 +import { TaskCallbackToolDefinition } from '~/agents/callbackDefinition';
  import { geminiToolkit } from '~/tools/toolkits/gemini';
- import { oaiToolkit } from '~/tools/toolkits/oai';
- 
-@@ -427,6 +428,12 @@ const agentToolDefinitions: Record<string, ToolRegistryDefinition> = {
-     schema: AskUserQuestionToolDefinition.schema as ExtendedJsonSchema,
-     toolType: 'builtin',
+@@ -429,2 +430,8 @@ const agentToolDefinitions: Record<string, ToolRegistryDefinition> = {
    },
 +  [TaskCallbackToolDefinition.name]: {
 +    name: TaskCallbackToolDefinition.name,
@@ -2917,47 +2680,30 @@ index 846a4268816986fe32e66ef09bf2e99cc3f5e3a8..8d5979005951e6cc71d95d746ff3b03d
 +    toolType: 'builtin',
 +  },
  };
- 
- export function getToolDefinition(toolName: string): ToolRegistryDefinition | undefined {
 diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
-index 318aabae6a457c358fdb3b4cf4c12574027ed3ea..b8aab527824df2c3d4daf4cc0b8cd5a9c829eab0 100644
+index 2d1e88694c49efbe83dc1f8a33e0be59aa74e801..3d2b31979660a5e6a08d8936c77ea6dc8fe5e6a7 100644
 --- a/packages/data-provider/src/config.ts
 +++ b/packages/data-provider/src/config.ts
-@@ -40,6 +40,7 @@ import {
-   scheduledMCPResourceBindingSchema,
-   scheduledMCPReadOnlyPolicySchema,
+@@ -42,2 +42,3 @@ import {
  } from './types/scheduleConsent';
 +import { taskCallbackConfigSchema } from './taskCallbacks';
  import { partialWithoutDefaults } from './zod';
- 
- export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_DEFAULT = 24 * 1024;
-@@ -877,6 +878,7 @@ export enum AgentCapabilities {
-   skills = 'skills',
-   memory = 'memory',
+@@ -904,2 +905,3 @@ export enum AgentCapabilities {
    ask_user_question = 'ask_user_question',
 +  task_callbacks = 'task_callbacks',
    tools = 'tools',
-   /** @deprecated Retained for legacy configuration. Chain authoring is retired. */
-   chain = 'chain',
-@@ -2197,6 +2199,7 @@ export const agentsEndpointSchema = baseEndpointSchema
-           sharedCacheSlots: z.number().int().min(64).max(1_000_000).optional().default(65_536),
-         })
+@@ -2464,2 +2466,3 @@ export const agentsEndpointSchema = baseEndpointSchema
          .optional(),
 +      taskCallbacks: taskCallbackConfigSchema.optional(),
        /** Conversational background-task delivery policy. Automatic completion wakeups are
-        * enabled unless an administrator explicitly restores poll-only behavior. */
-       backgroundTasks: z
 diff --git a/packages/data-provider/src/index.ts b/packages/data-provider/src/index.ts
-index 001156490d4bc3ac9a035b42b1f9d4e5937d8aed..3d2bc94e09da55140b50306311ea1ebf46b3d451 100644
+index 0bb347ff3ceebcba2e7ab605e5453c16a0b8d48b..7c619f27019cf79aaa3326c394bfd57d16be17f9 100644
 --- a/packages/data-provider/src/index.ts
 +++ b/packages/data-provider/src/index.ts
-@@ -111,5 +111,6 @@ export * from './code/workspace';
- export * from './types/scheduleConsent';
- 
- export * from './approval';
+@@ -121,2 +121,3 @@ export * from './types/channelFeedback';
+ export * from './types/channelRuns';
 +export * from './taskCallbacks';
  
- export * from './codeSetup';
 diff --git a/packages/data-provider/src/taskCallbacks.spec.ts b/packages/data-provider/src/taskCallbacks.spec.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..175eb08776048eb34a6b06458e86026377b59291
@@ -3065,52 +2811,34 @@ diff --git a/packages/data-schemas/src/config/parsers.spec.ts b/packages/data-sc
 index a43b0b229b820b937c18d1618f7264816bec563b..27e6bd642466a1b633b44b00a60048da93c7dfd8 100644
 --- a/packages/data-schemas/src/config/parsers.spec.ts
 +++ b/packages/data-schemas/src/config/parsers.spec.ts
-@@ -50,6 +50,9 @@ function buildInfo(level: string, meta: Record<string, unknown>): FormatterInfo
- }
- 
+@@ -52,2 +52,5 @@ function buildInfo(level: string, meta: Record<string, unknown>): FormatterInfo
  describe('redactMessage', () => {
 +  it('redacts external task bearers in incidental messages', () => {
 +    expect(redactMessage(`callback tcb_${'x'.repeat(43)}`)).toBe('callback tcb_[REDACTED]');
 +  });
    it('redacts sensitive token patterns anywhere in a message', () => {
-     expect(redactMessage('token: sk-abc123def')).toBe('token: sk-[REDACTED]');
-     expect(redactMessage('auth Bearer secretvalue')).toBe('auth Bearer [REDACTED]');
 diff --git a/packages/data-schemas/src/config/parsers.ts b/packages/data-schemas/src/config/parsers.ts
 index e65ba823857ac50853be88c804964d27b6e6748f..8931fe83f33237b27df0e9352d18cc586f3f12ec 100644
 --- a/packages/data-schemas/src/config/parsers.ts
 +++ b/packages/data-schemas/src/config/parsers.ts
-@@ -45,6 +45,7 @@ const MAX_STRIP_DEPTH = 6;
- const PRESERVED_ERROR_PROPS = ['message', 'stack', 'name', 'code'] as const;
- 
+@@ -47,2 +47,3 @@ const PRESERVED_ERROR_PROPS = ['message', 'stack', 'name', 'code'] as const;
  const sensitiveKeys: RegExp[] = [
 +  /\b(tcb_)[A-Za-z0-9_-]+/g,
    /\b(sk-)[a-zA-Z0-9_-]+/g, // OpenAI API key pattern
-   /\b(Bearer )[^\s"']+/g, // Header: Bearer token pattern
-   /\b(api-key:? )[^\s"']+/gi, // Header: API key pattern
-@@ -75,7 +76,7 @@ const REDACTION_WINDOW_SLACK = 1024;
- const REDACTED_EMAIL_VALUE = '[REDACTED_EMAIL]';
- 
+@@ -77,3 +78,3 @@ const REDACTED_EMAIL_VALUE = '[REDACTED_EMAIL]';
  const sensitiveMetadataKey =
 -  /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|appid|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|assertion|client[-_]?assertion|client[-_]?secret|code[-_]?verifier|credential|signature|connection[-_]?string)$/i;
 +  /^(callback_id|encryptedId|authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|appid|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|assertion|client[-_]?assertion|client[-_]?secret|code[-_]?verifier|credential|signature|connection[-_]?string)$/i;
  const errorStringProperties = new Set(['name', 'message', 'stack']);
- 
- /**
 diff --git a/packages/data-schemas/src/index.ts b/packages/data-schemas/src/index.ts
-index 5e32607dcc5b9b32a6a56351fe448611058842be..306020302f3a7f6c8099006509cf65d231c57b81 100644
+index 12ae518203e7380fab15c774aa8f7921eface08b..34b2a9c5051e13c70b122e2fb8c7fa0fe452c20e 100644
 --- a/packages/data-schemas/src/index.ts
 +++ b/packages/data-schemas/src/index.ts
-@@ -84,6 +84,7 @@ export {
-   AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
-   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
-   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+@@ -141,2 +141,3 @@ export {
+   AGENT_TRIGGER_WORKER_CAPABILITY_RESPONSES_RESUME_V1,
 +  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
  } from './types/triggerDelivery';
- export type * from './types';
- export type * from './methods';
-@@ -121,6 +122,12 @@ export {
-   backfillSearchTokens,
-   warnOnMissingSearchTokens,
+@@ -180,2 +181,8 @@ export {
  } from './migrations';
 +export { createTaskCallbackMethods } from './methods/taskCallback';
 +export type {
@@ -3119,36 +2847,23 @@ index 5e32607dcc5b9b32a6a56351fe448611058842be..306020302f3a7f6c8099006509cf65d2
 +  SealTaskCallbackResult,
 +} from './methods/taskCallback';
  export type { SearchTokenBackfillResult } from './migrations';
- 
- export { createBrowserSetupStore, createBrowserSetupBackend } from './methods/browserSetup';
 diff --git a/packages/data-schemas/src/methods/index.ts b/packages/data-schemas/src/methods/index.ts
-index cf4096bd8ab4f256d6243a0fe3fd5e81985f2008..e7ade546f0d6db76a7151792d601c432f81217a9 100644
+index bc642cd5019759c8abedd035131c8b2e46d51046..fc207ccf44f6628b1caf197a9959b41fff0c1136 100644
 --- a/packages/data-schemas/src/methods/index.ts
 +++ b/packages/data-schemas/src/methods/index.ts
-@@ -8,10 +8,12 @@ export type {
- } from './subagentContent';
- import type { ToolApprovalGrantStorage } from 'librechat-data-provider';
+@@ -20,2 +20,3 @@ import type { ToolApprovalGrantStorage } from 'librechat-data-provider';
  import type { ScheduleMCPConsentStorage } from './scheduleConsent';
 +import type { TaskCallbackMethods } from './taskCallback';
  import type { ClearFileCodeEnvRefsParams } from '~/types/file';
- import type { FileStorageMethods } from './fileStorage';
- import { createToolApprovalGrantMethods } from './toolApprovalGrant';
+@@ -24,2 +25,3 @@ import { createToolApprovalGrantMethods } from './toolApprovalGrant';
  import { createScheduleMCPConsentStorage } from './scheduleConsent';
 +import { createTaskCallbackMethods } from './taskCallback';
  export { createScheduleMCPConsentStorage } from './scheduleConsent';
- export type { ScheduleMCPConsentStorage, ScheduleConsentSnapshot } from './scheduleConsent';
- import type {
-@@ -322,6 +324,7 @@ export type AllMethods = SubagentContentMethods &
-   SkillLifecycleMethods &
-   AgentTriggerDeliveryMethods &
+@@ -360,2 +362,3 @@ export type AllMethods = PermissionPrincipalStorage &
    AgentQueuedTurnMethods &
 +  TaskCallbackMethods &
    ScheduleMCPConsentStorage &
-   ScheduleMethods &
-   AgentMethods &
-@@ -382,12 +385,15 @@ export function createMethods(
-   });
- 
+@@ -422,8 +425,11 @@ export function createMethods(
    const agentQueuedTurnMethods = createAgentQueuedTurnMethods(mongoose);
 +  const taskCallbackMethods = createTaskCallbackMethods(mongoose);
    const agentTriggerDeliveryMethods = createAgentTriggerDeliveryMethods(mongoose, {
@@ -3163,27 +2878,17 @@ index cf4096bd8ab4f256d6243a0fe3fd5e81985f2008..e7ade546f0d6db76a7151792d601c432
 +      });
 +    },
    });
- 
-   const conversationMethods = createConversationMethods(mongoose, {
-@@ -399,6 +405,10 @@ export function createMethods(
-     prepareAgentTriggerConversationResultErasure:
-       agentTriggerDeliveryMethods.prepareAgentTriggerConversationResultErasure,
+@@ -439,2 +445,6 @@ export function createMethods(
      deleteAgentQueuedTurns: async (user, conversations) => {
 +      await taskCallbackMethods.deleteTaskCallbacks(
 +        user,
 +        conversations.map((c) => c.conversationId),
 +      );
        /** Queued-turn ownership is ObjectId-backed. Conversation methods also
-        * support synthetic/non-ObjectId owners in embedded integrations and
-        * tests; those owners cannot have queued-turn rows to retire. */
-@@ -572,6 +582,7 @@ export function createMethods(
-     ...createSkillLifecycleMethods(mongoose),
-     ...agentTriggerDeliveryMethods,
+@@ -617,2 +627,3 @@ export function createMethods(
      ...agentQueuedTurnMethods,
 +    ...taskCallbackMethods,
      ...createScheduleMethods(mongoose),
-     ...createScheduleMCPConsentStorage(mongoose),
-     /* Tier 5 */
 diff --git a/packages/data-schemas/src/methods/taskCallback.ts b/packages/data-schemas/src/methods/taskCallback.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..7c3adcc969161a65711d86958a644804997268d2
@@ -3360,53 +3065,35 @@ index 0000000000000000000000000000000000000000..7c3adcc969161a65711d86958a644804
 +
 +export type TaskCallbackMethods = ReturnType<typeof createTaskCallbackMethods>;
 diff --git a/packages/data-schemas/src/methods/triggerDelivery.ts b/packages/data-schemas/src/methods/triggerDelivery.ts
-index bc54552e507fe5a74e269b007176c1d0b7a534f6..64a9ac114983a7384e944d6db5433f9ce83068ea 100644
+index 0f8b9c902d0ffe64d736eb221bb17d5c2e2a0c16..2805b97a08c142221f250a0eeb6f6e6ae09410e9 100644
 --- a/packages/data-schemas/src/methods/triggerDelivery.ts
 +++ b/packages/data-schemas/src/methods/triggerDelivery.ts
-@@ -28,6 +28,7 @@ import {
-   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
-   AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+@@ -32,2 +32,3 @@ import {
+   AGENT_TRIGGER_WORKER_CAPABILITY_RESPONSES_RESUME_V1,
++  AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1,
  } from '~/types/triggerDelivery';
-+import { AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1 } from '~/types/triggerDelivery';
- import { createIndexesWithRetry } from '~/utils/retry';
- import logger from '~/config/winston';
- 
-@@ -1190,7 +1191,8 @@ export function createAgentTriggerDeliveryMethods(
-         AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_BATCH_V3 &&
-       input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_V1 &&
-       input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1 &&
--      input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2
-+      input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2 &&
+@@ -1198,3 +1199,4 @@ export function createAgentTriggerDeliveryMethods(
+       input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_RESPONSES_V1 &&
+-      input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_RESPONSES_RESUME_V1
++      input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_RESPONSES_RESUME_V1 &&
 +      input.requiredWorkerCapability !== AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1
      ) {
-       throw new TypeError('Agent trigger delivery requires an unsupported worker capability');
-     }
 diff --git a/packages/data-schemas/src/models/index.ts b/packages/data-schemas/src/models/index.ts
-index 8081a9310a5b6368530f61ed5e230f7cc4c828d3..506540dadc85fb048a8259d5cd6c70d6dd922216 100644
+index a4be3c5d19e0e351999b5d232e36d5bb0c2b564d..3db6d892f268355b6507bc39d6f98179a0ad0b41 100644
 --- a/packages/data-schemas/src/models/index.ts
 +++ b/packages/data-schemas/src/models/index.ts
-@@ -9,6 +9,7 @@ import { createRefreshTokenBridgeModel } from './refreshTokenBridge';
- import { createAgentTriggerDeliveryModel } from './triggerDelivery';
- import { createToolApprovalGrantModel } from './toolApprovalGrant';
+@@ -17,2 +17,3 @@ import { createToolApprovalGrantModel } from './toolApprovalGrant';
  import { createSkillUploadIntentModel } from './skillUploadIntent';
 +import { createTaskCallbackModel } from '../methods/taskCallback';
  import { createSubagentContentModel } from './subagentContent';
- import { createSkillSyncStatusModel } from './skillSyncStatus';
- import { createConversationTagModel } from './conversationTag';
-@@ -158,6 +159,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
-     AgentTriggerLaneSequence: createAgentTriggerLaneSequenceModel(mongoose),
-     AgentTriggerUserPurge: createAgentTriggerUserPurgeModel(mongoose),
+@@ -194,2 +195,3 @@ export function createModels(mongoose: typeof import('mongoose')): {
      AgentQueuedTurn: createAgentQueuedTurnModel(mongoose),
 +    TaskCallback: createTaskCallbackModel(mongoose),
      AgentQueuedTurnSequence: createAgentQueuedTurnSequenceModel(mongoose),
-     Schedule: createScheduleModel(mongoose),
-     ScheduleRun: createScheduleRunModel(mongoose),
 diff --git a/packages/data-schemas/src/types/triggerDelivery.ts b/packages/data-schemas/src/types/triggerDelivery.ts
-index 2076cde7c36c11cfa08eaeaeae5154cc8a667010..32d3df2f5a67027b41d2592584041376fd64141b 100644
+index 50c8a5f4ded3f94aa6ff72b9feb445acca9e7933..b32acad2d51e160da8f057a5d5b6272e69842c57 100644
 --- a/packages/data-schemas/src/types/triggerDelivery.ts
 +++ b/packages/data-schemas/src/types/triggerDelivery.ts
-@@ -265,3 +265,4 @@ export interface AgentTriggerOrderingBlock {
-   leaseUntil?: Date;
-   reason?: 'active_handling';
+@@ -272 +272,2 @@ export interface AgentTriggerOrderingBlock {
  }
 +export const AGENT_TRIGGER_WORKER_CAPABILITY_TASK_CALLBACK_V1 = 'task_callback_v1';

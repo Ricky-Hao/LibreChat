@@ -2,9 +2,7 @@ diff --git a/client/src/components/Artifacts/Artifacts.tsx b/client/src/componen
 index c398bbe5c1584bda41d366e3290fa46d387d7411..47a27d4b4dd235ad22c9e7a1bd0a17634cf8682b 100644
 --- a/client/src/components/Artifacts/Artifacts.tsx
 +++ b/client/src/components/Artifacts/Artifacts.tsx
-@@ -4,7 +4,14 @@ import copy from 'copy-to-clipboard';
- import * as Tabs from '@radix-ui/react-tabs';
- import { CopyButton } from '@librechat/chat/components';
+@@ -6,3 +6,10 @@ import { CopyButton } from '@librechat/chat/components';
  import { useSetRecoilState, useResetRecoilState } from 'recoil';
 -import { Button, Spinner, useMediaQuery, Radio, useToastContext } from '@librechat/client';
 +import {
@@ -16,20 +14,12 @@ index c398bbe5c1584bda41d366e3290fa46d387d7411..47a27d4b4dd235ad22c9e7a1bd0a1763
 +  OverlayBack,
 +} from '@librechat/client';
  import {
-   Code,
-   Maximize2,
-@@ -450,7 +457,7 @@ export default function Artifacts() {
-       ? (Math.min(blurAmount, MAX_BLUR_AMOUNT) / MAX_BLUR_AMOUNT) * MAX_BACKDROP_OPACITY
-       : 0;
+@@ -452,3 +459,3 @@ export default function Artifacts() {
  
 -  return (
 +  const panel = (
      <Tabs.Root value={displayedTab} onValueChange={setActiveTab} asChild>
-       <div ref={artifactContainerRef} className="bg-surface-primary flex h-full w-full flex-col">
-         {/* Mobile backdrop with dynamic blur */}
-@@ -708,4 +715,9 @@ export default function Artifacts() {
-       </div>
-     </Tabs.Root>
+@@ -710,2 +717,7 @@ export default function Artifacts() {
    );
 +  return (
 +    <OverlayBack open={isMobile && !isClosing} onClose={closeArtifacts}>
@@ -41,17 +31,12 @@ diff --git a/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx b/clien
 index b0ca8e43462a4eb05da65a50f7e57a3431a9ec41..d832a2741feeb38dda711249e3f01e5b8e33e438 100644
 --- a/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx
 +++ b/client/src/components/Input/SetKeyDialog/InputWithLabel.tsx
-@@ -1,6 +1,6 @@
- import { forwardRef } from 'react';
+@@ -2,3 +2,3 @@ import { forwardRef } from 'react';
  import { Input, Label, SecretInput } from '@librechat/client';
 -import type { ChangeEvent, FC, Ref } from 'react';
 +import type { ChangeEvent } from 'react';
  import { useLocalize } from '~/hooks';
- import { cn } from '~/utils/';
- 
-@@ -13,10 +13,9 @@ interface InputWithLabelProps {
-   labelClassName?: string;
-   inputClassName?: string;
+@@ -15,6 +15,5 @@ interface InputWithLabelProps {
    secret?: boolean;
 -  ref?: Ref<HTMLInputElement>;
  }
@@ -59,32 +44,20 @@ index b0ca8e43462a4eb05da65a50f7e57a3431a9ec41..d832a2741feeb38dda711249e3f01e5b
 -const InputWithLabel: FC<InputWithLabelProps> = forwardRef((props, ref) => {
 +const InputWithLabel = forwardRef<HTMLInputElement, InputWithLabelProps>((props, ref) => {
    const {
-     id,
-     value,
 diff --git a/client/src/components/Nav/Settings/Dialog.tsx b/client/src/components/Nav/Settings/Dialog.tsx
 index beb54d49c8a56403b2e30f114e6557d61328f68d..69a83010d232667ad8b62d0051e049f9a22fe79a 100644
 --- a/client/src/components/Nav/Settings/Dialog.tsx
 +++ b/client/src/components/Nav/Settings/Dialog.tsx
-@@ -5,6 +5,7 @@ import { SettingsTabValues } from 'librechat-data-provider';
- import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from '@headlessui/react';
- import {
+@@ -7,2 +7,3 @@ import {
    Button,
 +  OverlayBack,
    DialogLayer,
-   useMediaQuery,
-   useRemScale,
-@@ -47,7 +48,7 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
-     setMobileDetail(true);
-   };
+@@ -49,3 +50,3 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
  
 -  return (
 +  const dialog = (
      <Transition appear show={open}>
-       <Dialog as="div" className="relative z-50" onClose={() => onOpenChange(false)}>
-         <TransitionChild
-@@ -155,4 +156,11 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
-       </Dialog>
-     </Transition>
+@@ -157,2 +158,9 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
    );
 +  return (
 +    <OverlayBack open={open} onClose={() => onOpenChange(false)}>
@@ -98,17 +71,11 @@ diff --git a/client/src/hooks/SSE/pane.ts b/client/src/hooks/SSE/pane.ts
 index 255d951dd38dfb7abfdfdcf19dab8509ca2e1fc2..559a340d1993974299a20d65e00f425657f7d4fb 100644
 --- a/client/src/hooks/SSE/pane.ts
 +++ b/client/src/hooks/SSE/pane.ts
-@@ -23,6 +23,7 @@ import type {
- } from '@librechat/chat';
- import type { EventHandlerParams } from '@librechat/chat/react';
+@@ -25,2 +25,3 @@ import type { EventHandlerParams } from '@librechat/chat/react';
  import { clearComposerDrafts, resolveRunEndTarget } from '~/utils';
 +import { replaceBrowserUrl } from '~/utils/overlays';
  import { activeRunFamily } from './atoms';
- 
- /**
-@@ -47,11 +48,7 @@ const replaceNewConversationUrl = (conversationId: string) => {
-     return;
-   }
+@@ -49,7 +50,3 @@ const replaceNewConversationUrl = (conversationId: string) => {
  
 -  window.history.replaceState(
 -    window.history.state,
@@ -117,8 +84,6 @@ index 255d951dd38dfb7abfdfdcf19dab8509ca2e1fc2..559a340d1993974299a20d65e00f4256
 -  );
 +  replaceBrowserUrl(`/c/${conversationId}${window.location.search}`);
  };
- 
- /**
 diff --git a/client/src/routes/Overlays.test.tsx b/client/src/routes/Overlays.test.tsx
 new file mode 100644
 index 0000000000000000000000000000000000000000..bd5943db81af485122664b0926c4caf1f8cb89cb
@@ -620,32 +585,34 @@ index 0000000000000000000000000000000000000000..c06ab309fae4c39d498ea0859fa7f465
 +  );
 +}
 diff --git a/client/src/routes/index.tsx b/client/src/routes/index.tsx
-index 7fac97dbb226aa85bf49d76011d5b2a02b7be3c5..b54defa562ea115e1067ae616bb8cc67aeb3d335 100644
+index b7c778d94b18dcc32fc3542a5e125ddad19737e0..a42692877e322c97b588ccd49d95787cda127945 100644
 --- a/client/src/routes/index.tsx
 +++ b/client/src/routes/index.tsx
-@@ -1,4 +1,5 @@
+@@ -1,2 +1,3 @@
  import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
 +import type { RouteObject } from 'react-router-dom';
  import {
-   Login,
-   VerifyEmail,
-@@ -20,6 +21,7 @@ import dashboardRoutes from './Dashboard';
- import WithRum from '~/lib/rum/WithRum';
- import ShareRoute from './ShareRoute';
+@@ -22,2 +23,3 @@ import ShareEntry from './ShareEntry';
  import ChatRoute from './ChatRoute';
 +import Overlays from './Overlays';
- import Search from './Search';
  import Root from './Root';
- 
-@@ -59,149 +61,150 @@ const loadProjectWorkspace = () =>
- const baseEl = document.querySelector('base');
- const baseHref = baseEl?.getAttribute('href') || '/';
+@@ -74,157 +76,158 @@ const baseHref = baseEl?.getAttribute('href') || '/';
  
 -export const router = createBrowserRouter(
 -  [
 -    {
+-      path: 'responses/:responseId/review',
+-      lazy: loadResponseReview,
+-      errorElement: <RouteErrorBoundary />,
+-    },
+-    {
+-      path: 'channels/link',
+-      element: <ChannelLinkRoute />,
+-      errorElement: <RouteErrorBoundary />,
+-    },
+-    {
 -      path: 'share/:shareId',
--      element: <ShareRoute />,
+-      element: <ShareEntry />,
 -      errorElement: <RouteErrorBoundary />,
 -    },
 -    {
@@ -727,7 +694,7 @@ index 7fac97dbb226aa85bf49d76011d5b2a02b7be3c5..b54defa562ea115e1067ae616bb8cc67
 -                },
 -                {
 -                  path: 'search',
--                  element: <Search />,
+-                  lazy: loadSearch,
 -                },
 -                {
 -                  path: 'prompts',
@@ -772,11 +739,11 @@ index 7fac97dbb226aa85bf49d76011d5b2a02b7be3c5..b54defa562ea115e1067ae616bb8cc67
 -                },
 -                {
 -                  path: 'agents',
--                  element: <MarketplaceRoute />,
+-                  lazy: loadMarketplace,
 -                },
 -                {
 -                  path: 'agents/:category',
--                  element: <MarketplaceRoute />,
+-                  lazy: loadMarketplace,
 -                },
 -              ],
 -            },
@@ -789,8 +756,18 @@ index 7fac97dbb226aa85bf49d76011d5b2a02b7be3c5..b54defa562ea115e1067ae616bb8cc67
 -);
 +const routes: RouteObject[] = [
 +  {
++    path: 'responses/:responseId/review',
++    lazy: loadResponseReview,
++    errorElement: <RouteErrorBoundary />,
++  },
++  {
++    path: 'channels/link',
++    element: <ChannelLinkRoute />,
++    errorElement: <RouteErrorBoundary />,
++  },
++  {
 +    path: 'share/:shareId',
-+    element: <ShareRoute />,
++    element: <ShareEntry />,
 +    errorElement: <RouteErrorBoundary />,
 +  },
 +  {
@@ -872,7 +849,7 @@ index 7fac97dbb226aa85bf49d76011d5b2a02b7be3c5..b54defa562ea115e1067ae616bb8cc67
 +              },
 +              {
 +                path: 'search',
-+                element: <Search />,
++                lazy: loadSearch,
 +              },
 +              {
 +                path: 'prompts',
@@ -917,11 +894,11 @@ index 7fac97dbb226aa85bf49d76011d5b2a02b7be3c5..b54defa562ea115e1067ae616bb8cc67
 +              },
 +              {
 +                path: 'agents',
-+                element: <MarketplaceRoute />,
++                lazy: loadMarketplace,
 +              },
 +              {
 +                path: 'agents/:category',
-+                element: <MarketplaceRoute />,
++                lazy: loadMarketplace,
 +              },
 +            ],
 +          },
@@ -938,9 +915,7 @@ diff --git a/client/src/store/__tests__/families.spec.tsx b/client/src/store/__t
 index 610e425a52af4704f5045b4782d7f5680eb366e4..0488b11f57da8ea4240e97efd4beb990422b635b 100644
 --- a/client/src/store/__tests__/families.spec.tsx
 +++ b/client/src/store/__tests__/families.spec.tsx
-@@ -161,6 +161,21 @@ describe('conversationByIndex URL mirroring', () => {
-     expect(window.location.search).toContain('endpoint=openAI');
-   });
+@@ -163,2 +163,17 @@ describe('conversationByIndex URL mirroring', () => {
  
 +  it('preserves the complete history state while mirroring a model edit', async () => {
 +    const state = {
@@ -958,29 +933,19 @@ index 610e425a52af4704f5045b4782d7f5680eb366e4..0488b11f57da8ea4240e97efd4beb990
 +  });
 +
    it('keeps the landing project switch in place, as ProjectLandingChip intends', async () => {
-     renderChat();
-     await seed();
 diff --git a/client/src/store/families.ts b/client/src/store/families.ts
 index 8c719ad99ffa8c3e8870b1aafb092c5de61bd66c..9d20fa5b8ed07d766c134052fcb1c5e3424d4301 100644
 --- a/client/src/store/families.ts
 +++ b/client/src/store/families.ts
-@@ -18,6 +18,7 @@ import {
-   logger,
- } from '~/utils';
+@@ -20,2 +20,3 @@ import {
  import { useSetConvoContext } from '~/Providers/SetConvoContext';
 +import { replaceBrowserUrl } from '~/utils/overlays';
  
- const conversationByIndex = atomFamily<TConversation | null, string | number>({
-   key: 'conversationByIndex',
-@@ -82,7 +83,7 @@ const conversationByIndex = atomFamily<TConversation | null, string | number>({
-            * `navigate()` calls (useNewConvo), and in-place writers like
-            * ProjectLandingChip deliberately replace. Pushing here buried the
+@@ -84,3 +85,3 @@ const conversationByIndex = atomFamily<TConversation | null, string | number>({
             * Back target under one inert entry per draft edit. */
 -          window.history.replaceState({}, '', url);
 +          replaceBrowserUrl(url);
          }
-       });
-     },
 diff --git a/client/src/utils/overlays.ts b/client/src/utils/overlays.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..4a15db658fae0d38aabc2331b41d2dd6fbd22116
@@ -1502,86 +1467,53 @@ diff --git a/packages/chat/src/components/composer/files/ImagePreview.tsx b/pack
 index 28ae4e978d18332e743023625ba9287f1779121a..374633cfab1eadef3b05b042de83a6aeae7fbfc1 100644
 --- a/packages/chat/src/components/composer/files/ImagePreview.tsx
 +++ b/packages/chat/src/components/composer/files/ImagePreview.tsx
-@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
- import { Maximize2, X } from 'lucide-react';
- import { FileSources } from 'librechat-data-provider';
+@@ -4,3 +4,3 @@ import { FileSources } from 'librechat-data-provider';
  import * as DialogPrimitive from '@radix-ui/react-dialog';
 -import { cn, Button, useLocalize } from '@librechat/client';
 +import { cn, Button, Dialog, useLocalize } from '@librechat/client';
  import ProgressCircle from './ProgressCircle';
- import SourceIcon from './SourceIcon';
- 
-@@ -141,7 +141,7 @@ const ImagePreview = ({
-         <SourceIcon source={source} aria-label={source ? `Source: ${source}` : undefined} />
-       </button>
+@@ -143,3 +143,3 @@ const ImagePreview = ({
  
 -      <DialogPrimitive.Root open={isModalOpen} onOpenChange={handleOpenChange}>
 +      <Dialog open={isModalOpen} onOpenChange={handleOpenChange}>
          <DialogPrimitive.Portal>
-           <DialogPrimitive.Overlay
-             className="bg-surface-media-overlay/90 fixed inset-0 z-[250]"
-@@ -184,7 +184,7 @@ const ImagePreview = ({
-             </div>
-           </DialogPrimitive.Content>
+@@ -186,3 +186,3 @@ const ImagePreview = ({
          </DialogPrimitive.Portal>
 -      </DialogPrimitive.Root>
 +      </Dialog>
      </>
-   );
- };
 diff --git a/packages/chat/src/components/parts/DialogImage.tsx b/packages/chat/src/components/parts/DialogImage.tsx
 index e0457a89d737d3574f39786af24c9ff9a025c809..e498b04b3529d7ccb2770797c62d90e25f1bb138 100644
 --- a/packages/chat/src/components/parts/DialogImage.tsx
 +++ b/packages/chat/src/components/parts/DialogImage.tsx
-@@ -4,6 +4,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
- import { X, ArrowDownToLine, RotateCcw } from 'lucide-react';
- import {
+@@ -6,2 +6,3 @@ import {
    Button,
 +  Dialog,
    MorphIcon,
-   TooltipAnchor,
-   useLocalize,
-@@ -266,7 +267,7 @@ export default function DialogImage({
-   const getImageMaxWidth = () => (detailsBeside ? 'calc(90vw - 20rem)' : '90vw');
- 
+@@ -268,3 +269,3 @@ export default function DialogImage({
    return (
 -    <DialogPrimitive.Root open={isOpen} onOpenChange={onOpenChange}>
 +    <Dialog open={isOpen} onOpenChange={onOpenChange}>
        <DialogPrimitive.Portal>
-         <DialogPrimitive.Overlay
-           className="bg-surface-media-overlay/90 fixed inset-0 z-[250]"
-@@ -482,6 +483,6 @@ export default function DialogImage({
-           )}
-         </DialogPrimitive.Content>
+@@ -484,3 +485,3 @@ export default function DialogImage({
        </DialogPrimitive.Portal>
 -    </DialogPrimitive.Root>
 +    </Dialog>
    );
- }
 diff --git a/packages/chat/src/components/subagents/panel.tsx b/packages/chat/src/components/subagents/panel.tsx
 index 3c8c6d0f333bbb921cfa4b2c6cc6f2196702ad5a..b85557a384167ad5cfe0e52f794c59e697041aed 100644
 --- a/packages/chat/src/components/subagents/panel.tsx
 +++ b/packages/chat/src/components/subagents/panel.tsx
-@@ -10,6 +10,7 @@ import {
-   useFocusTrap,
-   useMediaQuery,
+@@ -12,2 +12,3 @@ import {
    ControlCombobox,
 +  OverlayBack,
    useToastContext,
- } from '@librechat/client';
- import type {
-@@ -1602,7 +1603,7 @@ export default function SubagentThreadPanel({
-     );
-   }
+@@ -1604,3 +1605,3 @@ export default function SubagentThreadPanel({
  
 -  return (
 +  const panel = (
      <aside
-       ref={panelRef}
-       tabIndex={-1}
-@@ -1775,6 +1776,11 @@ export default function SubagentThreadPanel({
-       )}
-     </aside>
+@@ -1777,2 +1778,7 @@ export default function SubagentThreadPanel({
    );
 +  return (
 +    <OverlayBack open={isMobile} onClose={close}>
@@ -1589,8 +1521,6 @@ index 3c8c6d0f333bbb921cfa4b2c6cc6f2196702ad5a..b85557a384167ad5cfe0e52f794c59e6
 +    </OverlayBack>
 +  );
  }
- 
- function HistoricalEventTaskActivity({
 diff --git a/packages/client/src/Providers/Overlay.tsx b/packages/client/src/Providers/Overlay.tsx
 new file mode 100644
 index 0000000000000000000000000000000000000000..21cf998f6f368d85bf106050582c07b948839a9c
@@ -1642,21 +1572,18 @@ diff --git a/packages/client/src/Providers/index.ts b/packages/client/src/Provid
 index 41cb62ae9cb5f40f8c24c42a323e9a8928426981..fbd6543974deec62e9586bf0f7684d72e7b3eb5d 100644
 --- a/packages/client/src/Providers/index.ts
 +++ b/packages/client/src/Providers/index.ts
-@@ -1,2 +1,3 @@
- export { default as ToastProvider } from './ToastContext';
+@@ -2 +2,2 @@ export { default as ToastProvider } from './ToastContext';
  export * from './ToastContext';
 +export * from './Overlay';
 diff --git a/packages/client/src/components/AlertDialog.tsx b/packages/client/src/components/AlertDialog.tsx
 index 78342026879bba75bd414806e286b4a28ab7031a..a9376be2a77b6ba2669e4ec6b8b6cc79848bf2c8 100644
 --- a/packages/client/src/components/AlertDialog.tsx
 +++ b/packages/client/src/components/AlertDialog.tsx
-@@ -1,10 +1,28 @@
- import * as React from 'react';
- import { JSX } from 'react/jsx-runtime';
+@@ -3,2 +3,3 @@ import { JSX } from 'react/jsx-runtime';
  import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
 +import { OverlayBack } from '../Providers/Overlay';
  import { useDialogDepth } from './OriginalDialog';
- import { cn, disabledFillClasses } from '~/utils';
+@@ -6,3 +7,20 @@ import { cn, disabledFillClasses } from '~/utils';
  
 -const AlertDialog: React.FC<AlertDialogPrimitive.AlertDialogProps> = AlertDialogPrimitive.Root;
 +const AlertDialog: React.FC<AlertDialogPrimitive.AlertDialogProps> = ({
@@ -1678,8 +1605,6 @@ index 78342026879bba75bd414806e286b4a28ab7031a..a9376be2a77b6ba2669e4ec6b8b6cc79
 +  );
 +};
  
- const AlertDialogTrigger: React.ForwardRefExoticComponent<
-   AlertDialogPrimitive.AlertDialogTriggerProps & React.RefAttributes<HTMLButtonElement>
 diff --git a/packages/client/src/components/DialogRoot.tsx b/packages/client/src/components/DialogRoot.tsx
 new file mode 100644
 index 0000000000000000000000000000000000000000..7a5cd371bda59a41b860a534bf8b8ef58d80c3ff
@@ -1713,20 +1638,14 @@ index 0000000000000000000000000000000000000000..7a5cd371bda59a41b860a534bf8b8ef5
 +  );
 +}
 diff --git a/packages/client/src/components/OriginalDialog.tsx b/packages/client/src/components/OriginalDialog.tsx
-index d00f4f2e0e25b29a8c723caddec249d1053ace7d..422aa47aff32f97a41532bb26a5594678def53ac 100644
+index ce7d17ce248b46c464c663685091d2860176d3c9..e6039c0f7edcb1e74b16767535422dfccfa4b299 100644
 --- a/packages/client/src/components/OriginalDialog.tsx
 +++ b/packages/client/src/components/OriginalDialog.tsx
-@@ -5,6 +5,7 @@ import { cx } from 'class-variance-authority';
- import * as DialogPrimitive from '@radix-ui/react-dialog';
- import type { FocusOutline } from './Focus';
+@@ -7,2 +7,3 @@ import type { FocusOutline } from './Focus';
  import { focusOutlineVariants } from './Focus';
 +import DialogRoot from './DialogRoot';
  import { cn } from '~/utils';
- 
- const DialogDepthContext = React.createContext(0);
-@@ -116,9 +117,9 @@ const Dialog: React.ForwardRefExoticComponent<OGDialogProps & React.RefAttribute
- 
-       return (
+@@ -137,5 +138,5 @@ const Dialog: React.ForwardRefExoticComponent<OGDialogProps & React.RefAttribute
          <DialogDepthContext.Provider value={currentDepth}>
 -          <DialogPrimitive.Root {...props} onOpenChange={handleOpenChange}>
 +          <DialogRoot {...props} onOpenChange={handleOpenChange}>
@@ -1734,8 +1653,6 @@ index d00f4f2e0e25b29a8c723caddec249d1053ace7d..422aa47aff32f97a41532bb26a559467
 -          </DialogPrimitive.Root>
 +          </DialogRoot>
          </DialogDepthContext.Provider>
-       );
-     },
 diff --git a/packages/client/src/components/__tests__/dialogBack.spec.tsx b/packages/client/src/components/__tests__/dialogBack.spec.tsx
 new file mode 100644
 index 0000000000000000000000000000000000000000..362cfe247596ab1711b374c746a2e99656784778

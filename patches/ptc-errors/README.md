@@ -1,6 +1,6 @@
 # PTC 协议失败状态
 
-状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`keep`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 已知 ToolMessage/MCP 协议错误在 SDK 输出和 host trace 中保持失败；不把任意业务 status/error 字段当协议错误。
 
@@ -17,9 +17,11 @@
 
 上游 SDK 4.2.2 对正常返回的结果仍标成功；仅有同名 status 字段不足以替代本组。
 
+v0.8.9 在工具执行 observer 之前归一化协议错误及调用标识，应用继续收到可关联的失败事件。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

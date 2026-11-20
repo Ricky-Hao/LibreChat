@@ -1,6 +1,6 @@
 # 按 callee schema 处理 PTC intent
 
-状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`keep`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 仅在实际 callee schema 允许时去掉 UI intent，保留业务 intent、schema 校验与 rich results。该调用正确性与可选标签长度分开维护。
 
@@ -17,9 +17,11 @@
 
 固定基线已含 stripIntentLabelsFromToolDefinitions；不再复制 helper，也不因此依赖 intent-labels。SDK 调用语义及 host handler 仍需保留。
 
+v0.8.9 的 programmatic 输入遥测由当前执行入口转发。仍使用 SDK 调用标识，保留由工具 schema 决定的参数过滤。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

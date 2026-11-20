@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "base": "e6567c7a681ce67869dce31486a21d3a25d6931b",
+  "base": "d4e85d2205c78413ee27d631d7e3b7313556f21d",
   "patches": [
     {
       "id": "sdk",
@@ -17,10 +17,11 @@
         "e2e/specs/mock/scenarios/registry.spec.ts",
         "package-lock.json",
         "packages/api/package.json",
+        "packages/chat/src/react/subagents/__tests__/outcome.spec.ts",
         "vendor/README.md",
-        "vendor/agents-4.2.2-ricky.1.patch",
+        "vendor/agents-4.2.11-ricky.1.patch",
         "vendor/agents.json",
-        "vendor/librechat-agents-4.2.2-ricky.1.tgz",
+        "vendor/librechat-agents-4.2.11-ricky.1.tgz",
         "vendor/verify-agents.mjs"
       ],
       "tests": "patches/sdk/tests.json"
@@ -382,17 +383,18 @@
         "api/server/routes/__tests__/messages-subagent-thread.spec.js",
         "api/server/routes/__tests__/messages-update.spec.js",
         "api/server/routes/messages.js",
+        "client/src/Providers/FilesHostContext.tsx",
         "client/src/Providers/HistoryWindowContext.ts",
         "client/src/Providers/MessagesHostContext.tsx",
         "client/src/components/Chat/ChatView.tsx",
         "client/src/components/Chat/Messages/Content/EditContentParts.tsx",
         "client/src/components/Chat/Messages/Content/EditMessage.tsx",
-        "client/src/components/Chat/Messages/Content/Parts/Attachment.tsx",
         "client/src/components/Chat/Messages/Content/Parts/LazyAttachment.tsx",
         "client/src/components/Chat/Messages/Content/Parts/LogContent.tsx",
         "client/src/components/Chat/Messages/Content/Parts/ToolArtifactCard.tsx",
         "client/src/components/Chat/Messages/Content/Parts/__tests__/LazyAttachment.test.tsx",
         "client/src/components/Chat/Messages/Content/Parts/__tests__/LogContent.test.tsx",
+        "client/src/components/Chat/Messages/Content/Parts/attachmentHost.tsx",
         "client/src/components/Chat/Messages/Content/Parts/attachmentTypes.ts",
         "client/src/components/Chat/Messages/Content/__tests__/EditContentParts.spec.tsx",
         "client/src/components/Chat/Messages/Content/__tests__/EditMessage.spec.tsx",
@@ -415,6 +417,7 @@
         "client/src/locales/en/translation.json",
         "client/src/routes/History.tsx",
         "client/src/routes/Root.tsx",
+        "client/src/routes/__tests__/Record.spec.tsx",
         "client/test/messagesHost.tsx",
         "client/test/turnServices.ts",
         "docs/history-window-patch.md",
@@ -426,14 +429,18 @@
         "e2e/specs/mock/scenarios/mobile-drawer-large-chat.spec.ts",
         "e2e/specs/mock/scenarios/reply-read-state.spec.ts",
         "librechat.example.yaml",
-        "packages/api/src/messages/history.spec.ts",
-        "packages/api/src/messages/history.ts",
+        "packages/api/src/messages/historyWindow.spec.ts",
+        "packages/api/src/messages/historyWindow.ts",
         "packages/api/src/messages/index.ts",
         "packages/chat/src/__fixtures__/messagesHost.ts",
+        "packages/chat/src/components.ts",
+        "packages/chat/src/components/messages/MessageRow.tsx",
         "packages/chat/src/components/messages/MessagesView.tsx",
         "packages/chat/src/components/messages/__tests__/MessagesView.spec.tsx",
         "packages/chat/src/components/messages/thread/MultiMessage.tsx",
         "packages/chat/src/components/pane/__tests__/messages.spec.tsx",
+        "packages/chat/src/components/parts/Attachment.tsx",
+        "packages/chat/src/components/parts/attachmentTypes.ts",
         "packages/chat/src/core/history.ts",
         "packages/chat/src/core/index.ts",
         "packages/chat/src/core/parts/rerunParent.ts",
@@ -442,8 +449,11 @@
         "packages/chat/src/react/chat/__fixtures__/services.ts",
         "packages/chat/src/react/chat/host.tsx",
         "packages/chat/src/react/chat/turns.ts",
+        "packages/chat/src/react/files.tsx",
+        "packages/chat/src/react/messages/__tests__/offscreen.spec.tsx",
         "packages/chat/src/react/messages/__tests__/rows.spec.tsx",
         "packages/chat/src/react/messages/host.tsx",
+        "packages/chat/src/react/messages/offscreen.tsx",
         "packages/chat/src/react/messages/rows.ts",
         "packages/chat/test/consumer.spec.tsx",
         "packages/data-provider/src/api-endpoints.ts",
@@ -503,20 +513,25 @@
     },
     {
       "id": "mcp-ping",
-      "status": "awaiting-upstream",
+      "status": "keep",
       "depends_on": [],
       "patch": "patches/mcp-ping/changes.patch",
       "paths": [
         "packages/api/src/mcp/__tests__/ping.integration.spec.ts",
-        "packages/api/src/mcp/__tests__/ping.spec.ts",
-        "packages/api/src/mcp/connection.ts"
+        "packages/api/src/mcp/__tests__/ping.spec.ts"
       ],
-      "tests": "patches/mcp-ping/tests.json"
+      "tests": "patches/mcp-ping/tests.json",
+      "replacement": {
+        "commit": "413456941ccc079f5b132b245fbfa7a7bf756a60",
+        "evidence": "connection.ts 删除相同的 lastPingTime 与空结果拦截。MCPConnectionPing.test.ts 覆盖真实 SDK 的连续 server ping、普通调用及 client liveness 失败/降级。载荷继续覆盖 Streamable HTTP 同一 session 的心跳、时钟偏移、重连和非 ping 空结果。"
+      }
     },
     {
       "id": "mcp-images",
-      "status": "awaiting-upstream",
-      "depends_on": [],
+      "status": "keep",
+      "depends_on": [
+        "sdk"
+      ],
       "patch": "patches/mcp-images/changes.patch",
       "paths": [
         "api/app/clients/specs/BaseClient.test.js",
@@ -524,18 +539,23 @@
         "packages/api/src/mcp/__tests__/parsers.test.ts",
         "packages/api/src/mcp/parsers.ts"
       ],
-      "tests": "patches/mcp-images/tests.json"
+      "tests": "patches/mcp-images/tests.json",
+      "replacement": {
+        "commit": "9554046d5a2d36f120f87766ffffcf08b0bc7042",
+        "evidence": "The pinned base collects standalone and embedded images into display-only imageAttachments for unknown providers. getImageAttachmentContent feeds the ordinary agent and Responses attachment callbacks, and preserves content for recognized providers. The remaining diff omits inline image bytes from fallback model text and retains parser, SDK invocation, and host persistence contracts."
+      }
     },
     {
       "id": "sidebar-focus",
-      "status": "awaiting-upstream",
+      "status": "upstream",
       "depends_on": [],
-      "patch": "patches/sidebar-focus/changes.patch",
-      "paths": [
-        "client/src/components/Chat/Menus/OpenSidebar.tsx",
-        "client/src/components/Chat/Menus/__tests__/OpenSidebar.spec.tsx"
-      ],
-      "tests": "patches/sidebar-focus/tests.json"
+      "patch": null,
+      "paths": [],
+      "tests": "patches/sidebar-focus/tests.json",
+      "replacement": {
+        "commit": "fa9031ae74f32e21c42d26c082a6b704b2e9bfd6",
+        "evidence": "OpenSidebar.tsx 在桌面 mode=none 时仅当 opener 或 body 仍持有焦点才执行延迟 handoff，移动 drawer 保留其 commit 时的 handoff。OpenSidebar.spec.tsx 覆盖主动焦点、opener/body 及 slide/snap。sidebar-focus.spec.ts 由 c380c9e5d53eecf1569da2e151a9188e11a628a6 稳定浏览器断言。"
+      }
     },
     {
       "id": "intent-labels",
@@ -545,12 +565,12 @@
       "paths": [
         "client/src/components/Chat/Messages/Content/CodeAnalyze.tsx",
         "client/src/components/Chat/Messages/Content/Parts/MemoryCall.tsx",
-        "client/src/components/Chat/Messages/Content/ProgressText.tsx",
-        "client/src/components/Chat/Messages/Content/RetrievalCall.tsx",
-        "client/src/components/Chat/Messages/Content/__tests__/ProgressText.test.tsx",
         "e2e/specs/mock/activity-fold.spec.ts",
         "packages/api/src/agents/intent.spec.ts",
         "packages/api/src/agents/intent.ts",
+        "packages/chat/src/components/parts/ProgressText.tsx",
+        "packages/chat/src/components/parts/Retrieval.tsx",
+        "packages/chat/src/components/parts/__tests__/ProgressText.spec.tsx",
         "packages/chat/src/components/parts/rows.ts",
         "packages/chat/src/core/parts/__tests__/activityLabels.spec.ts",
         "packages/chat/src/core/parts/activityLabels.ts",
@@ -607,6 +627,17 @@
         ".github/workflows/rickyhao-dev-image.yml"
       ],
       "tests": "patches/fork-image/tests.json"
+    },
+    {
+      "id": "pinned-drag",
+      "status": "local",
+      "depends_on": [],
+      "patch": "patches/pinned-drag/changes.patch",
+      "paths": [
+        "client/src/components/Conversations/PinnedSection.tsx",
+        "client/src/components/Conversations/__tests__/PinnedSection.spec.tsx"
+      ],
+      "tests": "patches/pinned-drag/tests.json"
     },
     {
       "id": "test-adaptations",

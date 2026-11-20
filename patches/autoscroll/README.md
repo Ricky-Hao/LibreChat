@@ -1,6 +1,6 @@
 # 重访运行会话的自动滚动
 
-状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`keep`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 区分显式发送与恢复 submission identity，保留导航 readiness、手动 detach 和 history replacement 后的 bottom-follow。
 
@@ -20,9 +20,11 @@
 
 本基线实现与回归入口均在 `packages/chat/src/react/messages/`。保留上游对象输入接口，由调用方传 navigation、发送状态、readiness 和偏好，不引入应用 Provider 或 Jotai 依赖。
 
+v0.8.9 的 `ChatView` 经延迟加载的消息渲染器传递当前会话、路由就绪状态及显式发送标识。聊天包继续提供 `flatThread` 与消息 props。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

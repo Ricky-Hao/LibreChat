@@ -1,6 +1,6 @@
 # 运行中 subagent 快照
 
-状态：`keep`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`keep`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 保留稀疏 parent-message 恢复快照、归属、memory/Redis 路径、tool timing 及客户端重建。
 
@@ -18,9 +18,11 @@
 
 retainedSubagentContent.ts 负责运行快照；上游 subagentContent.ts 是持久 task journal，职责不同，不能按名字相近替换。
 
+v0.8.9 兼容终态与 detached child 事件，继续按调用 occurrence 绑定父消息和重连快照。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

@@ -1,6 +1,6 @@
 # 外部任务回调与 PTC bridge
 
-状态：`feature`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`feature`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 注册工具、owner/tenant/anchor 绑定、终态持久接收、幂等、过期、child-context 拒绝、清理及原会话续接组成同一能力。PTC bridge 同时保留 opt-in/tool 绑定、SDK inner-call identity、可信 host context 和 trace 脱敏。marker 不授予权限。
 
@@ -20,9 +20,11 @@
 
 direct 与 PTC 共享注册、持久化和可信上下文，合为一组。基线 retry helper 已同源，本组只保留 callback index 调用方。应用指南为 docs/task-callbacks.md 与 agents/triggers/README.md。
 
+v0.8.9 同时保留 scheduler 就绪、queued turns 和 Responses 入口。直接及 PTC callback 继续由 host 管理授权、原会话绑定和终态持久化。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

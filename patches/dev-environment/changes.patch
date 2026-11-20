@@ -1,9 +1,9 @@
 diff --git a/.devcontainer/Dockerfile b/.devcontainer/Dockerfile
-index 68f64289ac86180b0e8556d2fc585e83846f5c5d..f20192f568b977afc2271b9f01d9336057bf8d2c 100644
+index df967b099c6e4ee7f0a441cd4e889553408777ad..ac24e666a877adb617bdbab439d335be85f79ca8 100644
 --- a/.devcontainer/Dockerfile
 +++ b/.devcontainer/Dockerfile
 @@ -1,5 +1,21 @@
- FROM node:24.22.1-bookworm
+ FROM docker.io/library/node:24.22.3-bookworm
  
 -RUN useradd -m -s /bin/bash vscode
 -RUN mkdir -p /workspaces && chown -R vscode:vscode /workspaces
@@ -447,10 +447,10 @@ index 4320d5741d357a9aadad5db055af4e77c039fc91..3d7d07008a4df2c0a47326d6aa42f728
 +!.envbuilder.tmp/envbuilder
 +!.envbuilder.tmp/image
 diff --git a/.github/workflows/frontend-review.yml b/.github/workflows/frontend-review.yml
-index 652f48676d1e1d50257f9f6c9c9c70b8491c85c2..862b55aac586908e78586640a2596ec801639f2d 100644
+index 83ccd455de1a27eacc48b6cb05ee7efe87825903..4e58bc6dbf062af0d8297e45cd4e05316ea4a267 100644
 --- a/.github/workflows/frontend-review.yml
 +++ b/.github/workflows/frontend-review.yml
-@@ -52,6 +52,7 @@ env:
+@@ -66,6 +66,7 @@ env:
  jobs:
    client-build-regression:
      name: Client build recovery regression
@@ -458,8 +458,8 @@ index 652f48676d1e1d50257f9f6c9c9c70b8491c85c2..862b55aac586908e78586640a2596ec8
      runs-on: ubuntu-latest
      timeout-minutes: 5
      steps:
-@@ -96,6 +97,15 @@ jobs:
-             packages/api/node_modules
+@@ -112,6 +113,15 @@ jobs:
+             packages/channel-gateway/node_modules
              api/node_modules
            key: ${{ steps.cache-node-modules.outputs.cache-primary-key }}
 +      # Loading the real Vite config imports both packages through their built entries.

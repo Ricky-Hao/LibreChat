@@ -1,6 +1,6 @@
 # 行为映射与替代边界
 
-本表吸收独立文档提交 `2e79586e547131de06494bed2f3274f4745ca435` 的 26 行状态记录，并保留完整 fork 源 `38c026db83d0ca12a067083b5c1551c1bca2754b` 的来源信息。执行基线固定为 upstream main `e6567c7a681ce67869dce31486a21d3a25d6931b`；原记录对 upstream dev `0eadbc45b1304b5986ce1c324bfda1421faaabfe` 的比较只作为历史来源。
+本表吸收独立文档提交 `2e79586e547131de06494bed2f3274f4745ca435` 的 26 行状态记录，并保留完整 fork 源 `38c026db83d0ca12a067083b5c1551c1bca2754b` 的来源信息。执行基线固定为 upstream main `d4e85d2205c78413ee27d631d7e3b7313556f21d`（v0.8.9）；原记录对 upstream dev `0eadbc45b1304b5986ce1c324bfda1421faaabfe` 的比较只作为历史来源。
 
 `manifest.json` 是唯一执行顺序。本表按原行为记录顺序展示映射，目录内 README 记录完整来源 SHA、后续修正、依赖及维护合同，`tests.json` 指向生成应用中的实际检查入口。
 
@@ -12,7 +12,7 @@
 | 4. Running subagent snapshots | [subagent-snapshots](../patches/subagent-snapshots/README.md) | keep | 稀疏 parent-message 快照、归属、memory/Redis 与客户端重建；不同于上游持久 task journal。 |
 | 5. Auto-scroll on revisit and history replacement | [autoscroll](../patches/autoscroll/README.md) | keep | 显式发送与恢复 identity、导航 readiness、手动 detach 和历史替换后的 bottom-follow。 |
 | 6. Summary/reasoning normalization and usable checkpoints | [summary-checkpoints](../patches/summary-checkpoints/README.md) | keep | 多块/空 reasoning、失败/空白/legacy stub 拒绝和保留不确定性的摘要指引。 |
-| 7. SDK 4.2.2 summary coverage consumers | [summary-checkpoints](../patches/summary-checkpoints/README.md) | keep | coverage.retainedFromMessageId 的消息/actor 存储、冷 parent-chain 读取、可信 warm overlay 和旧摘要 fallback；包含 PR #14 后续修正。 |
+| 7. SDK summary coverage consumers | [summary-checkpoints](../patches/summary-checkpoints/README.md) | keep | coverage.retainedFromMessageId 的消息/actor 存储、冷 parent-chain 读取、可信 warm overlay 和旧摘要 fallback；包含 PR #14 后续修正。 |
 | 8. Skill source and assistant phases | [skill-provenance](../patches/skill-provenance/README.md) | keep | source identity/version、历史版本不确定性和 commentary/final 经转换、聚合及 reload 保真。 |
 | 9. Schema-aware PTC intent | [ptc-invocation](../patches/ptc-invocation/README.md) | keep | 按实际 callee schema 去除 UI intent，保留业务 intent、校验与 rich result；基线已有的 helper 不重复携带。 |
 | 10. PTC protocol error status | [ptc-errors](../patches/ptc-errors/README.md) | keep | 已知 ToolMessage/MCP 协议失败在 SDK 输出与 host trace 保持失败；任意业务 status/error 不算协议失败。 |
@@ -22,43 +22,51 @@
 | 14. Display history, lazy attachments and inactive-cache retention | [history-window](../patches/history-window/README.md) | feature | observer admission、paging/anchor、DB body 排除、鉴权懒读取、缓存所有权及 export/share/edit 完整调用；非硬 DOM/heap 上限。 |
 | 15. Native mobile overlay dismissal | [native-overlays](../patches/native-overlays/README.md) | feature | CloseWatcher/Navigation API、层栈、受控/非受控 dialog、Forward 和匹配 FINAL sync；不恢复 synthetic history，不承诺不支持原生 API 浏览器的通用 Back 拦截。 |
 | 16. Vendor chunk classification | [vendor-chunks](../patches/vendor-chunks/README.md) | upstream | 固定基线已含 #17921，采用上游第一层 node_modules 嵌套归组及 Windows 路径规范化，移除本地末段裁剪载荷；保留真实 config probe 合同。 |
-| 17. MCP server-initiated ping responses | [mcp-ping](../patches/mcp-ping/README.md) | awaiting-upstream | 固定基线保留合法空成功响应；目标确含 #18020 等价实现与回归覆盖后移除本地变体。 |
-| 18. Unknown-provider MCP display images | [mcp-images](../patches/mcp-images/README.md) | awaiting-upstream | 目标确含 #18000 后采用 display-only imageAttachments；未知 provider 不声明 vision 支持，fallback 模型文本 base64 膨胀仍未解决。 |
-| 19. Delayed sidebar focus | [sidebar-focus](../patches/sidebar-focus/README.md) | awaiting-upstream | 目标确含 #18001 后采用 opener/body guard，保留 mobile drawer commit handoff；不替代 overlay 能力。 |
+| 17. MCP server-initiated ping responses | [mcp-ping](../patches/mcp-ping/README.md) | keep | 上游处理合法空 ping 响应。保留同 session 心跳、时钟偏移、重连与非 ping 空结果合同。 |
+| 18. Unknown-provider MCP display images | [mcp-images](../patches/mcp-images/README.md) | keep | 采用上游的 display-only `imageAttachments` 和交付回调。保留回退文本过滤、图片校验与 SDK/host 消费验证。 |
+| 19. Delayed sidebar focus | [sidebar-focus](../patches/sidebar-focus/README.md) | upstream | 采用固定基线的 opener/body guard 和 mobile drawer commit handoff。继续执行组件与浏览器测试。 |
 | 20. Shared index retry helper | [index-retry](../patches/index-retry/README.md) | upstream | 基线已含 createIndexesWithRetry 与 retry.spec.ts；无载荷，callback 索引初始化调用方仍在 task-callbacks。 |
 | 21. Intent label limits and mobile wrapping | [intent-labels](../patches/intent-labels/README.md) | local | 标签长度和窄屏呈现可单独放弃；保留上游 timing/error UI，与 invocation 正确性分开。 |
 | 22. Subagent initialization diagnostics | [subagent-diagnostics](../patches/subagent-diagnostics/README.md) | local | correlation/stage 细节可简化，授权、模型、配置校验及安全失败分类仍须保留。 |
 | 23. Internal files versus delivered artifacts | [file-guidance](../patches/file-guidance/README.md) | local | workspace/scratch/delivery 模型指引；不构成 collector 或秘密隔离保证，不单独作为保留完整 fork SDK 的理由。 |
 | 24. Visible conversation loading priority | [loading-priority](../patches/loading-priority/README.md) | local | 提前可见会话查询，沿用 enabled 条件、不增加查询；独立于历史窗口，性能需实际 Lighthouse。 |
 | 25. Devcontainer, fork image CI, build/test adaptations | [dev-environment](../patches/dev-environment/README.md)、[fork-image](../patches/fork-image/README.md)、[test-adaptations](../patches/test-adaptations/README.md) | local | 分别维护 Coder/locked setup、旧 rickyhao/dev 镜像入口兼容载荷和当前有效 fixture；活动镜像入口在补丁仓根，从 manifest 生成应用。保留基线 a11y workflow，不重放过期 fixture。 |
-| 26. Vendored SDK, lock/build wiring and prior artifacts | [sdk](../patches/sdk/README.md) | keep | 只携带当前消费的 4.2.2-ricky.1、源码 patch、元数据、锁文件、主机消费方和构建接线；历史归档不重放。 |
+| 26. Vendored SDK, lock/build wiring and prior artifacts | [sdk](../patches/sdk/README.md) | keep | 只携带当前消费的 4.2.11-ricky.1、源码 patch、元数据、锁文件、主机消费方和构建接线；历史归档不重放。 |
 
 另有 [contributor-guidance](../patches/contributor-guidance/README.md) 文档载荷（local），保存应用 AGENTS 和 PR template 的净差异。根 AGENTS 负责补丁仓自身维护。合并三对行为、拆出环境/镜像/测试责任并保留贡献指南后，原清单共 26 条目、24 份载荷。
 
-随后新增 [file-search-provisioning](../patches/file-search-provisioning/README.md)（keep）：纯代码／MCP PTC 不无条件向量化附件；实际内层文件搜索先准备再重载工具，无 RAG 配置时定义、加载、上下文与 callback 一致停用搜索。保留任务 callback、权限、Agent／用户 scope、失败、重试和取消。当前清单共 27 条目、25 份载荷：keep 10、feature 4、awaiting-upstream 3、local 8、upstream 2。
+随后新增 [file-search-provisioning](../patches/file-search-provisioning/README.md)（keep）：纯代码／MCP PTC 不无条件向量化附件；实际内层文件搜索先准备再重载工具，无 RAG 配置时定义、加载、上下文与 callback 一致停用搜索。保留任务 callback、权限、Agent／用户 scope、失败、重试和取消。
+
+本轮新增 [pinned-drag](../patches/pinned-drag/README.md)（local），修复固定会话已在拖拽预览中换位、放置时仍保存旧顺序的竞态。当前清单共 28 条目、25 份载荷，包含 `keep` 12、`feature` 4、`local` 9 和 `upstream` 3。
 
 ## 替代证据
 
-以下四项的来源和固定基线实现已核对。`vendor-chunks` 已完全替代；其余三项继续应用：
+替代提交均为 `d4e85d2205c78413ee27d631d7e3b7313556f21d` 的祖先。
 
-| 责任组 | 上游状态与来源 | 适用条件 |
+| 责任组 | 上游提交 | 固定基线中的证据与剩余责任 |
 | --- | --- | --- |
-| vendor-chunks | [#17921](https://github.com/LibreChat-AI/LibreChat/pull/17921)，merge `fc3b86acbc0a5290154b25f7a0091641667cd14b`；#15907 被替代，#17567 已完成 | 替代提交是固定基线祖先；`client/vite.config.ts` 按第一层 node_modules 分类，嵌套包跟随所属外层包，规范化 Windows 分隔符。对应 Playwright 合同执行两个真实配置 probe。 |
-| mcp-ping | [#18020](https://github.com/LibreChat-AI/LibreChat/pull/18020) 已合入 dev；PR head `7b59bc972982e6424cb48918c5c1d7de42391717`；#17568 已完成 | PR head 不是 merge SHA；更新基线时取得目标实际包含的替代提交与实现证据。 |
-| mcp-images | [#18000](https://github.com/LibreChat-AI/LibreChat/pull/18000) 已合入 dev；PR head `b8f7c5d2b97557ed85a71027c933f61c33bd806a`；#17569 已完成 | PR head 不是 merge SHA；核对附件持久化、display-only 路径与剩余 base64 边界。 |
-| sidebar-focus | [#18001](https://github.com/LibreChat-AI/LibreChat/pull/18001) 已合入 dev；PR head `e86cc7c687905de4e277e66a6f93a036e16617dc`；#17570 已完成 | PR head 不是 merge SHA；核对 deliberate focus 与 mobile drawer handoff。 |
+| vendor-chunks | `fc3b86acbc0a5290154b25f7a0091641667cd14b` [#17921](https://github.com/LibreChat-AI/LibreChat/pull/17921) | Vite 按第一层 `node_modules` 分类并规范化 Windows 分隔符。`vendor-chunk-paths.spec.ts` 执行真实配置探针。 |
+| mcp-ping | `413456941ccc079f5b132b245fbfa7a7bf756a60` [#18020](https://github.com/LibreChat-AI/LibreChat/pull/18020) | `connection.ts` 删除 `lastPingTime` 与空响应拦截。`MCPConnectionPing.test.ts` 用真实 SDK 覆盖 ping 和 client liveness。本组仍携带 Streamable HTTP 会话、时钟偏移、重连与普通空响应测试。 |
+| mcp-images | `9554046d5a2d36f120f87766ffffcf08b0bc7042` [#18000](https://github.com/LibreChat-AI/LibreChat/pull/18000) | Agent 与 Responses 回调经 `getImageAttachmentContent` 接收仅用于展示的附件。载荷继续过滤未知 provider 回退文本中的图片字节并验证可交付格式。 |
+| sidebar-focus | `fa9031ae74f32e21c42d26c082a6b704b2e9bfd6` [#18001](https://github.com/LibreChat-AI/LibreChat/pull/18001) | `OpenSidebar.tsx` 保留桌面主动焦点及移动 drawer handoff，`OpenSidebar.spec.tsx` 覆盖组件行为，`c380c9e5d53eecf1569da2e151a9188e11a628a6` 补浏览器证据。 |
+| index-retry | `e2b2839375d5e8052dec4785bf3117ce27aa67dc` | 上游有 `createIndexesWithRetry` 与 `retry.spec.ts`。callback 索引调用方继续由 `task-callbacks` 维护。 |
 
-index-retry 的 replacement commit 为 `e2b2839375d5e8052dec4785bf3117ce27aa67dc`，已在固定基线祖先链，helper 与基线一致。当前跳过 vendor-chunks 和 index-retry 两项载荷。将来完全替代须记录完整 replacement.commit 和行为证据；部分替代只移除对应 hunks，不连带删除剩余能力、持久数据合同或调用方。
+## v0.8.9 接口适配
+
+- SDK 消费迁至 `4.2.11-ricky.1`。更新 programmatic telemetry、tool execution observer 和初始化模型调用，保留 intent、inner-call identity、错误分类、host 回调及模型授权。[SDK 来源](../patches/sdk/README.md)
+- 合并上游配置、queued turns、Responses 和 stream steering 新入口，保留 bounded reads、终态恢复、消息 ACL/retained prefix 及子 agent 归属和重连快照。
+- 历史窗口通过独立 API 模块和聊天包的宿主接口保留延迟读取，与上游 `loadHistoryRows` 共存。自动滚动接入延迟加载聊天界面，intent 标签接入聊天包的计时组件，原生 overlay 保留路由和移动端关闭行为。
+- 构建接线使用 v0.8.9 的 Node 和 workspace 路径。其余应用能力沿用对应的 manifest 分组及合同。
 
 ## 延续的贡献状态与验证边界
 
 文档来源记录：[#15906](https://github.com/LibreChat-AI/LibreChat/pull/15906) 为 draft，与未合入的 [#15966](https://github.com/LibreChat-AI/LibreChat/pull/15966) 重叠；保留仍需的预算/恢复更新，覆盖核实后再退役重复贡献。[#15955](https://github.com/LibreChat-AI/LibreChat/pull/15955) 未合入且已含原生 overlay 重写。已关闭未合入的 [#15864](https://github.com/LibreChat-AI/LibreChat/pull/15864) 动态密码消息不在本分支载荷；[#15851](https://github.com/LibreChat-AI/LibreChat/pull/15851) 已合入，无独立重放。这里只吸收既有状态记录，不执行外部评论或贡献整理。
 
-原始历史审计及其测试计数仍可从 [固定应用源](https://github.com/Ricky-Hao/LibreChat/blob/38c026db83d0ca12a067083b5c1551c1bca2754b/docs/fork-audit.md) 读取，不转为本阶段 pass。2026-11-11 的固定基线验收完成 71 项去重合同：54 项 focused、6 项 types、9 项 browser 和 2 项 project 全部通过。去重后 106 个 Jest suites、6074 个 tests 及 80 个 Playwright tests 通过；生产构建、固定基线 static-checks 和两个 Lighthouse 场景通过，原有失败及修正后补跑见[根 README](../README.md#验证)。loading-priority 的调用顺序本身仍不能证明性能改善，本轮 Lighthouse 只证明当前实验场景满足原预算。
+原始历史审计及其测试计数仍可从 [固定应用源](https://github.com/Ricky-Hao/LibreChat/blob/38c026db83d0ca12a067083b5c1551c1bca2754b/docs/fork-audit.md) 读取，不转为本阶段 pass。上一轮 `e6567c7a681ce67869dce31486a21d3a25d6931b` 在 2026-11-11 的验收完成 71 项去重合同：54 项 focused、6 项 types、9 项 browser 和 2 项 project 全部通过。去重后 106 个 Jest suites、6074 个 tests 及 80 个 Playwright tests 通过；生产构建、固定基线 static-checks 和两个 Lighthouse 场景通过，原有失败及修正后补跑见[根 README](../README.md#历史验收2026-11-11)。loading-priority 的调用顺序本身仍不能证明性能改善，当时的 Lighthouse 只证明当时的实验场景满足原预算。
 
 业务验收[应用提交 `4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79`](https://github.com/Ricky-Hao/LibreChat/commit/4ab9f9c44fdeab80d4f99dddf9e7ac7944f53f79) 与当时正式重放共用 tree `dcc8f4edc32c510e7eea8e9b514ef0117c02c90c`。原 pre-push 完整检查通过，普通 push 已成功；原门禁跳过的配置迁移测试、缺少 depcheck 的依赖检查及未涉及的 ESLint 配置检查见根 README，不计入已运行通过项。
 
-CI 采用阶段仅更新贡献指引载荷中的应用 `AGENTS.md`。当前[应用提交 `c81e3483feffc4e6ae50298dcf081139c1b3a98f`](https://github.com/Ricky-Hao/LibreChat/commit/c81e3483feffc4e6ae50298dcf081139c1b3a98f) 与正式重放共用新 tree `c00edf8153e549ffc044609af4a21c9eb409dc5f`；业务实现、锁文件和 Dockerfile 未变，复用既有真实验收及生产构建。新增根 CI 的 actionlint、触发/权限/checkout/context/metadata 结构检查、13 项工具自测和两 job 重放脚本的本地模拟通过，71 项合同入口计划明确为 `NOT RUN`。文档差异、格式和链接通过，应用文档增量经原 hooks 普通提交、推送；不将这些本地结果计为 GitHub Actions 或镜像发布成功。
+CI 采用阶段仅更新贡献指引载荷中的应用 `AGENTS.md`。当时的[应用提交 `c81e3483feffc4e6ae50298dcf081139c1b3a98f`](https://github.com/Ricky-Hao/LibreChat/commit/c81e3483feffc4e6ae50298dcf081139c1b3a98f) 与正式重放共用新 tree `c00edf8153e549ffc044609af4a21c9eb409dc5f`；业务实现、锁文件和 Dockerfile 未变，复用既有真实验收及生产构建。新增根 CI 的 actionlint、触发/权限/checkout/context/metadata 结构检查、13 项工具自测和两 job 重放脚本的本地模拟通过，71 项合同入口计划明确为 `NOT RUN`。文档差异、格式和链接通过，应用文档增量经原 hooks 普通提交、推送；不将这些本地结果计为 GitHub Actions 或镜像发布成功。
 
 全新 Devcontainer/Envbuilder 环境、可选 Compose、真实 Redis/provider 与 Safari/Firefox 没有新增验收证据。镜像发布和首次部署的后续实际结果见下节；本阶段未实测登录后的真实模型、工具、子 agent、PTC callback、Langfuse 或长期稳定性。
 

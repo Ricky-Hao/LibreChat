@@ -1,6 +1,6 @@
 # 原生移动端 overlay 关闭
 
-状态：`feature`。应用基线：`e6567c7a681ce67869dce31486a21d3a25d6931b`。
+状态：`feature`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
 保留 CloseWatcher/Navigation API 层栈、受控/非受控 dialog、Forward history 与匹配 FINAL route sync。正常跨文档、前进及不可取消导航保持浏览器行为。
 
@@ -21,9 +21,11 @@
 
 本基线的图片弹层与 subagent 面板已迁至 `packages/chat/src/components/parts/DialogImage.tsx` 和 `packages/chat/src/components/subagents/panel.tsx`；原生关闭增量随实际组件迁移。
 
+v0.8.9 用根 `Overlays` 路由承接原生关闭栈，上游懒加载的搜索、分享及 Responses review 路由保持可访问。
+
 ## 维护与验证
 
-先读当前调用方和 [26 组映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
+先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
 仅在所选基线包含等价替代并补齐证据后改为 `upstream`/`replaced`；部分替代只移除被覆盖的责任。
 
 [tests.json](tests.json) 是非空可执行合同，在生成的应用 checkout 运行。入口预检：

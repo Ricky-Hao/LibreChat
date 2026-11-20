@@ -1,47 +1,31 @@
 diff --git a/api/server/experimental.js b/api/server/experimental.js
-index 5290cfac983bec01a19a4835c427d09c6ee0aaff..cac4398a25e20c66efd4b582d8aef0f0ed436bf9 100644
+index fcacc7d851ccc58c869302002c57eb0d2c079e43..d89265a887bdf88caf0b6dab97f6008166df1e46 100644
 --- a/api/server/experimental.js
 +++ b/api/server/experimental.js
-@@ -664,6 +664,7 @@ if (cluster.isMaster) {
-     app.use('/api/user', routes.user);
-     app.use('/api/search', routes.search);
+@@ -694,2 +694,3 @@ if (cluster.isMaster) {
      app.use('/api/messages', routes.messages);
 +    app.use('/api/message-reads', routes.messageReads);
      app.use('/api/convos', routes.convos);
-     app.use('/api/pull-requests', preAuthTenantMiddleware, routes.pullRequests);
-     app.use('/api/presets', routes.presets);
 diff --git a/api/server/index.js b/api/server/index.js
-index 0d47bf31485488f1d7bb32dc3192bfa62d5153ad..4d9486651037c4eee11dc7c9c5068aabe04bac47 100644
+index e38945062559b446a2852228757337e12b82f7e7..783c49b93a21ebbddbddecac814f19a73627a641 100644
 --- a/api/server/index.js
 +++ b/api/server/index.js
-@@ -452,6 +452,7 @@ const startServer = async () => {
-   app.use('/api/user', routes.user);
-   app.use('/api/search', routes.search);
+@@ -472,2 +472,3 @@ const startServer = async () => {
    app.use('/api/messages', routes.messages);
 +  app.use('/api/message-reads', routes.messageReads);
    app.use('/api/convos', routes.convos);
-   app.use('/api/pull-requests', preAuthTenantMiddleware, routes.pullRequests);
-   app.use('/api/traces', routes.traces);
 diff --git a/api/server/routes/index.js b/api/server/routes/index.js
-index d0d678ab2d8bc1c3ee87ec193c89206ae62e5100..fc159f89837a29a430d1071348d91bd210cdac51 100644
+index ce071e85830b22eaba3a97b9c1e4f778fd9f6d38..5dd321f5aa9c2eee87606bb699e03bd14291fe9f 100644
 --- a/api/server/routes/index.js
 +++ b/api/server/routes/index.js
-@@ -15,6 +15,7 @@ const adminAuditLog = require('./admin/audit');
- const endpoints = require('./endpoints');
- const staticRoute = require('./static');
+@@ -17,2 +17,3 @@ const staticRoute = require('./static');
  const messages = require('./messages');
 +const messageReads = require('./message-reads');
  const memories = require('./memories');
- const presets = require('./presets');
- const projects = require('./projects');
-@@ -86,6 +87,7 @@ module.exports = {
-   presets,
-   balance,
+@@ -90,2 +91,3 @@ module.exports = {
    messages,
 +  messageReads,
    memories,
-   endpoints,
-   assistants,
 diff --git a/api/server/routes/message-reads.js b/api/server/routes/message-reads.js
 new file mode 100644
 index 0000000000000000000000000000000000000000..384ea15bbc64e9908f10b8fcbfb5893d887105ec
@@ -68,80 +52,65 @@ index 0000000000000000000000000000000000000000..384ea15bbc64e9908f10b8fcbfb5893d
 +router.get('/read', createMessageReadHandler(deps, 'read'));
 +module.exports = router;
 diff --git a/api/server/routes/prompts.test.js b/api/server/routes/prompts.test.js
-index 3e3cd9e152b2c1b6f0387ef23c00f05f68a7d613..b47a7f018abaa044e806bb0362ebf024a3eb2baf 100644
+index 4dd7154d30f661ec41ac9adae92a487b98a6ea6a..70decf7d5a9bd232bd3db473b7e3b554f5d79f9e 100644
 --- a/api/server/routes/prompts.test.js
 +++ b/api/server/routes/prompts.test.js
-@@ -23,8 +23,12 @@ jest.mock('~/server/services/Config', () => ({
- 
- jest.mock('~/models', () => {
+@@ -25,4 +25,10 @@ jest.mock('~/models', () => {
    const mongoose = require('mongoose');
-+  const { createMessageBudgetReader } = require('@librechat/api');
++  const { createMessageBudgetReader, createChannelStorageConfigReader } = require('@librechat/api');
    const { createMethods } = require('@librechat/data-schemas');
 +  // createMethods 不导出宿主初始化接口；复用真实 reader，保留 Config/app 的组合契约。
 +  const messageBudget = createMessageBudgetReader();
++  const channelStorageConfig = createChannelStorageConfigReader();
    const methods = createMethods(mongoose, {
++    getChannelStorageConfig: channelStorageConfig.getConfig,
 +    getMCPAppMessageBudget: messageBudget.getBudget,
      removeAllPermissions: async ({ resourceType, resourceId }) => {
-       const AclEntry = mongoose.models.AclEntry;
-       if (AclEntry) {
-@@ -34,6 +38,7 @@ jest.mock('~/models', () => {
-   });
-   return {
+@@ -36,2 +42,4 @@ jest.mock('~/models', () => {
      ...methods,
 +    initializeMessageBudget: messageBudget.initialize,
++    initializeChannelStorageConfig: channelStorageConfig.initialize,
      getRoleByName: jest.fn(),
-   };
- });
 diff --git a/api/server/routes/skills.tenant.test.js b/api/server/routes/skills.tenant.test.js
-index 8c78a8897d70bf28a1604614ce377dfc8b8ed393..0e5199083343ed27d4fa304c54be92092971369b 100644
+index 2d6e1eb3261df4e2b07fc3513dbdf590de03fdf8..3b0b63d46c1515eb2bc064c603a6c6b7a7bdc2e5 100644
 --- a/api/server/routes/skills.tenant.test.js
 +++ b/api/server/routes/skills.tenant.test.js
-@@ -52,8 +52,12 @@ jest.mock('~/server/utils/getFileStrategy', () => ({
- 
- jest.mock('~/models', () => {
+@@ -54,4 +54,10 @@ jest.mock('~/models', () => {
    const mongoose = require('mongoose');
-+  const { createMessageBudgetReader } = require('@librechat/api');
++  const { createMessageBudgetReader, createChannelStorageConfigReader } = require('@librechat/api');
    const { createMethods } = require('@librechat/data-schemas');
 +  // createMethods 不导出宿主初始化接口；复用真实 reader，保留 Config/app 的组合契约。
 +  const messageBudget = createMessageBudgetReader();
++  const channelStorageConfig = createChannelStorageConfigReader();
    const methods = createMethods(mongoose, {
++    getChannelStorageConfig: channelStorageConfig.getConfig,
 +    getMCPAppMessageBudget: messageBudget.getBudget,
      removeAllPermissions: async ({ resourceType, resourceId }) => {
-       const AclEntry = mongoose.models.AclEntry;
-       if (AclEntry) {
-@@ -63,6 +67,7 @@ jest.mock('~/models', () => {
-   });
-   return {
+@@ -65,2 +71,4 @@ jest.mock('~/models', () => {
      ...methods,
 +    initializeMessageBudget: messageBudget.initialize,
++    initializeChannelStorageConfig: channelStorageConfig.initialize,
      getRoleByName: jest.fn(),
-   };
- });
 diff --git a/api/server/routes/skills.test.js b/api/server/routes/skills.test.js
-index 7a6bfc92797e87b7dc11a92fa6011973cb12786c..412c6f43a7888d35fa37df90878aca6a4bde472a 100644
+index 3418a96278ba840637d2056018ec590bedc66c2e..ed620f0ef1f925500d6d76c820acca6e24892e54 100644
 --- a/api/server/routes/skills.test.js
 +++ b/api/server/routes/skills.test.js
-@@ -80,8 +80,12 @@ jest.mock('~/server/services/Skills/sync', () => ({
- 
- jest.mock('~/models', () => {
+@@ -82,4 +82,10 @@ jest.mock('~/models', () => {
    const mongoose = require('mongoose');
-+  const { createMessageBudgetReader } = require('@librechat/api');
++  const { createMessageBudgetReader, createChannelStorageConfigReader } = require('@librechat/api');
    const { createMethods } = require('@librechat/data-schemas');
 +  // createMethods 不导出宿主初始化接口；复用真实 reader，保留 Config/app 的组合契约。
 +  const messageBudget = createMessageBudgetReader();
++  const channelStorageConfig = createChannelStorageConfigReader();
    const methods = createMethods(mongoose, {
++    getChannelStorageConfig: channelStorageConfig.getConfig,
 +    getMCPAppMessageBudget: messageBudget.getBudget,
      removeAllPermissions: async ({ resourceType, resourceId }) => {
-       const AclEntry = mongoose.models.AclEntry;
-       if (AclEntry) {
-@@ -94,6 +98,7 @@ jest.mock('~/models', () => {
-   // suite intentionally skips to keep setup minimal.
-   return {
+@@ -96,2 +102,4 @@ jest.mock('~/models', () => {
      ...methods,
 +    initializeMessageBudget: messageBudget.initialize,
++    initializeChannelStorageConfig: channelStorageConfig.initialize,
      getRoleByName: jest.fn(),
-   };
- });
 diff --git a/docs/mcp-message-reads-patch.md b/docs/mcp-message-reads-patch.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..0b5f657fc7cfb4f05f9019dd55b0aa3bf17833e2
@@ -570,11 +539,10 @@ index 0000000000000000000000000000000000000000..0b5f657fc7cfb4f05f9019dd55b0aa3b
 +- [ ] 数据库替代实现、索引计划、线上回测和性能门槛分别标明实测或未测。
 +- [ ] 变更经过独立代码复核；配套发布仅在单独授权后进行。
 diff --git a/packages/api/src/messages/index.ts b/packages/api/src/messages/index.ts
-index ad8154f7b38209cea3bd5ba03ac2e351d42372ec..2793738989895779b08569a80ca17170c87d9872 100644
+index cac6778956ff005107d3cb7e92c67969010948c1..bb7b4db9d5fc6242504e48180029c6c0b3989886 100644
 --- a/packages/api/src/messages/index.ts
 +++ b/packages/api/src/messages/index.ts
-@@ -1,3 +1,4 @@
- export * from './parts';
+@@ -2,2 +2,3 @@ export * from './parts';
  export * from './previews';
 +export * from './reads';
  export * from './page';
@@ -1961,9 +1929,7 @@ diff --git a/packages/api/src/middleware/messageValidation.ts b/packages/api/src
 index 3ff6bab12a96b364241274167426134ca438568d..73e388924ace8003a5b34a68ab34fbf5868c0803 100644
 --- a/packages/api/src/middleware/messageValidation.ts
 +++ b/packages/api/src/middleware/messageValidation.ts
-@@ -65,7 +65,11 @@ type MessageValidationLogger = {
- };
- 
+@@ -67,3 +67,7 @@ type MessageValidationLogger = {
  export type MessageValidationDeps = {
 -  getConvo: (userId: string, conversationId?: string) => Promise<ConversationRecord>;
 +  getConvo: (
@@ -1972,36 +1938,24 @@ index 3ff6bab12a96b364241274167426134ca438568d..73e388924ace8003a5b34a68ab34fbf5
 +    tenantId?: string | null,
 +  ) => Promise<ConversationRecord>;
    getJob: (conversationId?: string) => Promise<GenerationJobRecord>;
-   isPendingActionStale: (job: { pendingAction?: PendingActionRecord }) => boolean;
-   logger: MessageValidationLogger;
-@@ -78,6 +82,8 @@ export type MessageRequestValidationOptions = {
-    * before its first save stays readable to the job's owner, as the conversation read is.
-    */
+@@ -80,2 +84,4 @@ export type MessageRequestValidationOptions = {
    activeJobMessageRead?: boolean;
 +  /** Bounded audit reads require an explicit tenantless predicate too. */
 +  explicitTenantScope?: boolean;
  };
- 
- export type MessageRequestMiddleware = {
-@@ -162,7 +168,9 @@ export function createMessageRequestMiddleware(
-     conversationId?: string,
-     options?: MessageRequestValidationOptions,
+@@ -164,3 +170,5 @@ export function createMessageRequestMiddleware(
    ): Promise<MessageValidationResult> {
 -    const conversation = await deps.getConvo(req.user.id, conversationId);
 +    const conversation = await (options?.explicitTenantScope
 +      ? deps.getConvo(req.user.id, conversationId, req.user.tenantId ?? null)
 +      : deps.getConvo(req.user.id, conversationId));
  
-     if (!conversation) {
-       if (await canReadActiveJobConversation(req, conversationId, options)) {
 diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
-index b8aab527824df2c3d4daf4cc0b8cd5a9c829eab0..39199452d3162b89aca2e82d43d732a5200f37fa 100644
+index 3d2b31979660a5e6a08d8936c77ea6dc8fe5e6a7..a97475f9aa58fdfca81a795af07d1a0973ad84b7 100644
 --- a/packages/data-provider/src/config.ts
 +++ b/packages/data-provider/src/config.ts
-@@ -4477,6 +4477,15 @@ export const toolCallPreviewsConfigSchema = z.object({
- 
- export type TToolCallPreviewsConfig = z.infer<typeof toolCallPreviewsConfigSchema>;
- 
+@@ -4790,2 +4790,10 @@ export const DEFAULT_CONFIG_CACHE_MAX_BYTES = 16 * 1024 * 1024;
+ export const DEFAULT_CONFIG_CACHE_MAX_ENTRIES = 1000;
 +/** Serialized UTF-8 JSON ceilings for the additive, owner-only stored-message reader. */
 +export const messageReadsConfigSchema = z.object({
 +  responseBytes: z.number().int().min(4096).max(65_536).default(65_536),
@@ -2010,30 +1964,19 @@ index b8aab527824df2c3d4daf4cc0b8cd5a9c829eab0..39199452d3162b89aca2e82d43d732a5
 +  tokenTtlSeconds: z.number().int().min(60).max(86_400).default(3600),
 +});
 +export type TMessageReadsConfig = z.infer<typeof messageReadsConfigSchema>;
-+
- export const configSchema = z.object({
-   version: z.string(),
-   telemetry: telemetrySchema.optional(),
-@@ -4530,6 +4539,7 @@ export const configSchema = z.object({
-   toolCallPreviews: toolCallPreviewsConfigSchema.default(() =>
-     toolCallPreviewsConfigSchema.parse({}),
+ 
+@@ -4862,2 +4870,3 @@ export const configSchema = z.object({
    ),
 +  messageReads: messageReadsConfigSchema.default(() => messageReadsConfigSchema.parse({})),
    includedTools: z.array(z.string()).optional(),
-   filteredTools: z.array(z.string()).optional(),
-   mcpServers: MCPServersSchema.optional(),
 diff --git a/packages/data-provider/src/index.ts b/packages/data-provider/src/index.ts
-index 3d2bc94e09da55140b50306311ea1ebf46b3d451..9667fd5f025a90e305d933ca6692949c99d11f89 100644
+index 7c619f27019cf79aaa3326c394bfd57d16be17f9..6e17cbeeb5a47e6cab91e5bf3945a325ea111710 100644
 --- a/packages/data-provider/src/index.ts
 +++ b/packages/data-provider/src/index.ts
-@@ -14,6 +14,7 @@ export * from './resolve-llm-delivery-path';
- /* messages  */
- export * from './messages';
+@@ -16,2 +16,3 @@ export * from './messages';
  export * from './previews';
 +export * from './messageReads';
  export * from './errors';
- /* run steps */
- export * from './runSteps';
 diff --git a/packages/data-provider/src/messageReads.ts b/packages/data-provider/src/messageReads.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..3e46dbf82e8a298a96c4cf0e0a2c9e78a4ba2c32
@@ -2050,29 +1993,19 @@ diff --git a/packages/data-schemas/src/app/service.ts b/packages/data-schemas/sr
 index 9bc94265c0fcedf41a086d654ccf55d0aa497145..676bf5d6441e1eeb432b0524506f438349ce5277 100644
 --- a/packages/data-schemas/src/app/service.ts
 +++ b/packages/data-schemas/src/app/service.ts
-@@ -6,6 +6,7 @@ import {
-   filtersConfigSchema,
-   conversationListConfigSchema,
+@@ -8,2 +8,3 @@ import {
    toolCallPreviewsConfigSchema,
 +  messageReadsConfigSchema,
    hasActiveFiltersConfig,
-   getConfigDefaults,
-   langfuseConfigSchema,
-@@ -252,6 +253,7 @@ export const AppService = async (params?: {
-     credentials: { writeFormat: config.credentials?.writeFormat ?? 'v3' },
-     conversationList: loadConversationListConfig(config),
+@@ -254,2 +255,3 @@ export const AppService = async (params?: {
      toolCallPreviews: loadToolCallPreviewsConfig(config),
 +    messageReads: messageReadsConfigSchema.parse(config.messageReads ?? {}),
    };
- 
-   const agentsDefaults = agentsConfigSetup(config);
 diff --git a/packages/data-schemas/src/index.ts b/packages/data-schemas/src/index.ts
-index 306020302f3a7f6c8099006509cf65d231c57b81..947df6f92fe7c5eebd952e7140b3d4503c071a67 100644
+index 34b2a9c5051e13c70b122e2fb8c7fa0fe452c20e..858378fc8437ea42ee85b28de26b8cf12dc645f7 100644
 --- a/packages/data-schemas/src/index.ts
 +++ b/packages/data-schemas/src/index.ts
-@@ -4,6 +4,12 @@ export * from './common';
- export * from './crypto';
- export * from './schema';
+@@ -12,2 +12,8 @@ export * from './schema';
  export * from './utils';
 +export type {
 +  BoundedMessageMethods,
@@ -2081,46 +2014,28 @@ index 306020302f3a7f6c8099006509cf65d231c57b81..947df6f92fe7c5eebd952e7140b3d450
 +  MessageReadPageInput,
 +} from './methods/messageReads';
  export { createModels } from './models';
- export {
-   createMethods,
 diff --git a/packages/data-schemas/src/methods/message.ts b/packages/data-schemas/src/methods/message.ts
-index a4554a3b32a09b508fa581367cc7f996c0da9473..524fc9bfd23fe442609d9a9ebd9a6221565700f2 100644
+index 310b243f8319272127dfc0c5ca059a2ba6ae5d38..a790a41e8ec33576a108858c931e781bd9913157 100644
 --- a/packages/data-schemas/src/methods/message.ts
 +++ b/packages/data-schemas/src/methods/message.ts
-@@ -10,11 +10,13 @@ import type { SearchParams } from 'meilisearch';
- import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
- import type { ISubagentContentChunk } from '~/models/subagentContent';
+@@ -12,2 +12,3 @@ import type { ISubagentContentChunk } from '~/models/subagentContent';
  import type { AppConfig, IConversation, IMessage } from '~/types';
 +import type { BoundedMessageMethods } from './messageReads';
  import { createChatExpirationDate, createTempChatExpirationDate } from '~/utils/tempChatRetention';
- import { activeExpirationFilter, createFallbackRetentionDate } from '~/utils/retention';
- import { fitBoundAppSnapshots, hasBoundAppSnapshots } from './appSnapshots';
- import { prepareSubagentContentDeletion } from './subagentContent';
+@@ -18,2 +19,3 @@ import { SERVER_AUTHORED_MESSAGE_FILTER } from '~/utils/authored';
  import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 +import { createBoundedMessageMethods } from './messageReads';
  import { tenantStorage } from '~/config/tenantContext';
- import logger from '~/config/winston';
- 
-@@ -739,7 +741,7 @@ export interface PrivateTextRead {
-   readonly privateText: string;
- }
+@@ -754,3 +756,3 @@ export interface PrivateTextRead {
  
 -export interface MessageMethods {
 +export interface MessageMethods extends BoundedMessageMethods {
    getPersistedPrivateTextId(
-     input: Parameters<MessageMethods['hasPersistedPrivateText']>[0],
-   ): Promise<string | null>;
-@@ -1800,6 +1802,7 @@ export function createMessageMethods(
-             $set: {
-               'content.$[part].tool_call.backgroundTask.resultClaim': backgroundTask.resultClaim,
+@@ -1827,2 +1829,3 @@ export function createMessageMethods(
              },
 +            $inc: { __v: 1 },
            },
-           {
-             arrayFilters: [
-@@ -2418,7 +2421,10 @@ export function createMessageMethods(
-            * touches only them instead of re-emitting the whole content array, and
-            * needs no read-modify-write. Amazon DocumentDB rejects the
+@@ -2445,3 +2448,6 @@ export function createMessageMethods(
             * aggregation-pipeline form this replaces. */
 -          { $set: { 'content.$[part].tool_call.backgroundTask.resultClaim': claimStamp } },
 +          {
@@ -2128,33 +2043,19 @@ index a4554a3b32a09b508fa581367cc7f996c0da9473..524fc9bfd23fe442609d9a9ebd9a6221
 +            $inc: { __v: 1 },
 +          },
            {
-             new: true,
-             projection: { content: 1 },
-@@ -2474,6 +2480,7 @@ export function createMessageMethods(
-         },
-         {
+@@ -2501,2 +2507,3 @@ export function createMessageMethods(
            $set: { 'content.$[part].tool_call.backgroundTask.resultClaim.receiptReconciled': true },
 +          $inc: { __v: 1 },
          },
-         {
-           arrayFilters: [
-@@ -2543,7 +2550,7 @@ export function createMessageMethods(
-      * `$ifNull` no-op'd — a legacy row with no array simply has no claims. */
-     const updated = await Message.findOneAndUpdate(
+@@ -2570,3 +2577,3 @@ export function createMessageMethods(
        { user: userId, conversationId, messageId, content: { $type: 'array' } },
 -      { $unset: { 'content.$[part].tool_call.backgroundTask.resultClaim': 1 } },
 +      { $unset: { 'content.$[part].tool_call.backgroundTask.resultClaim': 1 }, $inc: { __v: 1 } },
        {
-         new: true,
-         projection: { content: 1 },
-@@ -4464,6 +4471,7 @@ export function createMessageMethods(
- 
-   return {
+@@ -4476,2 +4483,3 @@ export function createMessageMethods(
      hasPersistedPrivateText,
 +    ...createBoundedMessageMethods(mongoose),
      getPersistedPrivateTextId,
-     getPrivateMessageTexts,
-     saveMessage,
 diff --git a/packages/data-schemas/src/methods/messageReads.spec.ts b/packages/data-schemas/src/methods/messageReads.spec.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..ab1570e16b9c06500af3c6220cde299c8b73c54c
@@ -2910,27 +2811,19 @@ index 0000000000000000000000000000000000000000..8a47bc4bf094c7e4ba6b843fd6ec39bd
 +  };
 +}
 diff --git a/packages/data-schemas/src/schema/message.ts b/packages/data-schemas/src/schema/message.ts
-index fe6c19de075336c3b5f9022e2a74d6c1810ca0d3..416d90f06e41998b3082703f1dc1b60828a7be81 100644
+index c3bea011987950a777ee61cf01d75e20ba05ba57..f2eb5ed5fe88bb0db5bbe4b7f8c39e1520d1fce3 100644
 --- a/packages/data-schemas/src/schema/message.ts
 +++ b/packages/data-schemas/src/schema/message.ts
-@@ -364,6 +364,8 @@ messageSchema.index({
-  * the sort back into memory for them.
-  */
+@@ -367,2 +367,4 @@ messageSchema.index({
  messageSchema.index({ conversationId: 1, user: 1, createdAt: 1, _id: 1 });
 +messageSchema.index({ conversationId: 1, user: 1, createdAt: 1, messageId: 1 });
 +messageSchema.index({ conversationId: 1, user: 1, updatedAt: 1, messageId: 1 });
  
- /**
-  * Serves the cursor-paginated message read when sorted by `updatedAt`, the
 diff --git a/packages/data-schemas/src/types/app.ts b/packages/data-schemas/src/types/app.ts
-index f6f08ba0c41a30aacc9ed0f0a4547211b3e59d8b..507e95173170cd050963d5b307d3532b7d8d336e 100644
+index 6c89458e06d8d7e74437f505450c438e9bfa7a98..e0a581da742806121a5c949e16ac6ab5c4d2301c 100644
 --- a/packages/data-schemas/src/types/app.ts
 +++ b/packages/data-schemas/src/types/app.ts
-@@ -142,6 +142,7 @@ export interface AppConfig {
-   conversationList?: TConversationListConfig;
-   /** Bounds for the tool-call previews sent on conversation loads */
+@@ -145,2 +145,3 @@ export interface AppConfig {
    toolCallPreviews?: TToolCallPreviewsConfig;
 +  messageReads?: TCustomConfig['messageReads'];
    /** Processed model specifications */
-   modelSpecs?: TCustomConfig['modelSpecs'];
-   /** Available tools */

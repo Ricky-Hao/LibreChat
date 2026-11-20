@@ -49,19 +49,19 @@ index 3a3f04179ae5b046854b729b55246c1dc2d455e0..8e9c32c16c69b4ebadf551ccf1b79350
      const { events, emit } = collect();
      const toolMap = new Map([['read_file', createTool('read_file', async () => 'file contents')]]);
 diff --git a/packages/api/src/agents/ptc.ts b/packages/api/src/agents/ptc.ts
-index 249355b2590aa8857784dd8afc482692d0521a48..f06b8bf24cf898257cee72cef2b9fb378a8b5e1c 100644
+index 3c4e6b0244da3b0297d1862fe26724625a8ff530..4ca36f4c1d8ae7bfb60feccfd44835fe8cd2502e 100644
 --- a/packages/api/src/agents/ptc.ts
 +++ b/packages/api/src/agents/ptc.ts
-@@ -1,4 +1,5 @@
- import { PROGRAMMATIC_TOOL_INPUT } from '@librechat/agents';
-+import { normalizeProgrammaticToolResponse } from '@librechat/agents';
+@@ -1,4 +1,4 @@
+-import { PROGRAMMATIC_TOOL_INPUT } from '@librechat/agents';
++import { PROGRAMMATIC_TOOL_INPUT, normalizeProgrammaticToolResponse } from '@librechat/agents';
  import type { StructuredToolInterface } from '@librechat/agents/langchain/tools';
  import type { PtcToolCallEvent } from 'librechat-data-provider';
- 
-@@ -171,11 +172,16 @@ export function instrumentPtcToolMap({
-               const result = await (
-                 target.invoke as (input: unknown, config?: unknown) => Promise<unknown>
-               ).call(target, input, config);
+ import type { ToolExecutionIdentity } from '~/telemetry/tools';
+@@ -192,11 +192,16 @@ export function instrumentPtcToolMap({
+                     { signal },
+                   )
+                 : await invoke();
 +              const outcome = normalizeProgrammaticToolResponse(
 +                result,
 +                (target as StructuredToolInterface & { mcp?: boolean }).mcp === true,

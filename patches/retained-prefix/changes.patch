@@ -1,16 +1,16 @@
 diff --git a/api/app/clients/BaseClient.js b/api/app/clients/BaseClient.js
-index 988ad187a11385571b6f358cb45c9929c583d544..02e79970d70515a85643e5a59c224b8fbc0476d4 100644
+index c549724c11b2d1f56aa37240fac42df08dec78c5..040d51bb0f67c9fb783f18a2d62d09cd0634f162 100644
 --- a/api/app/clients/BaseClient.js
 +++ b/api/app/clients/BaseClient.js
-@@ -39,6 +39,7 @@ const {
-   rejectPrivateTextAdmission,
+@@ -40,6 +40,7 @@ const {
    bindPrivateTextPersistenceAbort,
    persistedReasoningOverrideFields,
+   skillMessageFields,
 +  applyRetainedContentEdit,
    isTemporaryTurn,
+   loadHistoryRows,
  } = require('@librechat/api');
- const {
-@@ -54,7 +55,7 @@ const {
+@@ -56,7 +57,7 @@ const {
    supportsBalanceCheck,
    isBedrockDocumentType,
    HITL_MESSAGE_FILTER_FIELDS,
@@ -19,7 +19,7 @@ index 988ad187a11385571b6f358cb45c9929c583d544..02e79970d70515a85643e5a59c224b8f
    resolveTurnLLMDeliveryPath,
    resolveUseResponsesApi,
  } = require('librechat-data-provider');
-@@ -601,6 +602,12 @@ class BaseClient {
+@@ -603,6 +604,12 @@ class BaseClient {
        }),
      );
  
@@ -32,7 +32,7 @@ index 988ad187a11385571b6f358cb45c9929c583d544..02e79970d70515a85643e5a59c224b8f
      /**
       * Attach quoted excerpts (the "Add to chat" selections from `req.body.quotes`)
       * before `getReqData`/`onStart` fire, so the optimistic bubble, resumable job
-@@ -787,8 +794,6 @@ class BaseClient {
+@@ -796,8 +803,6 @@ class BaseClient {
        });
      }
  
@@ -41,7 +41,7 @@ index 988ad187a11385571b6f358cb45c9929c583d544..02e79970d70515a85643e5a59c224b8f
      // It's not necessary to push to currentMessages
      // depending on subclass implementation of handling messages
      // When this is an edit, all messages are already in currentMessages, both user and response
-@@ -804,35 +809,6 @@ class BaseClient {
+@@ -813,35 +818,6 @@ class BaseClient {
            sender: this.sender,
          };
          this.currentMessages.push(userMessage, latestMessage);
@@ -77,7 +77,7 @@ index 988ad187a11385571b6f358cb45c9929c583d544..02e79970d70515a85643e5a59c224b8f
        }
        this.continued = true;
      } else if (opts.isCompaction !== true) {
-@@ -1573,82 +1549,7 @@ class BaseClient {
+@@ -1554,82 +1530,7 @@ class BaseClient {
     * @returns {Array} The merged content array
     */
    mergeEditedContent(existingContent, newCompletion, editedType) {
@@ -162,10 +162,10 @@ index 988ad187a11385571b6f358cb45c9929c583d544..02e79970d70515a85643e5a59c224b8f
  
    async sendPayload(payload, opts = {}) {
 diff --git a/api/app/clients/specs/BaseClient.test.js b/api/app/clients/specs/BaseClient.test.js
-index 0755640504b63c38d6c34913bf294e3fb5f45e2b..9d2f844e2bb8f5d2c1212b726ab58769b4e14000 100644
+index 4b94aff21ffde863c5220f40a22ad77428a66ce8..2d3fd9c4e75098d4e8069c229d21b925ca700cd8 100644
 --- a/api/app/clients/specs/BaseClient.test.js
 +++ b/api/app/clients/specs/BaseClient.test.js
-@@ -710,8 +710,15 @@ describe('BaseClient', () => {
+@@ -837,8 +837,15 @@ describe('BaseClient', () => {
          ],
          metadata: undefined,
        });
@@ -182,7 +182,7 @@ index 0755640504b63c38d6c34913bf294e3fb5f45e2b..9d2f844e2bb8f5d2c1212b726ab58769
          conversationId: 'conversation-1',
          parentMessageId: 'assistant-message',
          responseMessageId: 'assistant-message',
-@@ -722,9 +729,40 @@ describe('BaseClient', () => {
+@@ -849,9 +856,40 @@ describe('BaseClient', () => {
            text: 'User replacement',
            type: ContentTypes.TEXT,
          },
@@ -224,7 +224,7 @@ index 0755640504b63c38d6c34913bf294e3fb5f45e2b..9d2f844e2bb8f5d2c1212b726ab58769
          '/content/1/think',
          '/content/2/text',
 diff --git a/api/server/controllers/agents/__tests__/request.partialDisconnect.spec.js b/api/server/controllers/agents/__tests__/request.partialDisconnect.spec.js
-index b582af63791d5e6274be799fc8ac284c052d07e1..a49b520b402b231a3b237582f2293612d6077b35 100644
+index 16f47090cb507a4f238474c8b10692983abc3410..2b240e24a6aa06c2461bd459a9edf790ef3b707a 100644
 --- a/api/server/controllers/agents/__tests__/request.partialDisconnect.spec.js
 +++ b/api/server/controllers/agents/__tests__/request.partialDisconnect.spec.js
 @@ -19,7 +19,6 @@ const mockGetConvo = jest.fn();
@@ -235,7 +235,7 @@ index b582af63791d5e6274be799fc8ac284c052d07e1..a49b520b402b231a3b237582f2293612
  const mockCheckAndIncrementPendingRequest = jest.fn();
  const mockDecrementPendingRequest = jest.fn();
  const mockGenerationJobManager = {
-@@ -99,6 +98,8 @@ jest.mock('@librechat/api', () => ({
+@@ -103,6 +102,8 @@ jest.mock('@librechat/api', () => ({
      jest.requireActual('@librechat/api').startAgentProjectContextResolution,
    assertChatProjectInstructions: jest.requireActual('@librechat/api').assertChatProjectInstructions,
    getChatProjectTurnFailure: jest.requireActual('@librechat/api').getChatProjectTurnFailure,
@@ -244,7 +244,7 @@ index b582af63791d5e6274be799fc8ac284c052d07e1..a49b520b402b231a3b237582f2293612
    GenerationJobManager: mockGenerationJobManager,
    getReferencedQuotes: jest.fn(() => null),
    cleanupMCPRequestContext: jest.fn(),
-@@ -112,7 +113,6 @@ jest.mock('@librechat/api', () => ({
+@@ -116,7 +117,6 @@ jest.mock('@librechat/api', () => ({
      pending: new Map(),
      cleanupStarted: false,
    })),
@@ -252,7 +252,7 @@ index b582af63791d5e6274be799fc8ac284c052d07e1..a49b520b402b231a3b237582f2293612
    cleanupMCPRequestContextForReq: jest.fn(),
    decrementPendingRequest: (...args) => mockDecrementPendingRequest(...args),
    sanitizeMessageForTransmit: jest.fn((message) => message),
-@@ -278,14 +278,20 @@ describe('ResumableAgentController tenant context', () => {
+@@ -282,14 +282,20 @@ describe('ResumableAgentController tenant context', () => {
      );
    });
  
@@ -281,7 +281,7 @@ index b582af63791d5e6274be799fc8ac284c052d07e1..a49b520b402b231a3b237582f2293612
  
    it('restores the authenticated tenant before saving a partial response on disconnect', async () => {
 diff --git a/api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js b/api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js
-index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c43ef65819 100644
+index 440bdde7cae2e4dcedc627ef8d8a0ff541d480d8..20e273a6fa59e1c260f46bdc0aa1827886166f29 100644
 --- a/api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js
 +++ b/api/server/controllers/agents/__tests__/request.resumeMetadata.spec.js
 @@ -26,6 +26,7 @@ const mockGenerationJobManager = {
@@ -302,7 +302,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
  const mockGetConvo = jest.fn();
  const mockGetChatProject = jest.fn();
  const mockGetFiles = jest.fn();
-@@ -266,6 +264,7 @@ jest.mock('@librechat/api', () => ({
+@@ -273,6 +271,7 @@ jest.mock('@librechat/api', () => ({
    getUserFacingGenerationError: (...args) =>
      jest.requireActual('@librechat/api').getUserFacingGenerationError(...args),
    stampPreliminaryPrivateTextMessage: (_req, message) => message,
@@ -310,7 +310,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
    getSteerRecoveryFailure: jest.requireActual(
      '../../../../../packages/api/src/stream/SteerRecovery',
    ).getSteerRecoveryFailure,
-@@ -324,6 +323,12 @@ jest.mock('@librechat/api', () => ({
+@@ -333,6 +332,12 @@ jest.mock('@librechat/api', () => ({
    getSafeErrorMetadata: jest.requireActual('@librechat/api').getSafeErrorMetadata,
    logGenerationStartFailure: jest.requireActual('@librechat/api').logGenerationStartFailure,
    resolveFailedTurnContent: jest.requireActual('@librechat/api').resolveFailedTurnContent,
@@ -323,7 +323,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
    getFailedTurnTraceFields: (...args) => mockGetFailedTurnTraceFields(...args),
    isTemporaryTurn: jest.requireActual('@librechat/api').isTemporaryTurn,
    startAgentProjectContextResolution:
-@@ -343,7 +348,6 @@ jest.mock('@librechat/api', () => ({
+@@ -352,7 +357,6 @@ jest.mock('@librechat/api', () => ({
    cleanupMCPRequestContext: (...args) => mockCleanupMCPRequestContext(...args),
    createMCPRequestContext: (...args) => mockCreateMCPRequestContext(...args),
    getMCPRequestContext: (...args) => mockGetMCPRequestContext(...args),
@@ -331,7 +331,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
    cleanupMCPRequestContextForReq: (...args) => mockCleanupMCPRequestContextForReq(...args),
    decrementPendingRequest: (...args) => mockDecrementPendingRequest(...args),
    sanitizeMessageForTransmit: jest.fn((message) => message),
-@@ -410,6 +414,10 @@ jest.mock('~/cache', () => ({
+@@ -419,6 +423,10 @@ jest.mock('~/cache', () => ({
    logViolation: jest.fn(),
  }));
  
@@ -342,7 +342,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
  jest.mock('~/models', () => ({
    saveMessage: (...args) => mockSaveMessage(...args),
    saveConvo: (...args) => mockSaveConvo(...args),
-@@ -460,6 +468,7 @@ const { AttachmentStorageError, encodeAndFormatImages } = require('@librechat/ap
+@@ -469,6 +477,7 @@ const { AttachmentStorageError, encodeAndFormatImages } = require('@librechat/ap
  const { ErrorTypes } = require('librechat-data-provider');
  const { disposeClient: mockDisposeClient } = require('~/server/cleanup');
  const { getMCPRequestContext } = require('~/server/services/MCPRequestContext');
@@ -350,7 +350,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
  
  function createResumableResponse() {
    const res = new EventEmitter();
-@@ -1616,6 +1625,7 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -1724,6 +1733,7 @@ describe('ResumableAgentController resume metadata', () => {
      expect(requestBody.parentMessageId).toBe(requestBody.messageId);
      expect(requestBody.messageId).not.toBe('existing-response-message');
      expect(jobOptions.initialMetadata.mcpRequestBody).toBe(requestBody);
@@ -358,7 +358,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
    });
  
    it('stores model spec icon fallbacks and agent ids in early resume metadata', async () => {
-@@ -1769,99 +1779,119 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -1877,99 +1887,119 @@ describe('ResumableAgentController resume metadata', () => {
      );
    });
  
@@ -562,7 +562,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
      let allSubscribersLeftHandler;
      mockGenerationJobManager.createJob.mockResolvedValue({
        createdAt: 1000,
-@@ -3755,7 +3785,7 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -3906,7 +3936,7 @@ describe('ResumableAgentController resume metadata', () => {
      expect(mockDeleteAgentCheckpoint).not.toHaveBeenCalled();
    });
  
@@ -571,7 +571,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
      const userMessage = {
        messageId: 'user-msg',
        parentMessageId: 'parent-msg',
-@@ -3766,7 +3796,8 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -3917,7 +3947,8 @@ describe('ResumableAgentController resume metadata', () => {
        messageId: 'response-msg',
        parentMessageId: userMessage.messageId,
        conversationId: 'conversation-123',
@@ -581,7 +581,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
      };
      let signalPauseSaveStarted;
      const pauseSaveStarted = new Promise((resolve) => {
-@@ -3841,6 +3872,7 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -3992,6 +4023,7 @@ describe('ResumableAgentController resume metadata', () => {
        expect.objectContaining({
          messageId: response.messageId,
          content: response.content,
@@ -589,7 +589,7 @@ index 23a8507e2126c2a185027dba61a5bf77917f3ebe..30215b547b89374f2a200c69a191f8c4
          unfinished: true,
        }),
        expect.objectContaining({ context: expect.stringContaining('persist unfinished') }),
-@@ -3963,6 +3995,91 @@ describe('ResumableAgentController resume metadata', () => {
+@@ -4114,6 +4146,91 @@ describe('ResumableAgentController resume metadata', () => {
          expect(mockStampConvoLastResponse).not.toHaveBeenCalled();
        },
      );
@@ -792,11 +792,11 @@ index b995483df75282a350b1c03dfa5c0d4cb347f52d..200892a67a9574fabc4ba57dc60e040a
  
      it('generates a title for a first-turn pause before completing the stream', async () => {
 diff --git a/api/server/controllers/agents/request.js b/api/server/controllers/agents/request.js
-index 8750242ffd9b643538ef454c2edede8075f97c81..c36df29b59817ad343f9789a44374e320dd353da 100644
+index c4c1291b5e3d601d13425912787e947f2aa53ca6..7966fd7c3b3bec3142f52dbe99bf5346ce1f2ae0 100644
 --- a/api/server/controllers/agents/request.js
 +++ b/api/server/controllers/agents/request.js
-@@ -19,7 +19,8 @@ const {
-   GenerationJobManager,
+@@ -20,7 +20,8 @@ const {
+   buildGenerationStartedResponse,
    createConvoPersistenceSignal,
    recoverTurnMessageReference,
 -  filterPersistableAbortContent,
@@ -805,7 +805,7 @@ index 8750242ffd9b643538ef454c2edede8075f97c81..c36df29b59817ad343f9789a44374e32
    decrementPendingRequest,
    sanitizeMessageForTransmit,
    checkAndIncrementPendingRequest,
-@@ -1729,6 +1730,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
+@@ -1733,6 +1734,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
          /** The job record is where the abort paths learn the turn was a
           *  compaction: they run after the request that created the job. */
          ...(isCompaction && { compact: true }),
@@ -813,7 +813,7 @@ index 8750242ffd9b643538ef454c2edede8075f97c81..c36df29b59817ad343f9789a44374e32
          ...(scheduleId
            ? {
                scheduleId,
-@@ -1913,57 +1915,63 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
+@@ -1922,57 +1924,63 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
          return;
        }
  
@@ -919,7 +919,7 @@ index 8750242ffd9b643538ef454c2edede8075f97c81..c36df29b59817ad343f9789a44374e32
            content: snapshot.content,
            unfinished: snapshot.unfinished,
            error: snapshot.error,
-@@ -2473,6 +2481,14 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
+@@ -2465,6 +2473,14 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
            isRegenerate,
            isCompaction,
            editedContent,
@@ -935,7 +935,7 @@ index 8750242ffd9b643538ef454c2edede8075f97c81..c36df29b59817ad343f9789a44374e32
            parentMessageId,
            abortController: job.abortController,
 diff --git a/api/server/controllers/agents/resume.js b/api/server/controllers/agents/resume.js
-index 545b2a384454d0efd8987fcb230f39fc4e4b5fa0..48a98a31b3c7a2381bf49cac6923b68b5509a9e5 100644
+index 172846933731689eff6f79aabd23cdb8f070d91b..b95dbed1446f5f0c8d8f768d2dff3480c8f4dd3d 100644
 --- a/api/server/controllers/agents/resume.js
 +++ b/api/server/controllers/agents/resume.js
 @@ -28,12 +28,11 @@ const {
@@ -1031,7 +1031,7 @@ index 545b2a384454d0efd8987fcb230f39fc4e4b5fa0..48a98a31b3c7a2381bf49cac6923b68b
    };
    if (meta.agent_id ?? req.body?.agent_id) {
      responseMessage.agent_id = meta.agent_id ?? req.body.agent_id;
-@@ -1984,7 +1985,12 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
+@@ -1991,7 +1992,12 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
        // resumed segment keeps historical tool results byte-identical to the paused one.
        client.seedContextMeta?.(job.metadata?.contextMeta);
        if (client.contentParts) {
@@ -1046,10 +1046,10 @@ index 545b2a384454d0efd8987fcb230f39fc4e4b5fa0..48a98a31b3c7a2381bf49cac6923b68b
  
        const resumeClient = () =>
 diff --git a/api/server/routes/agents/__tests__/abort.spec.js b/api/server/routes/agents/__tests__/abort.spec.js
-index d083ece6bc6bd25d1ba96a09abc3ebb76704a3d7..1a07d78fca87b74da672025fdcec7317d0e6e7fb 100644
+index aee548279c2eb8191e27c6e94e1e8771ffb022bb..7decbfa39463c91c13355c12a9953f5bb35b7b51 100644
 --- a/api/server/routes/agents/__tests__/abort.spec.js
 +++ b/api/server/routes/agents/__tests__/abort.spec.js
-@@ -627,7 +627,14 @@ describe('Agent Abort Endpoint', () => {
+@@ -667,7 +667,14 @@ describe('Agent Abort Endpoint', () => {
                { path: '/content/0/tool_call/output', field: 'decision_response' },
              ],
            },
@@ -1065,7 +1065,7 @@ index d083ece6bc6bd25d1ba96a09abc3ebb76704a3d7..1a07d78fca87b74da672025fdcec7317
            text: 'Partial response...',
          };
          mockGenerationJobManager.abortJob.mockImplementation(async (_streamId, options) => {
-@@ -646,7 +653,7 @@ describe('Agent Abort Endpoint', () => {
+@@ -686,7 +693,7 @@ describe('Agent Abort Endpoint', () => {
              messageId: responseMessageId,
              parentMessageId: userMessageId,
              conversationId: jobStreamId,
@@ -1074,7 +1074,7 @@ index d083ece6bc6bd25d1ba96a09abc3ebb76704a3d7..1a07d78fca87b74da672025fdcec7317
              text: 'Partial response...',
              sender: 'TestAgent',
              endpoint: 'anthropic',
-@@ -655,9 +662,9 @@ describe('Agent Abort Endpoint', () => {
+@@ -695,9 +702,9 @@ describe('Agent Abort Endpoint', () => {
              unfinished: true,
              error: false,
              isCreatedByUser: false,
@@ -1177,7 +1177,7 @@ index d59f60b0e40d7bf9fddb7dbf42a1493c01ac83c2..b82ce240e49d395d7eddca11d9fc85b1
 +  });
  });
 diff --git a/client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts b/client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts
-index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47a9337858 100644
+index df3f7a2477e1faf2b0ed719a5e62a071a92e9b42..d368ece90c70e20b3de38584493a54d6ef560b6b 100644
 --- a/client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts
 +++ b/client/src/hooks/SSE/__tests__/useResumableSSE.spec.ts
 @@ -1,4 +1,5 @@
@@ -1260,7 +1260,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
    GENERATION_PROTOCOL_VERSION: 2,
    generationProtocolHeaders: () => ({ 'X-LibreChat-Generation-Protocol': '2' }),
    getGenerationProtocolVersion: (value: unknown) =>
-@@ -282,6 +304,7 @@ jest.mock('librechat-data-provider', () => {
+@@ -283,6 +305,7 @@ jest.mock('librechat-data-provider', () => {
      ...actual,
      dataService: {
        ...actual.dataService,
@@ -1268,7 +1268,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
        getConversationById: (...args: unknown[]) => mockGetConversationById(...args),
      },
      createPayload: jest.fn(() => ({
-@@ -309,7 +332,9 @@ import type { PendingSteer } from '@librechat/chat';
+@@ -310,7 +333,9 @@ import type { PendingSteer } from '@librechat/chat';
  import type { Transport } from '~/hooks/Chat/contract';
  import { ChatTransportContext, defaultChatTransport } from '~/Providers/ChatTransportContext';
  import {
@@ -1278,7 +1278,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
    StreamHostProvider,
    recoveryDispositionsFamily,
    queuedMessagesByConvoId,
-@@ -418,6 +443,7 @@ const advanceRetryTimer = async (ms: number) => {
+@@ -419,6 +444,7 @@ const advanceRetryTimer = async (ms: number) => {
  describe('useResumableSSE', () => {
    beforeEach(() => {
      getDefaultStore().set(recoveryDispositionsFamily(CONV_ID), {});
@@ -1286,7 +1286,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      mockSSEInstances.length = 0;
      localStorage.clear();
      mockErrorHandler.mockClear();
-@@ -429,9 +455,9 @@ describe('useResumableSSE', () => {
+@@ -430,9 +456,9 @@ describe('useResumableSSE', () => {
      mockSetIsSubmitting.mockClear();
      mockSetQueryData.mockClear();
      mockGetQueryData.mockReset();
@@ -1299,7 +1299,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      );
      mockInvalidateQueries.mockClear();
      mockRemoveQueries.mockClear();
-@@ -782,10 +808,7 @@ describe('useResumableSSE', () => {
+@@ -783,10 +809,7 @@ describe('useResumableSSE', () => {
      };
      const messages = [{ messageId: 'saved-response', conversationId: 'stream-123', text: 'Done' }];
      mockGetConversationById.mockResolvedValue(persisted);
@@ -1311,7 +1311,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      const chatHelpers = buildChatHelpers();
      const { unmount } = renderHook(() =>
        useResumableSSE(
-@@ -1410,18 +1433,28 @@ describe('useResumableSSE', () => {
+@@ -1411,18 +1434,28 @@ describe('useResumableSSE', () => {
      unmount();
    });
  
@@ -1343,7 +1343,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      unmount();
    });
  
-@@ -2550,6 +2583,7 @@ describe('useResumableSSE', () => {
+@@ -2551,6 +2584,7 @@ describe('useResumableSSE', () => {
  
    it('drops an awaited synthesized reconciliation after conversation B starts', async () => {
      const conversationB = 'conv-b-789';
@@ -1351,7 +1351,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      (request.post as jest.Mock)
        .mockResolvedValueOnce({
          streamId: CONV_ID,
-@@ -2564,7 +2598,7 @@ describe('useResumableSSE', () => {
+@@ -2565,7 +2599,7 @@ describe('useResumableSSE', () => {
          generationProtocolVersion: 2,
        });
      let resolveMessages!: (value: TMessage[]) => void;
@@ -1360,7 +1360,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
        () =>
          new Promise<TMessage[]>((resolve) => {
            resolveMessages = resolve;
-@@ -2605,7 +2639,7 @@ describe('useResumableSSE', () => {
+@@ -2606,7 +2640,7 @@ describe('useResumableSSE', () => {
          }),
        });
      });
@@ -1369,7 +1369,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
  
      rerender({ current: submissionB });
      await waitFor(() => expect(mockSSEInstances).toHaveLength(2));
-@@ -2619,6 +2653,7 @@ describe('useResumableSSE', () => {
+@@ -2620,6 +2654,7 @@ describe('useResumableSSE', () => {
      mockSetShowStopButton.mockClear();
      mockSettleAppliedSteerParts.mockClear();
  
@@ -1377,7 +1377,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      await act(async () => {
        resolveMessages([]);
        await Promise.resolve();
-@@ -2634,6 +2669,7 @@ describe('useResumableSSE', () => {
+@@ -2635,6 +2670,7 @@ describe('useResumableSSE', () => {
      expect(mockSetIsSubmitting).not.toHaveBeenCalledWith(false);
      expect(mockSetShowStopButton).not.toHaveBeenCalledWith(false);
      expect(generationB.close).not.toHaveBeenCalled();
@@ -1385,7 +1385,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      unmount();
    });
  
-@@ -2730,7 +2766,7 @@ describe('useResumableSSE', () => {
+@@ -2731,7 +2767,7 @@ describe('useResumableSSE', () => {
      expect(mockFinalHandler).not.toHaveBeenCalled();
      expect(mockSetRunEnd).not.toHaveBeenCalled();
  
@@ -1394,7 +1394,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
  
      expect(mockSSEInstances).toHaveLength(sseCount + 1);
      expect(getLastSSE()._url).toContain('resume=true');
-@@ -2769,7 +2805,7 @@ describe('useResumableSSE', () => {
+@@ -2770,7 +2806,7 @@ describe('useResumableSSE', () => {
      expect(mockErrorHandler).not.toHaveBeenCalled();
      expect(mockSetRunEnd).not.toHaveBeenCalled();
  
@@ -1403,7 +1403,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
  
      expect(mockSSEInstances).toHaveLength(sseCount + 1);
      expect(getLastSSE()._url).toContain('resume=true');
-@@ -3028,14 +3064,15 @@ describe('useResumableSSE', () => {
+@@ -3029,14 +3065,15 @@ describe('useResumableSSE', () => {
      unmount();
    });
  
@@ -1421,7 +1421,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      mockFetchStreamStatus.mockResolvedValue({ active: false, generationProtocolVersion: 2 });
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
-@@ -3061,13 +3098,26 @@ describe('useResumableSSE', () => {
+@@ -3062,13 +3099,26 @@ describe('useResumableSSE', () => {
  
      expect(mockFinalHandler).not.toHaveBeenCalled();
      expect(mockErrorHandler).not.toHaveBeenCalled();
@@ -1454,7 +1454,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      unmount();
    });
  
-@@ -3078,7 +3128,7 @@ describe('useResumableSSE', () => {
+@@ -3079,7 +3129,7 @@ describe('useResumableSSE', () => {
        generationCreatedAt: 1000,
        generationProtocolVersion: 2,
      });
@@ -1463,7 +1463,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      mockFetchStreamStatus.mockResolvedValue({ active: false, generationProtocolVersion: 2 });
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
-@@ -3544,7 +3594,7 @@ describe('useResumableSSE', () => {
+@@ -3545,7 +3595,7 @@ describe('useResumableSSE', () => {
    });
  
    it('completes an applied authoritative final without requiring a client persistence refetch', async () => {
@@ -1472,7 +1472,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
  
-@@ -3569,7 +3619,7 @@ describe('useResumableSSE', () => {
+@@ -3570,7 +3620,7 @@ describe('useResumableSSE', () => {
        finalPayload,
        expect.objectContaining(submission),
      );
@@ -1481,7 +1481,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      expect(mockSetRunEnd).toHaveBeenCalledWith(
        expect.objectContaining({ conversationId: CONV_ID, outcome: 'completed' }),
      );
-@@ -4960,163 +5010,778 @@ describe('useResumableSSE', () => {
+@@ -4961,163 +5011,778 @@ describe('useResumableSSE', () => {
      unmount();
    });
  
@@ -2385,7 +2385,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
     */
    const enrollmentBody = JSON.stringify({
      code: 'two_factor_enrollment_required',
-@@ -5130,80 +5795,585 @@ describe('useResumableSSE', () => {
+@@ -5131,80 +5796,585 @@ describe('useResumableSSE', () => {
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
  
@@ -3022,7 +3022,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
    it.each([undefined, 500, 503])(
      'does not call errorHandler for responseCode %s (reconnect path)',
      async (responseCode) => {
-@@ -5474,7 +6644,7 @@ describe('useResumableSSE', () => {
+@@ -5475,7 +6645,7 @@ describe('useResumableSSE', () => {
          isCreatedByUser: false,
        },
      ] as TMessage[];
@@ -3031,7 +3031,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
  
-@@ -5491,7 +6661,7 @@ describe('useResumableSSE', () => {
+@@ -5492,7 +6662,7 @@ describe('useResumableSSE', () => {
      });
      await flushMicrotasks();
  
@@ -3040,7 +3040,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      expect(mockSSEInstances).toHaveLength(sseCount + 1);
      expect(getLastSSE()._url).toBe(
        '/api/agents/chat/stream/stream-epoch?resume=true&generationCreatedAt=1000&generationProtocolVersion=2',
-@@ -5504,15 +6674,12 @@ describe('useResumableSSE', () => {
+@@ -5505,15 +6675,12 @@ describe('useResumableSSE', () => {
      });
      await flushMicrotasks();
  
@@ -3058,7 +3058,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      mockFetchStreamStatus.mockResolvedValue({
        active: true,
        streamId: 'stream-123',
-@@ -5522,6 +6689,17 @@ describe('useResumableSSE', () => {
+@@ -5523,6 +6690,17 @@ describe('useResumableSSE', () => {
      });
      const submission = buildSubmission();
      const chatHelpers = buildChatHelpers();
@@ -3076,7 +3076,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
  
      const { unmount } = renderHook(() => useResumableSSE(submission, chatHelpers));
      await flushMicrotasks();
-@@ -5536,13 +6714,37 @@ describe('useResumableSSE', () => {
+@@ -5537,13 +6715,37 @@ describe('useResumableSSE', () => {
      });
      await flushMicrotasks();
  
@@ -3118,7 +3118,7 @@ index 8d0f1c4f54af8f82af9f48894c3ad0c0554f8ac4..a42341f4e0291a51bcc4f2ed6d378d47
      mockFetchStreamStatus.mockResolvedValue({
        active: false,
        status: 'complete',
-@@ -5555,17 +6757,34 @@ describe('useResumableSSE', () => {
+@@ -5556,17 +6758,34 @@ describe('useResumableSSE', () => {
      const { unmount } = renderHook(() => useResumableSSE(submission, chatHelpers));
      await flushMicrotasks();
  
@@ -3265,7 +3265,7 @@ index 02a9dc8c5ae2153365053bacc883d9b087ec5d4f..ee5f99c15c34ed73fb5c7b114cf4aa3e
      const staleChip: PendingSteer = {
        steerId: 'stale-1',
 diff --git a/client/src/hooks/SSE/__tests__/useStepHandler.spec.ts b/client/src/hooks/SSE/__tests__/useStepHandler.spec.ts
-index dda7737a6316b5aaec3918022b50c0cdcc35c595..3b4d35b37102c5fd93c2af8b789ed1f31cb09cf8 100644
+index 3e15e0e51acab957a894e3cca8db9f1ecaa57bbe..36fda50fb3af17b0557620163f9c0cad6f4f703c 100644
 --- a/client/src/hooks/SSE/__tests__/useStepHandler.spec.ts
 +++ b/client/src/hooks/SSE/__tests__/useStepHandler.spec.ts
 @@ -10,6 +10,7 @@ import {
@@ -3284,7 +3284,7 @@ index dda7737a6316b5aaec3918022b50c0cdcc35c595..3b4d35b37102c5fd93c2af8b789ed1f3
  } from 'librechat-data-provider';
  import type { ActiveSubagentPanel } from '@librechat/chat/react';
  import type { PtcTrace, PtcTraceEntry } from '~/common';
-@@ -3670,6 +3672,63 @@ describe('useStepHandler', () => {
+@@ -3837,6 +3839,63 @@ describe('useStepHandler', () => {
        ...overrides,
      });
  
@@ -3348,7 +3348,7 @@ index dda7737a6316b5aaec3918022b50c0cdcc35c595..3b4d35b37102c5fd93c2af8b789ed1f3
      it('signals parent-index discovery on child lifecycle events, not every progress delta', () => {
        const onSubagentIndexChange = jest.fn();
        const { result } = renderHook(
-@@ -4335,6 +4394,65 @@ describe('useStepHandler', () => {
+@@ -4502,6 +4561,65 @@ describe('useStepHandler', () => {
     * spaces. These cases pin the states no other suite constructs.
     */
    describe('edit-prefix index space across resume', () => {
@@ -3414,7 +3414,7 @@ index dda7737a6316b5aaec3918022b50c0cdcc35c595..3b4d35b37102c5fd93c2af8b789ed1f3
      const textPart = (text: string): TMessageContentParts =>
        ({ type: ContentTypes.TEXT, [ContentTypes.TEXT]: text }) as TMessageContentParts;
  
-@@ -4485,7 +4603,7 @@ describe('useStepHandler', () => {
+@@ -4652,7 +4770,7 @@ describe('useStepHandler', () => {
        expect(response?.content?.[0]).toMatchObject({ [ContentTypes.TEXT]: 'kept a' });
        expect(
          (submission as { editPrefixFirstPartFolded?: boolean }).editPrefixFirstPartFolded,
@@ -3423,7 +3423,7 @@ index dda7737a6316b5aaec3918022b50c0cdcc35c595..3b4d35b37102c5fd93c2af8b789ed1f3
      });
  
      it('records when the first completion part actually folds into the retained tail', () => {
-@@ -4521,6 +4639,61 @@ describe('useStepHandler', () => {
+@@ -4688,6 +4806,61 @@ describe('useStepHandler', () => {
        ).toBe(true);
      });
  
@@ -3538,7 +3538,7 @@ index 9b82a4e4b6bf22357620f9c2fc351b1c6d65f899..db77bc2f66853aaf5b955e2af2439316
    findReasoningLabelTarget: findReasoningLabelMessageIndex,
  };
 diff --git a/e2e/setup/fake-model.js b/e2e/setup/fake-model.js
-index c8c9152b6572d8048370a26f98853ac8805b488d..2b21e682b841ee9b869c95bb378eed252124418f 100644
+index 12ca077c8fd5facdb15cb1b0d08e3201f9897e2b..8abb27b8bd3825b74a00e9d8e84e3cec35232427 100644
 --- a/e2e/setup/fake-model.js
 +++ b/e2e/setup/fake-model.js
 @@ -45,6 +45,7 @@ const THINK_REPLY_MARKER = 'E2E_THINK_REPLY:';
@@ -3549,7 +3549,7 @@ index c8c9152b6572d8048370a26f98853ac8805b488d..2b21e682b841ee9b869c95bb378eed25
  const COUNTED_REPLY_MARKER = 'E2E_COUNTED_REPLY:';
  const ORDERED_REPLY_MARKER = 'E2E_ORDERED_REPLY:';
  const SLOW_REPLY_MARKER = 'E2E_SLOW_REPLY:';
-@@ -3805,6 +3806,20 @@ function resolveResponses({ graph, messages, text, toolNames }) {
+@@ -3829,6 +3830,20 @@ function resolveResponses({ graph, messages, text, toolNames }) {
      return approvalToolResponses(approvalLabel, toolNames);
    }
  
@@ -3973,7 +3973,7 @@ index a6bd48771f440e5130896dd883fe4b336e3f4ee7..0c565d4d6b833490834e486aebd7eeab
  const HITL_MESSAGE_FILTER_FIELD_SET = new Set<string>(HITL_MESSAGE_FILTER_FIELDS);
  const STORED_MESSAGE_SUBMITTED_ROOTS = new Set([
 diff --git a/packages/api/src/stream/GenerationJobManager.ts b/packages/api/src/stream/GenerationJobManager.ts
-index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50ca916f38 100644
+index ceaf6e5acf9887e62e315951a4afa3e69f459fa8..9b6b5d7e3e519fcef58a67419e520d55c05a9935 100644
 --- a/packages/api/src/stream/GenerationJobManager.ts
 +++ b/packages/api/src/stream/GenerationJobManager.ts
 @@ -42,6 +42,7 @@ import type {
@@ -3987,7 +3987,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
 @@ -99,6 +100,7 @@ import { markAbortedCompactionContent } from '~/agents/compaction';
  import { ApprovalLifecycle, pausePersistenceActionId } from './ApprovalLifecycle';
  import { projectPendingMCPOAuthPrompts } from '~/mcp/oauth/resume';
- import { sanitizeJobMetadata } from './metadata';
+ import { sanitizeJobMetadata, isListedChatJob } from './metadata';
 +import { projectRetainedMessageContent } from './retained';
  
  /** Terminal error surfaced to a client still attached when its approval window lapses. */
@@ -4009,7 +4009,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
  /** Rewrites `/content/N/...` paths recorded against the unfiltered content onto
   * the filtered abort content, dropping paths whose part was filtered out. A
   * path past the end of the content names no part and is left as recorded. */
-@@ -3130,6 +3122,8 @@ class GenerationJobManagerClass {
+@@ -3137,6 +3129,8 @@ class GenerationJobManagerClass {
          userMessage: jobData.userMessage,
          responseMessageId: jobData.responseMessageId,
          isRegenerate: jobData.isRegenerate,
@@ -4018,7 +4018,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
          mcpRequestBody: jobData.mcpRequestBody,
          userSubmittedPaths: jobData.userSubmittedPaths,
          userSubmittedMessageFieldPaths: jobData.userSubmittedMessageFieldPaths,
-@@ -4964,8 +4958,15 @@ class GenerationJobManagerClass {
+@@ -5036,8 +5030,15 @@ class GenerationJobManagerClass {
         * tier that produced its bytes, not the one seen before the claim. */
        try {
          const refreshed = await this.jobStore.getJob(streamId);
@@ -4036,7 +4036,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
          }
        } catch (metadataError) {
          logger.warn(
-@@ -4982,7 +4983,13 @@ class GenerationJobManagerClass {
+@@ -5054,7 +5055,13 @@ class GenerationJobManagerClass {
        // Answer stamps use ordinals from the unfiltered chunk reconstruction.
        // Filter only after the transform so sparse/empty/OAuth parts cannot
        // shift a retained ID-less ask answer onto a different tool call.
@@ -4051,7 +4051,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
        // A stopped compaction is unfinished rather than failed, so the row keeps
        // the abort shape, plus the marker that keeps it identifiable as the
        // compaction's own turn instead of an answer to its parent.
-@@ -5003,19 +5010,25 @@ class GenerationJobManagerClass {
+@@ -5075,19 +5082,25 @@ class GenerationJobManagerClass {
  
        /** Final event for abort */
        const userMessageId = jobData.userMessage?.messageId;
@@ -4085,7 +4085,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
  
        const abortFinalEvent: t.ServerSentEvent = {
          final: true,
-@@ -5063,6 +5076,8 @@ class GenerationJobManagerClass {
+@@ -5135,6 +5148,8 @@ class GenerationJobManagerClass {
          jobData,
          content: abortContent,
          finalEvent: abortFinalEvent,
@@ -4094,7 +4094,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
          text,
          collectedUsage,
          ...(pendingSteers.length > 0 && { pendingSteers }),
-@@ -6469,6 +6484,20 @@ class GenerationJobManagerClass {
+@@ -6576,6 +6591,20 @@ class GenerationJobManagerClass {
          ]);
        }
  
@@ -4115,7 +4115,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
        if (pendingOverflow != null && recoveryStartedAt != null) {
          const contentSnapshot = recoveryContentSnapshot;
          const reconstructedEvents = this._isRedis
-@@ -8261,6 +8290,27 @@ class GenerationJobManagerClass {
+@@ -8375,6 +8404,27 @@ class GenerationJobManagerClass {
      await this.jobStore.updateJob(streamId, updates, generationId);
    }
  
@@ -4143,8 +4143,8 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
    /** Stages exact detached terminal evidence in the generation-owned job outbox
     * and verifies the epoch-fenced write before the external result leaves memory. */
    async persistAgentEventDetachedTerminalEvidence(
-@@ -8912,6 +8962,12 @@ class GenerationJobManagerClass {
-     if (!jobData || (expectedCreatedAt != null && jobData.createdAt !== expectedCreatedAt)) {
+@@ -9124,6 +9174,12 @@ class GenerationJobManagerClass {
+     ) {
        return null;
      }
 +    if (
@@ -4156,7 +4156,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
      if (jobData.earlyBufferOverflow?.persistencePending === true) {
        const initialCreatedAt = jobData.createdAt;
        jobData = await this.waitForFinalizedEarlyBufferOverflow(streamId, jobData);
-@@ -9088,6 +9144,13 @@ class GenerationJobManagerClass {
+@@ -9310,6 +9366,13 @@ class GenerationJobManagerClass {
      return {
        runSteps: effectiveRunSteps,
        aggregatedContent,
@@ -4171,7 +4171,7 @@ index 25a9d4ec4550638f8c74ec3e123d659be9a522ca..6fe659b16b34533b21dc51dc55801e50
        responseMessageId: jobData.responseMessageId,
        isRegenerate: jobData.isRegenerate,
 diff --git a/packages/api/src/stream/__tests__/RedisJobStore.spec.ts b/packages/api/src/stream/__tests__/RedisJobStore.spec.ts
-index c4bf31bdc3979b4402d5aaf8e9d58c7c529b0bcb..6817fef22160ac410df7c7b1f9adc8467cff5c01 100644
+index e24ebb5d8cf8c7a16f3f75c3ff537adfa9009707..7c7ab75f822eda268309e0199e7c3a9eba5a7c14 100644
 --- a/packages/api/src/stream/__tests__/RedisJobStore.spec.ts
 +++ b/packages/api/src/stream/__tests__/RedisJobStore.spec.ts
 @@ -1,3 +1,4 @@
@@ -4473,10 +4473,10 @@ index a9177a9ff81e263fd7fcc7ae9f4f724c894b2a8c..a40c1d95ae8e8666d2b367e982784e07
  ): part is PersistableAbortContentPart {
    if (!isRecord(part)) {
 diff --git a/packages/api/src/stream/implementations/RedisJobStore.ts b/packages/api/src/stream/implementations/RedisJobStore.ts
-index b7403ffbab45fa92e7aa2af0b30b6ba07cfe0ecc..0f5c56c97e6363708ff7bca99f8785371f6e152b 100644
+index 2f398f9ca607c7101f08c702b37cf844199a328a..a02ddff513a3f25c55365bb36a506dfdf50d1abb 100644
 --- a/packages/api/src/stream/implementations/RedisJobStore.ts
 +++ b/packages/api/src/stream/implementations/RedisJobStore.ts
-@@ -5659,6 +5659,9 @@ export class RedisJobStore implements IJobStoreV2 {
+@@ -5816,6 +5816,9 @@ export class RedisJobStore implements IJobStoreV2 {
        responseMessageId: data.responseMessageId || undefined,
        isRegenerate: data.isRegenerate != null ? data.isRegenerate === '1' : undefined,
        compact: data.compact != null ? data.compact === '1' : undefined,
@@ -4487,7 +4487,7 @@ index b7403ffbab45fa92e7aa2af0b30b6ba07cfe0ecc..0f5c56c97e6363708ff7bca99f878537
        userSubmittedPaths: data.userSubmittedPaths ? JSON.parse(data.userSubmittedPaths) : undefined,
        userSubmittedMessageFieldPaths: data.userSubmittedMessageFieldPaths
 diff --git a/packages/api/src/stream/index.ts b/packages/api/src/stream/index.ts
-index b54ffdcb0daadabd259d786e8e98824e4bbec824..a5c422959691a5262acf02499bb2265bc956c11e 100644
+index bd0bb0cca17ea580885692207da0808cd9994a32..b48e49f6f81378600785637419e5edee344d0fc6 100644
 --- a/packages/api/src/stream/index.ts
 +++ b/packages/api/src/stream/index.ts
 @@ -96,6 +96,8 @@ export type {
@@ -4500,10 +4500,10 @@ index b54ffdcb0daadabd259d786e8e98824e4bbec824..a5c422959691a5262acf02499bb2265b
  // Implementations (for advanced use cases)
  export { InMemoryJobStore } from './implementations/InMemoryJobStore';
 diff --git a/packages/api/src/stream/interfaces/IJobStore.ts b/packages/api/src/stream/interfaces/IJobStore.ts
-index 7f3f38f0d7f2bd0394645bd3c1431fbc2c0ec51f..dfca3bb1585da82075a42e087c0ec8bdf97a8730 100644
+index b7f3b6f70fea20f60667288f263b5e88e5bd6492..3a251511ccba3a4c63c055110524faed581a4959 100644
 --- a/packages/api/src/stream/interfaces/IJobStore.ts
 +++ b/packages/api/src/stream/interfaces/IJobStore.ts
-@@ -18,6 +18,7 @@ import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
+@@ -22,6 +22,7 @@ import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
  import type { RecoveredSteerPayload } from '../SteerRecovery';
  import type { AuthoredSkillBinding } from '~/agents/authored';
  import type { MCPRuntimeRequestBody } from '~/mcp/types';
@@ -4511,7 +4511,7 @@ index 7f3f38f0d7f2bd0394645bd3c1431fbc2c0ec51f..dfca3bb1585da82075a42e087c0ec8bd
  
  /**
   * Detached Event Actor execution guarantee advertised by a generation store.
-@@ -176,6 +177,10 @@ export interface SerializableJobData {
+@@ -181,6 +182,10 @@ export interface SerializableJobData {
    /** Whether this generation is a manual context compaction; the abort paths
     * read it to stamp the stopped row with the compaction's identity. */
    compact?: boolean;
@@ -4522,7 +4522,7 @@ index 7f3f38f0d7f2bd0394645bd3c1431fbc2c0ec51f..dfca3bb1585da82075a42e087c0ec8bd
    /** Exact normalized MCP placeholder identity for this turn. */
    mcpRequestBody?: MCPRuntimeRequestBody;
    /** Exact assistant-message fields authored by the user during this running job. */
-@@ -491,6 +496,8 @@ export type JobMetadataPatch = Partial<
+@@ -509,6 +514,8 @@ export type JobMetadataPatch = Partial<
      | 'responseMessageId'
      | 'isRegenerate'
      | 'compact'
@@ -4531,7 +4531,7 @@ index 7f3f38f0d7f2bd0394645bd3c1431fbc2c0ec51f..dfca3bb1585da82075a42e087c0ec8bd
      | 'mcpRequestBody'
      | 'userSubmittedPaths'
      | 'userSubmittedMessageFieldPaths'
-@@ -887,6 +894,9 @@ export interface AbortResult {
+@@ -936,6 +943,9 @@ export interface AbortResult {
    content: Agents.MessageContentComplex[];
    /** Final event to send to client */
    finalEvent: unknown;
@@ -4541,7 +4541,7 @@ index 7f3f38f0d7f2bd0394645bd3c1431fbc2c0ec51f..dfca3bb1585da82075a42e087c0ec8bd
    /** Concatenated text from all content parts for token counting fallback */
    text: string;
    /** Collected usage metadata from all models for token spending */
-@@ -917,6 +927,7 @@ export function isStopConfirmed(result: AbortResult | null | undefined): boolean
+@@ -966,6 +976,7 @@ export function isStopConfirmed(result: AbortResult | null | undefined): boolean
  export interface ResumeState {
    runSteps: Agents.RunStep[];
    aggregatedContent: Agents.MessageContentComplex[];
@@ -4550,12 +4550,12 @@ index 7f3f38f0d7f2bd0394645bd3c1431fbc2c0ec51f..dfca3bb1585da82075a42e087c0ec8bd
    responseMessageId?: string;
    conversationId?: string;
 diff --git a/packages/api/src/stream/metadata.ts b/packages/api/src/stream/metadata.ts
-index c83ff543b7609735484b525c95c92124ba5f359c..b60cd95acfaedb68579b19b93816e263b88f104f 100644
+index b41b14bb758b511afd63d60756fcba273c302283..f0b8d95cf5a503a59d854b55eea80d7b528578ba 100644
 --- a/packages/api/src/stream/metadata.ts
 +++ b/packages/api/src/stream/metadata.ts
-@@ -6,6 +6,12 @@ import type { JobMetadataPatch } from './interfaces/IJobStore';
- import type { GenerationJobMetadata } from '~/types';
- import { parseScheduleMCPCompletion } from '~/schedules/authorization/continuation';
+@@ -49,6 +49,12 @@ export function buildGenerationStartedResponse(input: {
+   return { ...input, status: 'started' };
+ }
  
 +export function getRetainedContentMetadata(
 +  editedContent: object | null | undefined,
@@ -4565,8 +4565,8 @@ index c83ff543b7609735484b525c95c92124ba5f359c..b60cd95acfaedb68579b19b93816e263
 +
  export function sanitizeJobMetadata(metadata: Partial<GenerationJobMetadata>): JobMetadataPatch {
    const patch: JobMetadataPatch = {};
-   if (metadata.responseMessageId) {
-@@ -17,6 +23,12 @@ export function sanitizeJobMetadata(metadata: Partial<GenerationJobMetadata>): J
+   if (metadata.terminalPersistenceOwner !== undefined)
+@@ -66,6 +72,12 @@ export function sanitizeJobMetadata(metadata: Partial<GenerationJobMetadata>): J
    if (metadata.compact !== undefined) {
      patch.compact = metadata.compact;
    }
@@ -4740,7 +4740,7 @@ index 0000000000000000000000000000000000000000..d882acc98a2232b7741131085bdeef5b
 +  };
 +}
 diff --git a/packages/api/src/types/stream.ts b/packages/api/src/types/stream.ts
-index 9b5d8f1e5d9a2e4c970b7c53592d06bda9425e0f..a9b320adbb7ec4790caa402311c5ffea8cd5a002 100644
+index e1c0fc5cfef85e83fd3104b6d3fa5eec5c47c452..8fc6e4533046a979f19423056548c0515da1a364 100644
 --- a/packages/api/src/types/stream.ts
 +++ b/packages/api/src/types/stream.ts
 @@ -15,6 +15,7 @@ import type { EarlyBufferOverflowState } from './earlyBufferRecovery';
@@ -4751,7 +4751,7 @@ index 9b5d8f1e5d9a2e4c970b7c53592d06bda9425e0f..a9b320adbb7ec4790caa402311c5ffea
  import type { ServerSentEvent } from './events';
  
  export interface GenerationJobMetadata {
-@@ -36,6 +37,10 @@ export interface GenerationJobMetadata {
+@@ -38,6 +39,10 @@ export interface GenerationJobMetadata {
    /** Whether this generation is a manual context compaction; the abort paths
     * read it to stamp the stopped row with the compaction's identity. */
    compact?: boolean;
@@ -4794,10 +4794,10 @@ index 31956cb3ed3d7246d5baa3bca91ee550f5420b73..b528f72a16cc9d75c7a9c435f7b78937
        phaseMarkerCount += 1;
      }
 diff --git a/packages/chat/src/core/__tests__/steps.spec.ts b/packages/chat/src/core/__tests__/steps.spec.ts
-index 3a4a6057a79ccdb95f405cb69815e165fc3764bf..f04242ebdc175ee702fc31e602feb591658437ff 100644
+index ac5e79940e3af291350b602d5d32b866f09589cd..8f2c2b2fed41752533d83fdda285bc7677e2f2f1 100644
 --- a/packages/chat/src/core/__tests__/steps.spec.ts
 +++ b/packages/chat/src/core/__tests__/steps.spec.ts
-@@ -148,7 +148,7 @@ describe('steps', () => {
+@@ -286,7 +286,7 @@ describe('steps', () => {
          0,
        );
  
@@ -4806,7 +4806,7 @@ index 3a4a6057a79ccdb95f405cb69815e165fc3764bf..f04242ebdc175ee702fc31e602feb591
        expect(result.message).toBe(response);
      });
  
-@@ -329,7 +329,14 @@ describe('steps', () => {
+@@ -467,7 +467,14 @@ describe('steps', () => {
  
      it('folds the first continued text into the last prefix part and reports it', () => {
        const step = messageStep('step-text', 0);
@@ -4822,7 +4822,7 @@ index 3a4a6057a79ccdb95f405cb69815e165fc3764bf..f04242ebdc175ee702fc31e602feb591
  
        expect(result.foldedEditPrefix).toBe(true);
        expect(result.message.content).toEqual([
-@@ -339,11 +346,84 @@ describe('steps', () => {
+@@ -477,11 +484,84 @@ describe('steps', () => {
      });
  
      it('does not fold across a phase boundary', () => {
@@ -4957,10 +4957,10 @@ index 157b4cd420ca933251f76effde4a110c55b10e9c..3ec40326c5751ca6e758e9dc42698716
    const patcher = new ResponsePatcher(sub, host);
    const ctx: StreamContext = {
 diff --git a/packages/chat/src/core/resumable/host.ts b/packages/chat/src/core/resumable/host.ts
-index d4b80cb7ebf4d80eb08ed4a1fe21130ee3ae8d25..e7d826748b66562e9a614027e976f9c80568e7e1 100644
+index 2b225d119fb42dded26fe09a05c10c5c1ec95b5f..6e3f074771dc45c007195d872d1481b2aacfc11b 100644
 --- a/packages/chat/src/core/resumable/host.ts
 +++ b/packages/chat/src/core/resumable/host.ts
-@@ -343,12 +343,6 @@ export interface ResumableParts {
+@@ -347,12 +347,6 @@ export interface ResumableParts {
      event: TActivityLabelEvent,
      fallbackMessageIds?: readonly (string | null | undefined)[],
    ) => number;
@@ -5219,7 +5219,7 @@ index 578ba515867b9f69ae536a089fef3a0395e3eb27..c69fcfbb0e8146490a01d3f7a0937291
          ...resumeSubmission.initialResponse,
          messageId: responseId,
 diff --git a/packages/chat/src/core/steps/content.ts b/packages/chat/src/core/steps/content.ts
-index f85ff498a7762f4a62944daf86150b2cad0d4188..2342327d713ca1a0036741bf5bf9e00ca3751686 100644
+index c720f3ca5336bb3c1a257525871fb0caca8761b9..b697a8506bf344b52a1458f72f7512bfda76b143 100644
 --- a/packages/chat/src/core/steps/content.ts
 +++ b/packages/chat/src/core/steps/content.ts
 @@ -72,13 +72,18 @@ export function getEditPrefix(submission: EventSubmission): {
@@ -5262,7 +5262,7 @@ index f85ff498a7762f4a62944daf86150b2cad0d4188..2342327d713ca1a0036741bf5bf9e00c
    ) {
      const targetIndex = serverIndex + editPrefixOffset - 1;
 diff --git a/packages/chat/src/core/steps/text.ts b/packages/chat/src/core/steps/text.ts
-index 32e7cae06b3c1c407f5893fe91d30d64a10ae9ff..11df3a073c7972785503b0dbff10bebe177a1a60 100644
+index efad3f8022e628a258d94c67c316538afa37043f..ced238714f1fa4c20291efecaa805dc5e3400afa 100644
 --- a/packages/chat/src/core/steps/text.ts
 +++ b/packages/chat/src/core/steps/text.ts
 @@ -19,8 +19,8 @@ export type DeltaResult = {
@@ -5562,7 +5562,7 @@ index 03f55b18278e1cd76235018c26c8a1d25db79008..a9bcce32866648ef30953d5d62a0b2dc
    /**
     * Set once a resume SYNC has replaced the response's retained prefix with
 diff --git a/packages/data-provider/src/types/agents.ts b/packages/data-provider/src/types/agents.ts
-index f7542c1079d867d28a771ac6e6c067c1c7b1143f..53274b314168196d470c59aa3dc28068e3c5e3f8 100644
+index 8f276713900fbe61fb4dfa67cb5756eca8f8e88d..37ffe5be7cf450e7e7ba8529ea73e125907abd38 100644
 --- a/packages/data-provider/src/types/agents.ts
 +++ b/packages/data-provider/src/types/agents.ts
 @@ -81,6 +81,11 @@ export namespace Agents {
