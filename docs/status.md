@@ -23,7 +23,7 @@
 | 15. Native mobile overlay dismissal | [native-overlays](../patches/native-overlays/README.md) | feature | CloseWatcher/Navigation API、层栈、受控/非受控 dialog、Forward 和匹配 FINAL sync；不恢复 synthetic history，不承诺不支持原生 API 浏览器的通用 Back 拦截。 |
 | 16. Vendor chunk classification | [vendor-chunks](../patches/vendor-chunks/README.md) | upstream | 固定基线已含 #17921，采用上游第一层 node_modules 嵌套归组及 Windows 路径规范化，移除本地末段裁剪载荷；保留真实 config probe 合同。 |
 | 17. MCP server-initiated ping responses | [mcp-ping](../patches/mcp-ping/README.md) | keep | 上游处理合法空 ping 响应。保留同 session 心跳、时钟偏移、重连与非 ping 空结果合同。 |
-| 18. Unknown-provider MCP display images | [mcp-images](../patches/mcp-images/README.md) | keep | 采用上游的 display-only `imageAttachments` 和交付回调。保留回退文本过滤、图片校验与 SDK/host 消费验证。 |
+| 18. MCP 图片输入与展示 | [mcp-images](../patches/mcp-images/README.md) | keep | 采用上游的 `imageAttachments` 和交付回调。工具重载使用 Agent 解析后的 provider，保留视觉输入、回退文本过滤、图片校验和 SDK/host 消费验证。 |
 | 19. Delayed sidebar focus | [sidebar-focus](../patches/sidebar-focus/README.md) | upstream | 采用固定基线的 opener/body guard 和 mobile drawer commit handoff。继续执行组件与浏览器测试。 |
 | 20. Shared index retry helper | [index-retry](../patches/index-retry/README.md) | upstream | 基线已含 createIndexesWithRetry 与 retry.spec.ts；无载荷，callback 索引初始化调用方仍在 task-callbacks。 |
 | 21. Intent label limits and mobile wrapping | [intent-labels](../patches/intent-labels/README.md) | local | 标签长度和窄屏呈现可单独放弃；保留上游 timing/error UI，与 invocation 正确性分开。 |
@@ -47,7 +47,7 @@
 | --- | --- | --- |
 | vendor-chunks | `fc3b86acbc0a5290154b25f7a0091641667cd14b` [#17921](https://github.com/LibreChat-AI/LibreChat/pull/17921) | Vite 按第一层 `node_modules` 分类并规范化 Windows 分隔符。`vendor-chunk-paths.spec.ts` 执行真实配置探针。 |
 | mcp-ping | `413456941ccc079f5b132b245fbfa7a7bf756a60` [#18020](https://github.com/LibreChat-AI/LibreChat/pull/18020) | `connection.ts` 删除 `lastPingTime` 与空响应拦截。`MCPConnectionPing.test.ts` 用真实 SDK 覆盖 ping 和 client liveness。本组仍携带 Streamable HTTP 会话、时钟偏移、重连与普通空响应测试。 |
-| mcp-images | `9554046d5a2d36f120f87766ffffcf08b0bc7042` [#18000](https://github.com/LibreChat-AI/LibreChat/pull/18000) | Agent 与 Responses 回调经 `getImageAttachmentContent` 接收仅用于展示的附件。载荷继续过滤未知 provider 回退文本中的图片字节并验证可交付格式。 |
+| mcp-images | `9554046d5a2d36f120f87766ffffcf08b0bc7042` [#18000](https://github.com/LibreChat-AI/LibreChat/pull/18000) | Agent 与 Responses 回调经 `getImageAttachmentContent` 接收展示附件。载荷同时处理未知 provider 文本过滤和执行时的端点别名，并以第二次 Responses 请求验证自定义端点的视觉输入。 |
 | sidebar-focus | `fa9031ae74f32e21c42d26c082a6b704b2e9bfd6` [#18001](https://github.com/LibreChat-AI/LibreChat/pull/18001) | `OpenSidebar.tsx` 保留桌面主动焦点及移动 drawer handoff，`OpenSidebar.spec.tsx` 覆盖组件行为，`c380c9e5d53eecf1569da2e151a9188e11a628a6` 补浏览器证据。 |
 | index-retry | `e2b2839375d5e8052dec4785bf3117ce27aa67dc` | 上游有 `createIndexesWithRetry` 与 `retry.spec.ts`。callback 索引调用方继续由 `task-callbacks` 维护。 |
 

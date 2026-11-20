@@ -535,14 +535,20 @@
       "patch": "patches/mcp-images/changes.patch",
       "paths": [
         "api/app/clients/specs/BaseClient.test.js",
+        "api/app/clients/tools/util/handleTools.js",
+        "api/server/controllers/agents/openai.js",
+        "api/server/controllers/agents/responses.js",
+        "api/server/services/Endpoints/agents/initialize.js",
+        "api/server/services/Endpoints/agents/mcpImages.spec.js",
         "api/server/services/MCP.spec.js",
+        "api/server/services/ToolService.js",
         "packages/api/src/mcp/__tests__/parsers.test.ts",
         "packages/api/src/mcp/parsers.ts"
       ],
       "tests": "patches/mcp-images/tests.json",
       "replacement": {
         "commit": "9554046d5a2d36f120f87766ffffcf08b0bc7042",
-        "evidence": "The pinned base collects standalone and embedded images into display-only imageAttachments for unknown providers. getImageAttachmentContent feeds the ordinary agent and Responses attachment callbacks, and preserves content for recognized providers. The remaining diff omits inline image bytes from fallback model text and retains parser, SDK invocation, and host persistence contracts."
+        "evidence": "The pinned base collects standalone and embedded images into display-only imageAttachments for unknown providers. getImageAttachmentContent feeds the ordinary agent and Responses attachment callbacks. The diff omits inline image bytes from fallback model text and passes the initialized per-agent provider to the MCP tool loader at execution. The direct Agent regression verifies image parts in the second loopback Responses request for a custom endpoint resolved to OpenAI."
       }
     },
     {

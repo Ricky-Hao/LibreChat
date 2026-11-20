@@ -1,8 +1,10 @@
 diff --git a/api/app/clients/specs/BaseClient.test.js b/api/app/clients/specs/BaseClient.test.js
-index 2d3fd9c4e75098d4e8069c229d21b925ca700cd8..70519e1527d8dc73b78e7577a203f4017719d2cc 100644
+index 4b94aff21ffde863c5220f40a22ad77428a66ce8..8ba6d5d016da862e3f0782fe774b818e9369e4b1 100644
 --- a/api/app/clients/specs/BaseClient.test.js
 +++ b/api/app/clients/specs/BaseClient.test.js
-@@ -786,2 +786,37 @@ describe('BaseClient', () => {
+@@ -784,6 +784,41 @@ describe('BaseClient', () => {
+   });
+ 
    describe('sendMessage', () => {
 +    test('waits for an MCP image artifact before persisting the ordinary response', async () => {
 +      saveMessage.mockClear();
@@ -40,11 +42,507 @@ index 2d3fd9c4e75098d4e8069c229d21b925ca700cd8..70519e1527d8dc73b78e7577a203f401
 +    });
 +
      test('sendMessage should return a response message', async () => {
+       const expectedResult = expect.objectContaining({
+         sender: TestClient.sender,
+diff --git a/api/app/clients/tools/util/handleTools.js b/api/app/clients/tools/util/handleTools.js
+index fa8c3cad2eca112799042d2a3f3081db887f19b5..a5b472483376b00a25700e147840ae55bc54b62b 100644
+--- a/api/app/clients/tools/util/handleTools.js
++++ b/api/app/clients/tools/util/handleTools.js
+@@ -648,7 +648,7 @@ const loadTools = async ({
+         jobCreatedAt: options.jobCreatedAt,
+         unattended: options.unattended,
+         model: agent?.model ?? model,
+-        provider: agent?.provider ?? endpoint,
++        provider: options.mcpProvider ?? agent?.provider ?? endpoint,
+       },
+     })),
+   );
+diff --git a/api/server/controllers/agents/openai.js b/api/server/controllers/agents/openai.js
+index 57c14212a805c90fb304fb49e94b904418580874..06d0798095e3c366ee474eb3e2c79c4abba24ef9 100644
+--- a/api/server/controllers/agents/openai.js
++++ b/api/server/controllers/agents/openai.js
+@@ -899,6 +899,7 @@ const executeOpenAIChatCompletion = async (envelope, { req, res }) => {
+             requestBody: mcpRequestBody,
+             toolNames,
+             agent: ctx.agent ?? agent,
++            mcpProvider: ctx.fileEncodingAgent?.provider,
+             signal: runSignal,
+             toolRegistry: ctx.toolRegistry,
+             callerCapabilityProjection,
+diff --git a/api/server/controllers/agents/responses.js b/api/server/controllers/agents/responses.js
+index 478fb9b605c1b57d0626b37da3f0397a3b01ca30..6caf57d7d4dd7e8b859c87e922b5771237974d09 100644
+--- a/api/server/controllers/agents/responses.js
++++ b/api/server/controllers/agents/responses.js
+@@ -1127,6 +1127,7 @@ const executeResponse = async (envelope, { req, res }) => {
+               requestBody: mcpRequestBody,
+               toolNames,
+               agent: ctx.agent ?? agent,
++              mcpProvider: ctx.fileEncodingAgent?.provider,
+               signal: runSignal,
+               toolRegistry: ctx.toolRegistry,
+               callerCapabilityProjection,
+@@ -1360,6 +1361,7 @@ const executeResponse = async (envelope, { req, res }) => {
+               requestBody: mcpRequestBody,
+               toolNames,
+               agent: ctx.agent ?? agent,
++              mcpProvider: ctx.fileEncodingAgent?.provider,
+               signal: runSignal,
+               toolRegistry: ctx.toolRegistry,
+               callerCapabilityProjection,
+diff --git a/api/server/services/Endpoints/agents/initialize.js b/api/server/services/Endpoints/agents/initialize.js
+index 7782b61ac1ee5da9711a37995cd58aa5933f01e1..cc1d05600d6e3de8a316ea1e539a4aa06bb10a97 100644
+--- a/api/server/services/Endpoints/agents/initialize.js
++++ b/api/server/services/Endpoints/agents/initialize.js
+@@ -502,6 +502,7 @@ const initializeClientWithProvider = async ({
+         requestBody: runtimeRequestBody,
+         toolNames,
+         agent: ctx.agent,
++        mcpProvider: ctx.fileEncodingAgent?.provider,
+         runFileCodeExecutionContext: runFileBindings.getCodeExecutionContext(
+           agentId,
+           executionContext,
+diff --git a/api/server/services/Endpoints/agents/mcpImages.spec.js b/api/server/services/Endpoints/agents/mcpImages.spec.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..09e55a2cf53cbb58237d5adcace35bbadfcc4afb
+--- /dev/null
++++ b/api/server/services/Endpoints/agents/mcpImages.spec.js
+@@ -0,0 +1,429 @@
++const { createServer } = require('node:http');
++const { once } = require('node:events');
++const { randomUUID } = require('node:crypto');
++const mongoose = require('mongoose');
++const sharp = require('sharp');
++const { CallToolResultSchema } = require('@modelcontextprotocol/sdk/types.js');
++const {
++  createToolExecuteHandler,
++  getProviderConfig,
++  MCPConnection,
++  MCPManager,
++  MCPServersRegistry,
++} = require('@librechat/api');
++const { Constants, Permissions, PermissionTypes } = require('librechat-data-provider');
++const { getMCPManager, getMCPServersRegistry } = require('~/config');
++const db = require('~/models');
++const { getAppConfig, getMCPServerTools } = require('~/server/services/Config');
++const { getEndpointModelsConfig } = require('~/server/controllers/ModelController');
++const { saveBase64Image } = require('~/server/services/Files/process');
++const { createMCPTool } = require('~/server/services/MCP');
++const { initializeClient } = require('./initialize');
++
++jest.mock('~/config', () => ({
++  ...jest.requireActual('~/config'),
++  getMCPManager: jest.fn(),
++  getMCPServersRegistry: jest.fn(),
++}));
++jest.mock('~/models', () => ({
++  ...jest.requireActual('~/models'),
++  findPluginAuthsByKeys: jest.fn(async () => []),
++  getRoleByName: jest.fn(),
++}));
++jest.mock('~/server/controllers/ModelController', () => ({
++  getEndpointModelsConfig: jest.fn(),
++}));
++jest.mock('~/server/services/Config', () => ({
++  ...jest.requireActual('~/server/services/Config'),
++  getAppConfig: jest.fn(),
++  getMCPServerTools: jest.fn(),
++}));
++jest.mock('~/server/services/Files/process', () => ({
++  ...jest.requireActual('~/server/services/Files/process'),
++  saveBase64Image: jest.fn(),
++}));
++
++const responsesModel = 'gpt-6.2-sol';
++const moonshotModel = 'moonshot-v1-8k';
++const toolKey = `screenshot${Constants.mcp_delimiter}synthetic`;
++const callId = 'call_synthetic';
++const photoText = 'Synthetic screenshot is ready.';
++const endText = 'Finished synthetic tool call.';
++const prompt = 'Run the screenshot tool.';
++const toolDefinition = {
++  type: 'function',
++  function: {
++    name: toolKey,
++    description: 'Return a synthetic screenshot',
++    parameters: { type: 'object', properties: {} },
++  },
++};
++
++function writeResponsesStream(res, model, isFirstRequest) {
++  const item = isFirstRequest
++    ? { type: 'function_call', id: 'fc_synthetic', call_id: callId, name: toolKey, arguments: '{}' }
++    : {
++        type: 'message',
++        id: 'msg_synthetic',
++        role: 'assistant',
++        content: [{ type: 'output_text', text: endText, annotations: [] }],
++      };
++  const response = {
++    id: isFirstRequest ? 'resp_tool' : 'resp_final',
++    object: 'response',
++    model,
++    status: 'in_progress',
++    output: [],
++  };
++  const events = [{ type: 'response.created', response }];
++  if (isFirstRequest) {
++    events.push(
++      { type: 'response.output_item.added', output_index: 0, item: { ...item, arguments: '' } },
++      {
++        type: 'response.function_call_arguments.delta',
++        output_index: 0,
++        item_id: item.id,
++        delta: item.arguments,
++      },
++    );
++  } else {
++    events.push({
++      type: 'response.output_text.delta',
++      output_index: 0,
++      content_index: 0,
++      item_id: item.id,
++      delta: endText,
++    });
++  }
++  events.push({
++    type: 'response.completed',
++    response: {
++      ...response,
++      status: 'completed',
++      output: [{ ...item, status: 'completed' }],
++      usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
++    },
++  });
++  res.writeHead(200, { 'Content-Type': 'text/event-stream' });
++  res.end(
++    events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
++  );
++}
++
++function writeChatStream(res, model, isFirstRequest) {
++  const delta = isFirstRequest
++    ? {
++        tool_calls: [
++          { index: 0, id: callId, type: 'function', function: { name: toolKey, arguments: '{}' } },
++        ],
++      }
++    : { content: endText };
++  const chunk = {
++    id: isFirstRequest ? 'chat_tool' : 'chat_final',
++    object: 'chat.completion.chunk',
++    model,
++    choices: [{ index: 0, delta: { role: 'assistant', ...delta }, finish_reason: null }],
++  };
++  const done = {
++    ...chunk,
++    choices: [{ index: 0, delta: {}, finish_reason: isFirstRequest ? 'tool_calls' : 'stop' }],
++  };
++  res.writeHead(200, { 'Content-Type': 'text/event-stream' });
++  res.end(`data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(done)}\n\ndata: [DONE]\n\n`);
++}
++
++function inputParts(input) {
++  return input.flatMap((item) => [
++    item,
++    ...[item.content, item.output].filter(Array.isArray).flat(),
++  ]);
++}
++
++describe('MCP images in the next Agent model request', () => {
++  let png;
++  let server;
++  let baseURL;
++  let requests;
++  let connection;
++  let callTool;
++  let image;
++  let serverConfig;
++  let config;
++
++  beforeAll(async () => {
++    png = (
++      await sharp({ create: { width: 2, height: 2, channels: 3, background: '#4287ab' } })
++        .png()
++        .toBuffer()
++    ).toString('base64');
++    image = { type: 'image', mimeType: 'image/png', data: png };
++    server = createServer(async (req, res) => {
++      const isResponses = req.url === '/v1/responses';
++      if (
++        req.method !== 'POST' ||
++        (!isResponses && req.url !== '/v1/chat/completions') ||
++        requests.length >= 2
++      ) {
++        res.writeHead(400).end();
++        return;
++      }
++      const chunks = [];
++      for await (const chunk of req) {
++        chunks.push(chunk);
++      }
++      const body = JSON.parse(Buffer.concat(chunks));
++      requests.push({ method: req.method, path: req.url, body });
++      const writeStream = isResponses ? writeResponsesStream : writeChatStream;
++      writeStream(res, body.model, requests.length === 1);
++    });
++    server.listen(0, '127.0.0.1');
++    await once(server, 'listening');
++    baseURL = `http://127.0.0.1:${server.address().port}/v1`;
++  });
++
++  afterAll(async () => {
++    if (server?.listening) {
++      const closed = once(server, 'close');
++      server.close();
++      server.closeAllConnections();
++      await closed;
++    }
++  });
++
++  beforeEach(() => {
++    requests = [];
++    serverConfig = { type: 'streamable-http', url: `${baseURL}/mcp` };
++    const registry = new MCPServersRegistry(mongoose, ['127.0.0.1'], ['127.0.0.1'], async () => ({
++      allowedDomains: ['127.0.0.1'],
++      allowedAddresses: ['127.0.0.1'],
++      mcpApps: registry.getMCPAppsPolicy(),
++      serverNames: ['synthetic'],
++    }));
++    registry.setYamlServerOptions({ synthetic: serverConfig });
++    jest.spyOn(registry, 'getServerConfig').mockImplementation(async (name) => {
++      return name === 'synthetic' ? serverConfig : undefined;
++    });
++    jest.spyOn(registry, 'getAllServerConfigs').mockResolvedValue({ synthetic: serverConfig });
++    jest.spyOn(registry, 'isAppServerConfig').mockResolvedValue(false);
++    jest.spyOn(registry, 'ensureConfigServers').mockResolvedValue({});
++    jest.spyOn(MCPServersRegistry, 'getInstance').mockReturnValue(registry);
++    getMCPServersRegistry.mockReturnValue(registry);
++    const manager = new MCPManager();
++    connection = new MCPConnection({ serverName: 'synthetic', serverConfig });
++    jest.spyOn(connection, 'isConnected').mockResolvedValue(true);
++    jest.spyOn(manager, 'getConnection').mockResolvedValue(connection);
++    callTool = jest.spyOn(manager, 'callTool');
++    getMCPManager.mockReturnValue(manager);
++    config = {
++      endpoints: {
++        agents: {
++          capabilities: ['tools'],
++          toolApproval: { enabled: false },
++          checkpointer: { enabled: false },
++        },
++        custom: [
++          {
++            name: 'NewAPI',
++            baseURL,
++            apiKey: 'test',
++            models: { default: [responsesModel], fetch: false },
++          },
++          {
++            name: 'Moonshot',
++            baseURL,
++            apiKey: 'test',
++            models: { default: [moonshotModel], fetch: false },
++          },
++        ],
++      },
++      mcpConfig: { synthetic: serverConfig },
++      mcpSettings: { allowedDomains: ['127.0.0.1'], allowedAddresses: ['127.0.0.1'] },
++      summarization: { enabled: false },
++      balance: { enabled: false },
++      transactions: { enabled: false },
++    };
++    getAppConfig.mockResolvedValue(config);
++    db.getRoleByName.mockResolvedValue({
++      permissions: { [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true } },
++    });
++    getMCPServerTools.mockResolvedValue({ [toolKey]: toolDefinition });
++    saveBase64Image.mockResolvedValue({
++      file_id: 'synthetic-file',
++      type: 'image/png',
++      width: 2,
++      height: 2,
++      filepath: '/synthetic.png',
++    });
++  });
++
++  afterEach(() => jest.restoreAllMocks());
++
++  test.each([
++    ['NewAPI', 'image only', false, 'openAI', responsesModel, true],
++    ['NewAPI', 'Photo style', true, 'openAI', responsesModel, true],
++    ['openAI', 'image only', false, 'openAI', responsesModel, true],
++    ['Moonshot', 'image only', false, 'moonshot', moonshotModel, false],
++  ])(
++    '%s with %s through the direct Agent tool path',
++    async (endpoint, _label, photo, provider, model, useResponsesApi) => {
++      const response = CallToolResultSchema.parse(
++        photo
++          ? {
++              structuredContent: { width: 2, height: 2 },
++              content: [{ type: 'text', text: photoText }, image],
++            }
++          : { content: [image] },
++      );
++      const mcpRequest = jest.spyOn(connection.client, 'request').mockResolvedValue(response);
++      getEndpointModelsConfig.mockResolvedValue({ [endpoint]: [model] });
++      const openAIBaseURL = endpoint === 'openAI' ? baseURL : 'http://127.0.0.1:1/v1';
++      jest.replaceProperty(process, 'env', {
++        ...process.env,
++        OPENAI_API_KEY: 'test',
++        OPENAI_REVERSE_PROXY: openAIBaseURL,
++        OPENAI_BASE_URL: openAIBaseURL,
++      });
++      const conversationId = randomUUID();
++      const responseMessageId = randomUUID();
++      const toolEnd = jest.fn();
++      const req = {
++        user: { id: new mongoose.Types.ObjectId().toString(), role: 'USER' },
++        config,
++        body: { conversationId, endpoint: 'agents' },
++        resolvedConversation: null,
++        _agentEventActionObserver: toolEnd,
++      };
++      const res = { headersSent: true, writableEnded: false, write: jest.fn(), flush: jest.fn() };
++      const { client, userMCPAuthMap } = await initializeClient({
++        req,
++        res,
++        endpointOption: {
++          endpoint: 'agents',
++          model_parameters: { model },
++          agent: Promise.resolve({
++            id: 'synthetic-agent',
++            name: 'Synthetic Agent',
++            provider: endpoint,
++            model,
++            model_parameters: { useResponsesApi },
++            tools: [toolKey],
++          }),
++        },
++      });
++      client.conversationId = conversationId;
++      client.responseMessageId = responseMessageId;
++      await client.chatCompletion({
++        userMCPAuthMap,
++        payload: [
++          {
++            messageId: randomUUID(),
++            isCreatedByUser: true,
++            content: [{ type: 'text', text: prompt }],
++          },
++        ],
++      });
++
++      const path = useResponsesApi ? '/v1/responses' : '/v1/chat/completions';
++      expect(requests.map(({ method, path, body }) => [method, path, body.model])).toEqual([
++        ['POST', path, model],
++        ['POST', path, model],
++      ]);
++      const [firstRequest, secondRequest] = requests.map(({ body }) => body);
++      expect(
++        firstRequest.tools?.some((tool) => (tool.name ?? tool.function?.name) === toolKey),
++      ).toBe(true);
++      const firstInput = useResponsesApi ? firstRequest.input : firstRequest.messages;
++      expect(JSON.stringify(firstInput).includes(prompt)).toBe(true);
++      expect(
++        inputParts(firstInput).some(({ type }) => type === 'input_image' || type === 'image_url'),
++      ).toBe(false);
++      expect(mcpRequest).toHaveBeenCalledTimes(1);
++      expect(callTool).toHaveBeenCalledTimes(1);
++      const [, artifact] = await callTool.mock.results[0].value;
++      const nextInput = useResponsesApi ? secondRequest.input : secondRequest.messages;
++      const toolOutput = nextInput.find(
++        ({ type, role }) => type === 'function_call_output' || role === 'tool',
++      );
++      const parts = inputParts(nextInput);
++      const images = parts.filter(({ type }) => type === 'input_image' || type === 'image_url');
++      expect(toolOutput?.call_id ?? toolOutput?.tool_call_id).toBe(callId);
++      if (photo) {
++        expect(typeof toolOutput?.output).toBe('string');
++        expect(
++          toolOutput.output.includes(photoText) ||
++            parts.some(({ type, text }) => type === 'input_text' && text === photoText),
++        ).toBe(true);
++      }
++      const modelAcceptsImage = provider === 'openAI';
++      // Keep diagnostics limited to types, counts and booleans.
++      expect({
++        endpoint: client.options.agent.endpoint,
++        modelProvider: client.options.agent.provider,
++        mcpProvider: callTool.mock.calls[0][0].provider,
++        artifactContent: artifact?.content?.map(({ type }) => type),
++        imageAttachments: artifact?.imageAttachments?.length ?? 0,
++        imageParts: images.map(({ type, image_url }) => ({
++          type,
++          validPNG: image_url === `data:image/png;base64,${png}`,
++        })),
++      }).toEqual({
++        endpoint,
++        modelProvider: provider,
++        mcpProvider: provider.toLowerCase(),
++        artifactContent: modelAcceptsImage ? ['image_url'] : [],
++        imageAttachments: modelAcceptsImage ? 0 : 1,
++        imageParts: modelAcceptsImage ? [{ type: 'input_image', validPNG: true }] : [],
++      });
++      if (!modelAcceptsImage) {
++        expect(JSON.stringify(nextInput).includes(png)).toBe(false);
++      }
++      expect(toolEnd).toHaveBeenCalledTimes(1);
++    },
++  );
++
++  test('an explicit unknown invocation provider keeps the PNG attachment on the same MCP tool', async () => {
++    const user = { id: new mongoose.Types.ObjectId().toString(), role: 'USER' };
++    jest.spyOn(connection.client, 'request').mockResolvedValue(
++      CallToolResultSchema.parse({
++        content: [{ type: 'text', text: photoText }, image],
++      }),
++    );
++    // The app cannot initialize an unconfigured provider as an Agent model.
++    expect(() =>
++      getProviderConfig({ provider: 'unconfigured-provider', appConfig: config }),
++    ).toThrow();
++    const tool = await createMCPTool({
++      user,
++      config: serverConfig,
++      toolKey,
++      provider: 'openAI',
++      availableTools: { [toolKey]: toolDefinition },
++    });
++    const handler = createToolExecuteHandler({ loadTools: async () => ({ loadedTools: [tool] }) });
++    const invoke = (provider, id) =>
++      new Promise((resolve, reject) => {
++        handler.handle('on_tool_execute', {
++          toolCalls: [{ id, name: toolKey, args: {}, stepId: id }],
++          agentId: 'synthetic-agent',
++          metadata: { provider, thread_id: 'synthetic-thread', run_id: 'synthetic-message' },
++          configurable: { user },
++          resolve,
++          reject,
++        });
++      });
++    const [unknown] = await invoke('unconfigured-provider', 'call_unknown');
++    const [native] = await invoke(undefined, 'call_native');
++
++    expect(callTool.mock.calls.map(([options]) => options.provider)).toEqual([
++      'unconfigured-provider',
++      'openai',
++    ]);
++    expect(unknown.status).toBe('success');
++    expect(unknown.content === photoText).toBe(true);
++    expect(unknown.artifact.content.map(({ type }) => type)).toEqual([]);
++    expect(unknown.artifact.imageAttachments?.length).toBe(1);
++    expect(native.status).toBe('success');
++    expect(native.artifact.content.map(({ type }) => type)).toEqual(['image_url']);
++    expect(native.artifact.imageAttachments === undefined).toBe(true);
++  });
++});
 diff --git a/api/server/services/MCP.spec.js b/api/server/services/MCP.spec.js
 index f2482aac37fafb7051acb7a6df152c85f7d60d3c..69a37f7598c291304a851649e8e70b189f2faa44 100644
 --- a/api/server/services/MCP.spec.js
 +++ b/api/server/services/MCP.spec.js
-@@ -111,2 +111,12 @@ jest.mock('./OboPolicyService', () => ({
+@@ -109,6 +109,16 @@ jest.mock('./OboPolicyService', () => ({
+   createOboTrustChecker: jest.fn(() => jest.fn()),
+ }));
  
 +jest.mock('~/server/services/Files/process', () => ({ saveBase64Image: jest.fn() }));
 +jest.mock('~/server/services/Files/Citations', () => ({ processFileCitations: jest.fn() }));
@@ -57,7 +555,11 @@ index f2482aac37fafb7051acb7a6df152c85f7d60d3c..69a37f7598c291304a851649e8e70b18
 +}));
 +
  describe('tests for the new helper functions used by the MCP connection status endpoints', () => {
-@@ -1645,2 +1655,187 @@ describe('User parameter passing tests', () => {
+   let mockGetMCPManager;
+   let mockGetFlowStateManager;
+@@ -1643,6 +1653,191 @@ describe('User parameter passing tests', () => {
+   });
+ 
    describe('createMCPTool', () => {
 +    describe('image artifact contract', () => {
 +      afterEach(() => jest.restoreAllMocks());
@@ -245,32 +747,78 @@ index f2482aac37fafb7051acb7a6df152c85f7d60d3c..69a37f7598c291304a851649e8e70b18
 +    });
 +
      it('preserves the full MCP tuple for the Assistants required-action sink', async () => {
+       const mockUser = { id: 'assistants-app-user', role: 'USER' };
+       const mockRes = { write: jest.fn(), flush: jest.fn() };
+diff --git a/api/server/services/ToolService.js b/api/server/services/ToolService.js
+index 76a6bf903620e9c864b41443f5b2653cf3cba9be..a72e33015d7dfa1f3f0389f53e146f36bfc3d9e6 100644
+--- a/api/server/services/ToolService.js
++++ b/api/server/services/ToolService.js
+@@ -2102,6 +2102,7 @@ async function loadAgentTools({
+  * @param {ServerResponse} params.res - The response object
+  * @param {AbortSignal} [params.signal] - Abort signal
+  * @param {Object} params.agent - The agent object
++ * @param {string} [params.mcpProvider] - The initialized model provider for MCP content
+  * @param {import('@librechat/api').RequestBody} [params.requestBody] - Normalized MCP body
+  * @param {string} [params.agentResourceType] - Permission resource type for the authorized agent route
+  * @param {string[]} params.toolNames - Names of tools to load
+@@ -2125,6 +2126,7 @@ async function loadToolsForExecution({
+   res,
+   signal,
+   agent,
++  mcpProvider,
+   requestBody,
+   agentResourceType,
+   toolNames,
+@@ -2467,6 +2469,7 @@ async function loadToolsForExecution({
+         res,
+         requestBody: runtimeRequestBody,
+         agentResourceType,
++        mcpProvider,
+         jobCreatedAt,
+         unattended,
+         tool_resources,
 diff --git a/packages/api/src/mcp/__tests__/parsers.test.ts b/packages/api/src/mcp/__tests__/parsers.test.ts
 index a2955ef7c8b6d5fed3b722d5c6b0570f280a46a1..925c7feb26d5710fa2f508d65392f8029697f605 100644
 --- a/packages/api/src/mcp/__tests__/parsers.test.ts
 +++ b/packages/api/src/mcp/__tests__/parsers.test.ts
-@@ -1 +1,3 @@
+@@ -1,3 +1,5 @@
 +import sharp from 'sharp';
 +import { createHash } from 'node:crypto';
  import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-@@ -41,3 +43,3 @@ describe('formatToolContent', () => {
+ import { isMcpAppMimeType, MCP_APP_MIME_TYPE } from 'librechat-data-provider';
+ import type * as t from '../types';
+@@ -39,7 +41,7 @@ describe('formatToolContent', () => {
+       expect(artifacts).toBeUndefined();
+     });
  
 -    it('should preserve the image payload in the string for unrecognized providers', () => {
 +    it('should preserve the image as a display attachment for unrecognized providers', () => {
        const result: t.MCPToolCallResponse = {
-@@ -54,4 +56,4 @@ describe('formatToolContent', () => {
+         content: [{ type: 'image', data: 'iVBORw0KGgoAAAA...', mimeType: 'image/png' }],
+       };
+@@ -52,8 +54,8 @@ describe('formatToolContent', () => {
+           { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgoAAAA...' } },
+         ],
        });
 -      expect(content).toContain('iVBORw0KGgoAAAA...');
 -      expect(content).toContain('image/png');
 +      expect(content).not.toContain('iVBORw0KGgoAAAA...');
 +      expect(content).toBe('');
      });
-@@ -81,3 +83,3 @@ describe('formatToolContent', () => {
+   });
+ 
+@@ -79,7 +81,7 @@ describe('formatToolContent', () => {
+         };
+         const [content, artifacts] = formatToolContent(result, provider as t.Provider);
          expect(content).toContain('Partial result');
 -        expect(content).toContain('data:IMAGE/PNG;base64,aW1hZ2U=');
 +        expect(content).not.toContain('data:IMAGE/PNG;base64,aW1hZ2U=');
          expect(artifacts?.content).toEqual([]);
-@@ -97,2 +99,154 @@ describe('formatToolContent', () => {
+         expect(artifacts?.imageAttachments).toEqual(
+           [
+@@ -95,6 +97,158 @@ describe('formatToolContent', () => {
+     );
+   });
  
 +  describe('synthetic image artifact contract', () => {
 +    const providers = ['openai', 'anthropic', 'unknown', undefined] as const;
@@ -425,40 +973,66 @@ index a2955ef7c8b6d5fed3b722d5c6b0570f280a46a1..925c7feb26d5710fa2f508d65392f802
 +  });
 +
    describe('recognized providers', () => {
-@@ -250,3 +404,3 @@ describe('formatToolContent', () => {
+     const allProviders: t.Provider[] = [
+       'google',
+@@ -248,7 +402,7 @@ describe('formatToolContent', () => {
+       });
+     });
  
 -    it('should reject oversized image data for unrecognized providers before stringifying', () => {
 +    it('should reject oversized image data for unrecognized providers before creating display attachments', () => {
        process.env.MCP_IMAGE_DATA_MAX_BYTES = '3';
-@@ -1387,3 +1541,3 @@ describe('formatToolContent', () => {
+       const result: t.MCPToolCallResponse = {
+         content: [{ type: 'image', data: 'QUJDRA==', mimeType: 'image/png' }],
+@@ -1385,7 +1539,7 @@ describe('formatToolContent', () => {
+       expect(artifacts?.ui_resources).toBeUndefined();
+       expect(artifacts?.content).toEqual([]);
        expect(artifacts?.imageAttachments).toHaveLength(1);
 -      expect(content).toContain('base64data');
 +      expect(content).not.toContain('base64data');
      });
-@@ -1404,3 +1558,3 @@ describe('formatToolContent', () => {
+ 
+     it('keeps bounded standalone images in model output beside a legacy UI attachment', () => {
+@@ -1402,7 +1556,7 @@ describe('formatToolContent', () => {
+       const [content, artifacts] = formatToolContent(result, 'vertexai' as t.Provider);
+ 
        const resource = artifacts?.ui_resources?.data?.[0];
 -      expect(content).toContain('base64data');
 +      expect(content).not.toContain('base64data');
        expect(content).toContain(`UI Resource Marker: \\ui{${resource?.resourceId}}`);
-@@ -1428,3 +1582,3 @@ describe('formatToolContent', () => {
+       expect(content.split(`UI Resource Marker: \\ui{${resource?.resourceId}}`)).toHaveLength(2);
+       expect(artifacts?.content).toEqual([]);
+@@ -1426,7 +1580,7 @@ describe('formatToolContent', () => {
+ 
+       const [content, artifacts] = formatToolContent(result, 'vertexai' as t.Provider);
  
 -      expect(content).toContain('data:image/png;base64,aW1hZ2U=');
 +      expect(content).not.toContain('data:image/png;base64,aW1hZ2U=');
        expect(artifacts?.content).toEqual([]);
+       expect(artifacts?.imageAttachments).toHaveLength(1);
+       expect(artifacts?.ui_resources?.data).toHaveLength(1);
 diff --git a/packages/api/src/mcp/parsers.ts b/packages/api/src/mcp/parsers.ts
 index 5ed8cd9e110ae889e4721974792fb0b4d30d422f..72a18caf4473f865d8b32d6ffa4824e83b60dcac 100644
 --- a/packages/api/src/mcp/parsers.ts
 +++ b/packages/api/src/mcp/parsers.ts
-@@ -270,5 +270,2 @@ function parseAsString(result: t.MCPToolCallResponse): string {
+@@ -268,9 +268,6 @@ function parseAsString(result: t.MCPToolCallResponse): string {
+           const body = readResourceBody(item.resource);
+           if (body.text) {
              resourceText.push(body.text);
 -          } else if (body.image) {
 -            assertImageDataWithinLimit(body.image);
 -            resourceText.push(`data:${body.image.mimeType};base64,${body.image.data}`);
            } else if (body.binaryBytes != null) {
-@@ -285,4 +282,5 @@ function parseAsString(result: t.MCPToolCallResponse): string {
+             resourceText.push(describeBinaryResource(body.binaryBytes));
+           }
+@@ -283,8 +280,9 @@ function parseAsString(result: t.MCPToolCallResponse): string {
+         }
+         return resourceText.join('\n');
        }
 +      // The image handler attaches the payload separately from the model text.
        if (isImageContent(item)) {
 -        assertImageDataWithinLimit(item);
 +        return '';
        }
+       return JSON.stringify(item, null, 2);
+     })
