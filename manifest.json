@@ -542,6 +542,7 @@
         "api/server/services/Endpoints/agents/mcpImages.spec.js",
         "api/server/services/MCP.spec.js",
         "api/server/services/ToolService.js",
+        "packages/api/src/endpoints/openai/config.ts",
         "packages/api/src/mcp/__tests__/parsers.test.ts",
         "packages/api/src/mcp/parsers.ts"
       ],
