@@ -18,6 +18,12 @@
 
 PR16 后续修复处理 Agent 执行时重载 MCP 工具的 provider。Agent 初始化会为 `NewAPI` 等自定义端点解析实际模型 provider，执行时的工具加载会读取原始端点名。初始化结果现在经 `loadToolsForExecution` 传给 MCP 工具，调用仍可通过 `metadata.provider` 显式覆盖。模型端点、模型和 API 模式由原有初始化配置决定。
 
+## Responses 请求诊断
+
+`OPENAI_LOG=debug` 时，LibreChat 用 `openai.responses.request` 摘要替换 OpenAI SDK 每次尝试发送 Responses 请求前记录的请求详情。设置 `CONSOLE_JSON=true`，在允许 `info` 的控制台日志里按 `message` 筛选该事件，再用 `tool_call_ids` 查找对应的 `call_id`。
+
+摘要的出站请求字段为 `model`、`tool_call_ids` 和 `input_image_count`。图片数汇总整个请求，包括用户消息里的图片。带工具输出且无图的请求会显式记录 `input_image_count: 0`。
+
 ## 维护与验证
 
 先读当前调用方和 [行为映射](../../docs/status.md)，再按 [维护步骤](../../docs/maintenance.md) 适配。改动跨组共享文件时，保留其他组的 hunks 和依赖，不用整文件覆盖上游。
@@ -29,7 +35,7 @@ PR16 后续修复处理 Agent 执行时重载 MCP 工具的 provider。Agent 初
 python3 tools/patchset.py test --target /path/to/application --only mcp-images --tier all --plan
 ```
 
-`api/server/services/Endpoints/agents/mcpImages.spec.js` 走应用 Agent 的直接工具入口。它以同一张合成 PNG 模拟纯图和 Photo 图文 MCP 结果，用 vendored SDK 向 loopback 端点发出两次请求，检查第二次 `POST /v1/responses` 的 `input_image`、工具调用 ID 和图文文本。原生 OpenAI 用同一路径作对照。Moonshot 的 Chat Completions 请求验证附件回退，未知 provider 在 MCP 工具调用边界验证显式覆盖。
+`api/server/services/Endpoints/agents/mcpImages.spec.js` 走应用 Agent 的直接工具入口。它用合成数据模拟纯图、Photo 图文和纯文本 MCP 结果，使用 vendored SDK 向 loopback 端点发出两次请求。测试核对第二次 `POST /v1/responses` 的 `input_image`、工具调用 ID 和文本，也比对日志的模型、调用 ID 和图片数。原生 OpenAI 用同一路径作对照。Moonshot 的 Chat Completions 请求验证附件回退，未知 provider 在 MCP 工具调用边界验证显式覆盖。
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
 2026-11-11 在上一轮基线通过本组 2 项 focused 与 API 类型检查，覆盖 parser 和主机消费方。[历史验收](../../README.md#历史验收2026-11-11)
