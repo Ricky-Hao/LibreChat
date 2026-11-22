@@ -20,9 +20,17 @@ PR16 后续修复处理 Agent 执行时重载 MCP 工具的 provider。Agent 初
 
 ## Responses 请求诊断
 
-`OPENAI_LOG=debug` 时，LibreChat 用 `openai.responses.request` 摘要替换 OpenAI SDK 每次尝试发送 Responses 请求前记录的请求详情。设置 `CONSOLE_JSON=true`，在允许 `info` 的控制台日志里按 `message` 筛选该事件，再用 `tool_call_ids` 查找对应的 `call_id`。
+沿用 `OPENAI_LOG=debug`，应用的 OpenAI SDK 日志钩子仅输出结构化诊断。使用 `CONSOLE_JSON=true` 时，在允许 `info` 的控制台日志里按 `message` 筛选以下事件。
 
-摘要的出站请求字段为 `model`、`tool_call_ids` 和 `input_image_count`。图片数汇总整个请求，包括用户消息里的图片。带工具输出且无图的请求会显式记录 `input_image_count: 0`。
+- `mcp.tool.image` 来自 OpenAI 兼容工具结果的原始 MCP 图像块。`tool_name` 是 MCP 工具名。正常 Agent 工具调用带 `call_id`。`mcp_image_index` 和 `mcp_image_count` 表示这次工具结果中图片的顺序和总数。
+- `openai.responses.request` 是 SDK 每次尝试发送 Responses 的摘要。`model`、`tool_call_ids` 和 `input_image_count` 保留原有含义。`recent_tool_call_ids` 单列最后五个工具输出的调用 ID，避免长历史触发 Winston 数组截断时丢失最新 ID。无图请求的 `input_image_count` 为 `0`。`input_image_omitted_count` 是计数中缺少逐图记录的块数。
+- `openai.responses.input_image` 来自 SDK 组装好的发送输入。`container` 为 `input.content` 时带真实消息 `role`，为 `function_call_output.output` 时带该输出的 `call_id`。`input_index` 和 `part_index` 从零开始，对应输入项和该容器内的内容块。`sdk_request_log_id` 将逐图记录关联到同一 SDK 发送尝试的摘要，重试有独立的 ID。
+
+两处逐图记录共用相同字段。`source` 为 `inline`、`url`、`file` 或 `unknown`。内联图记录规范化的 `declared_mime`、可识别的 `detected_mime` 和 Base64 解码所得的 `encoded_bytes`。读取图片头后，`header_readable=true`，`width` 和 `height` 为编码图的像素尺寸，`sha256` 取 Base64 解码所得的原始图片编码字节。`status=decoded` 表示 Sharp 完成像素解码。若头部可读且像素解码失败，记录 `pixel_decode_failed`，并保留可用于比对原字节的指纹。
+
+每次工具结果和每次出站尝试各取顺序最后四个可定位图片块。诊断在发送路径之外运行，最多检查每图 10 MiB 编码字节。完整像素校验限单帧、`4096 × 4096` 像素总数和 Sharp 一秒解码超时。`byte_limit`、`pixel_limit`、`multiple_frames` 表示超出诊断范围。`malformed_base64`、`malformed_data_url`、`missing_source`、`unknown_source`、`unknown_format`、`header_unreadable` 和 `diagnostic_error` 标明无法确认的阶段。`external` 只记录引用类别。诊断不读取 URL 或文件，也不记录图像数据、地址或请求内容。
+
+验收时，在获授权的环境使用含已知视觉标记的合成图。按截图的 `call_id` 找到 `mcp.tool.image`，用日志已有的 `request_id` 和摘要的 `recent_tool_call_ids` 找到后续发送，再用 `sdk_request_log_id` 找到逐图记录。两处都有相同的 `sha256` 才确认编码字节相同。核对 MIME、尺寸、字节数、容器及解码状态。缺少逐图记录时先检查 `input_image_omitted_count`。确认字节后，单独验证模型能否识别已知标记。
 
 ## 维护与验证
 
@@ -35,7 +43,7 @@ PR16 后续修复处理 Agent 执行时重载 MCP 工具的 provider。Agent 初
 python3 tools/patchset.py test --target /path/to/application --only mcp-images --tier all --plan
 ```
 
-`api/server/services/Endpoints/agents/mcpImages.spec.js` 走应用 Agent 的直接工具入口。它用合成数据模拟纯图、Photo 图文和纯文本 MCP 结果，使用 vendored SDK 向 loopback 端点发出两次请求。测试核对第二次 `POST /v1/responses` 的 `input_image`、工具调用 ID 和文本，也比对日志的模型、调用 ID 和图片数。原生 OpenAI 用同一路径作对照。Moonshot 的 Chat Completions 请求验证附件回退，未知 provider 在 MCP 工具调用边界验证显式覆盖。
+`api/server/services/Endpoints/agents/mcpImages.spec.js` 走应用 Agent 的直接工具入口。它用合成数据模拟纯图、Photo 图文和纯文本 MCP 结果，使用 vendored SDK 向 `NewAPI` 的 loopback 模拟发出两次请求。测试将 MCP 原图和实际第二次 `POST /v1/responses` 中的图与两处日志逐项比对。额外的 loopback 请求覆盖长历史、用户图、工具输出容器、截断图、无效 Base64、缺失来源和外部引用。原生 OpenAI 用同一路径作对照。Moonshot 的 Chat Completions 请求验证附件回退，未知 provider 在 MCP 工具调用边界验证显式覆盖。
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
 2026-11-11 在上一轮基线通过本组 2 项 focused 与 API 类型检查，覆盖 parser 和主机消费方。[历史验收](../../README.md#历史验收2026-11-11)
