@@ -540,11 +540,14 @@
         "api/server/controllers/agents/responses.js",
         "api/server/services/Endpoints/agents/initialize.js",
         "api/server/services/Endpoints/agents/mcpImages.spec.js",
+        "api/server/services/MCP.js",
         "api/server/services/MCP.spec.js",
         "api/server/services/ToolService.js",
         "packages/api/src/endpoints/openai/config.ts",
+        "packages/api/src/mcp/MCPManager.ts",
         "packages/api/src/mcp/__tests__/parsers.test.ts",
-        "packages/api/src/mcp/parsers.ts"
+        "packages/api/src/mcp/parsers.ts",
+        "packages/api/src/utils/imageDiagnostics.ts"
       ],
       "tests": "patches/mcp-images/tests.json",
       "replacement": {

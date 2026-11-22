@@ -103,16 +103,18 @@ index 7782b61ac1ee5da9711a37995cd58aa5933f01e1..cc1d05600d6e3de8a316ea1e539a4aa0
            executionContext,
 diff --git a/api/server/services/Endpoints/agents/mcpImages.spec.js b/api/server/services/Endpoints/agents/mcpImages.spec.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc03c56df3e
+index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4e6673859
 --- /dev/null
 +++ b/api/server/services/Endpoints/agents/mcpImages.spec.js
-@@ -0,0 +1,457 @@
+@@ -0,0 +1,672 @@
 +const { createServer } = require('node:http');
 +const { once } = require('node:events');
-+const { randomUUID } = require('node:crypto');
++const { createHash, randomUUID } = require('node:crypto');
++const { setImmediate } = require('node:timers/promises');
 +const mongoose = require('mongoose');
 +const sharp = require('sharp');
-+const { logger } = require('@librechat/data-schemas');
++const { OpenAI } = require('openai');
++const { getRequestId, logger, tenantStorage } = require('@librechat/data-schemas');
 +const { CallToolResultSchema } = require('@modelcontextprotocol/sdk/types.js');
 +const {
 +  createToolExecuteHandler,
@@ -249,11 +251,31 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +  ]);
 +}
 +
++function captureImageLogs(expectedImages) {
++  const requests = [];
++  const images = [];
++  const { promise, resolve } = Promise.withResolvers();
++  logger.info.mockImplementation((message, fields) => {
++    const event = { message, ...fields, request_id: getRequestId() };
++    if (message === 'openai.responses.request') {
++      requests.push(event);
++    } else if (message === 'mcp.tool.image' || message === 'openai.responses.input_image') {
++      images.push(event);
++      if (images.length === expectedImages) {
++        resolve();
++      }
++    }
++  });
++  return { requests, images, ready: expectedImages > 0 ? promise : undefined };
++}
++
 +describe('MCP images in the next Agent model request', () => {
 +  let png;
++  let pngBytes;
 +  let server;
 +  let baseURL;
 +  let requests;
++  let unexpectedRequests;
 +  let connection;
 +  let callTool;
 +  let image;
@@ -261,11 +283,10 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +  let config;
 +
 +  beforeAll(async () => {
-+    png = (
-+      await sharp({ create: { width: 2, height: 2, channels: 3, background: '#4287ab' } })
-+        .png()
-+        .toBuffer()
-+    ).toString('base64');
++    pngBytes = await sharp({ create: { width: 3, height: 2, channels: 3, background: '#4287ab' } })
++      .png()
++      .toBuffer();
++    png = pngBytes.toString('base64');
 +    image = { type: 'image', mimeType: 'image/png', data: png };
 +    server = createServer(async (req, res) => {
 +      const isResponses = req.url === '/v1/responses';
@@ -274,6 +295,7 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +        (!isResponses && req.url !== '/v1/chat/completions') ||
 +        requests.length >= 2
 +      ) {
++        unexpectedRequests++;
 +        res.writeHead(400).end();
 +        return;
 +      }
@@ -302,6 +324,7 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +
 +  beforeEach(() => {
 +    requests = [];
++    unexpectedRequests = 0;
 +    serverConfig = { type: 'streamable-http', url: `${baseURL}/mcp` };
 +    const registry = new MCPServersRegistry(mongoose, ['127.0.0.1'], ['127.0.0.1'], async () => ({
 +      allowedDomains: ['127.0.0.1'],
@@ -366,7 +389,10 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +    });
 +  });
 +
-+  afterEach(() => jest.restoreAllMocks());
++  afterEach(() => {
++    logger.info.mockReset();
++    jest.restoreAllMocks();
++  });
 +
 +  test.each([
 +    ['NewAPI', 'image only', 'openAI', responsesModel, true],
@@ -379,8 +405,10 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +    async (endpoint, result, provider, model, useResponsesApi) => {
 +      const photo = result === 'Photo style';
 +      const hasImage = result !== 'text only';
++      const modelReceivesImage = hasImage && provider === 'openAI';
++      const imageLogs = captureImageLogs(modelReceivesImage ? 2 : 0);
 +      const response = CallToolResultSchema.parse({
-+        ...(photo ? { structuredContent: { width: 2, height: 2 } } : {}),
++        ...(photo ? { structuredContent: { width: 3, height: 2 } } : {}),
 +        content: [
 +          ...(result === 'image only' ? [] : [{ type: 'text', text: photoText }]),
 +          ...(hasImage ? [image] : []),
@@ -428,16 +456,19 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +      });
 +      client.conversationId = conversationId;
 +      client.responseMessageId = responseMessageId;
-+      await client.chatCompletion({
-+        userMCPAuthMap,
-+        payload: [
-+          {
-+            messageId: randomUUID(),
-+            isCreatedByUser: true,
-+            content: [{ type: 'text', text: prompt }],
-+          },
-+        ],
-+      });
++      const requestId = randomUUID();
++      await tenantStorage.run({ requestId }, () =>
++        client.chatCompletion({
++          userMCPAuthMap,
++          payload: [
++            {
++              messageId: randomUUID(),
++              isCreatedByUser: true,
++              content: [{ type: 'text', text: prompt }],
++            },
++          ],
++        }),
++      );
 +
 +      const path = useResponsesApi ? '/v1/responses' : '/v1/chat/completions';
 +      expect(requests.map(({ method, path, body }) => [method, path, body.model])).toEqual([
@@ -470,7 +501,6 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +            parts.some(({ type, text }) => type === 'input_text' && text === photoText),
 +        ).toBe(true);
 +      }
-+      const modelReceivesImage = hasImage && provider === 'openAI';
 +      // Keep diagnostics limited to types, counts and booleans.
 +      expect({
 +        endpoint: client.options.agent.endpoint,
@@ -493,30 +523,215 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +      if (!modelReceivesImage) {
 +        expect(JSON.stringify(nextInput).includes(png)).toBe(false);
 +      }
-+      const logs = logger.info.mock.calls.filter(
-+        ([message]) => message === 'openai.responses.request',
-+      );
 +      if (useResponsesApi) {
-+        expect(logs).toEqual([
-+          ['openai.responses.request', { model, tool_call_ids: [], input_image_count: 0 }],
-+          [
-+            'openai.responses.request',
-+            {
-+              model: secondRequest.model,
-+              tool_call_ids: [toolOutput.call_id],
-+              input_image_count: images.length,
-+            },
-+          ],
++        const attempt = {
++          message: 'openai.responses.request',
++          model,
++          request_id: requestId,
++          sdk_request_log_id: expect.stringMatching(/^log_[0-9a-f]{6}$/),
++          input_image_omitted_count: 0,
++        };
++        expect(imageLogs.requests).toEqual([
++          { ...attempt, tool_call_ids: [], recent_tool_call_ids: [], input_image_count: 0 },
++          {
++            ...attempt,
++            tool_call_ids: [callId],
++            recent_tool_call_ids: [callId],
++            input_image_count: images.length,
++          },
 +        ]);
 +        expect(
 +          sdkDebug.mock.calls.some(([, details]) => details?.options?.path === '/responses'),
 +        ).toBe(false);
 +      } else {
-+        expect(logs).toEqual([]);
++        expect(imageLogs.requests).toEqual([]);
++      }
++
++      await imageLogs.ready;
++      if (modelReceivesImage) {
++        const inputIndex = nextInput.findIndex(({ content }) => content?.includes(images[0]));
++        expect(inputIndex).toBeGreaterThanOrEqual(0);
++        expect(nextInput[inputIndex].role).toBe('user');
++        const partIndex = nextInput[inputIndex].content.indexOf(images[0]);
++        const wireImage = Buffer.from(images[0].image_url.split(',')[1], 'base64');
++        const pngFields = {
++          request_id: requestId,
++          source: 'inline',
++          declared_mime: 'image/png',
++          detected_mime: 'image/png',
++          width: 3,
++          height: 2,
++          header_readable: true,
++          status: 'decoded',
++        };
++        expect(imageLogs.images).toEqual(
++          expect.arrayContaining([
++            {
++              ...pngFields,
++              message: 'mcp.tool.image',
++              tool_name: 'screenshot',
++              call_id: callId,
++              mcp_image_count: 1,
++              mcp_image_index: 0,
++              encoded_bytes: pngBytes.length,
++              sha256: createHash('sha256').update(pngBytes).digest('hex'),
++            },
++            {
++              ...pngFields,
++              message: 'openai.responses.input_image',
++              sdk_request_log_id: imageLogs.requests[1].sdk_request_log_id,
++              container: 'input.content',
++              role: 'user',
++              input_index: inputIndex,
++              part_index: partIndex,
++              encoded_bytes: wireImage.length,
++              sha256: createHash('sha256').update(wireImage).digest('hex'),
++            },
++          ]),
++        );
++        expect(imageLogs.images).toHaveLength(2);
++        expect(imageLogs.images[0].sha256).toBe(imageLogs.images[1].sha256);
++      } else {
++        await setImmediate();
++        expect(imageLogs.images).toEqual([]);
 +      }
 +      expect(toolEnd).toHaveBeenCalledTimes(1);
 +    },
 +  );
++
++  test('reports recent tool IDs and actual image locations across a long Responses input', async () => {
++    jest.replaceProperty(process, 'env', { ...process.env, OPENAI_LOG: 'debug', PROXY: '' });
++    const sdkDebug = jest.spyOn(console, 'debug').mockImplementation(() => {});
++    const sdkInfo = jest.spyOn(console, 'info').mockImplementation(() => {});
++    const { getOptions, customEndpointConfig } = getProviderConfig({
++      provider: 'NewAPI',
++      appConfig: config,
++    });
++    const { configOptions } = await getOptions({
++      req: { user: { id: 'synthetic-user' }, body: {}, config },
++      endpoint: 'NewAPI',
++      model_parameters: { model: responsesModel, useResponsesApi: true },
++      customEndpointConfig,
++    });
++    expect(configOptions?.baseURL === baseURL).toBe(true);
++    const openai = new OpenAI({
++      ...configOptions,
++      apiKey: 'test',
++      logLevel: 'debug',
++      maxRetries: 0,
++    });
++    const validUrl = `data:image/png;base64,${png}`;
++    const inputImage = (refs) => ({ type: 'input_image', detail: 'auto', ...refs });
++    const userMessage = (...content) => ({ role: 'user', content });
++    const functionCall = (id) => ({
++      type: 'function_call',
++      call_id: id,
++      name: toolKey,
++      arguments: '{}',
++    });
++    const functionOutput = (id, output) => ({ type: 'function_call_output', call_id: id, output });
++    const historyIds = Array.from({ length: 55 }, (_, index) => `call_history_${index}`);
++    const history = historyIds.flatMap((id) => [functionCall(id), functionOutput(id, photoText)]);
++    // Keep the dimensions and the first few bytes of IDAT, leaving too little data for pixels.
++    const truncated = pngBytes.subarray(0, pngBytes.indexOf('IDAT') + 7);
++    const input = [
++      userMessage(inputImage({ image_url: validUrl })),
++      ...history,
++      userMessage({ type: 'input_text', text: prompt }, inputImage({ image_url: validUrl })),
++      functionCall(callId),
++      functionOutput(callId, [
++        inputImage({ image_url: `data:image/jpeg;base64,${truncated.toString('base64')}` }),
++        inputImage({ image_url: `${validUrl}!` }),
++        inputImage({ image_url: null }),
++      ]),
++    ];
++    const external = userMessage(
++      inputImage({ image_url: `${baseURL}/synthetic-url-private` }),
++      inputImage({ file_id: 'synthetic-file-private' }),
++      inputImage({ image_url: 'data:image/png;base64,bm90LWFuLWltYWdl' }),
++      inputImage({ image_url: 'synthetic-source-private' }),
++    );
++    const logs = captureImageLogs(8);
++    for (const items of [input, [external]]) {
++      const stream = await openai.responses.create({
++        model: responsesModel,
++        input: items,
++        stream: true,
++      });
++      let status;
++      for await (const event of stream) {
++        if (event.type === 'response.completed') {
++          status = event.response.status;
++        }
++      }
++      expect(status).toBe('completed');
++    }
++    expect(requests.map(({ body }) => body.input)).toEqual([input, [external]]);
++    expect(logs.requests).toHaveLength(2);
++    await logs.ready;
++    expect(unexpectedRequests).toBe(0);
++    expect(sdkDebug).not.toHaveBeenCalled();
++    expect(sdkInfo).not.toHaveBeenCalled();
++
++    const [long, refs] = logs.requests;
++    expect(long).toMatchObject({
++      tool_call_ids: [...historyIds, callId],
++      recent_tool_call_ids: [...historyIds.slice(-4), callId],
++      input_image_count: 5,
++      input_image_omitted_count: 1,
++    });
++    const longImages = logs.images.filter(
++      (event) => event.sdk_request_log_id === long.sdk_request_log_id,
++    );
++    const toolLocation = {
++      container: 'function_call_output.output',
++      call_id: callId,
++      input_index: input.length - 1,
++      source: 'inline',
++    };
++    expect(longImages).toMatchObject([
++      {
++        container: 'input.content',
++        role: 'user',
++        input_index: history.length + 1,
++        part_index: 1,
++        status: 'decoded',
++        sha256: createHash('sha256').update(pngBytes).digest('hex'),
++      },
++      {
++        ...toolLocation,
++        part_index: 0,
++        status: 'pixel_decode_failed',
++        header_readable: true,
++        declared_mime: 'image/jpeg',
++        detected_mime: 'image/png',
++        width: 3,
++        height: 2,
++        encoded_bytes: truncated.length,
++        sha256: createHash('sha256').update(truncated).digest('hex'),
++      },
++      { ...toolLocation, part_index: 1, status: 'malformed_base64' },
++      { ...toolLocation, part_index: 2, status: 'missing_source', source: 'unknown' },
++    ]);
++    expect(refs).toMatchObject({ input_image_count: 4, input_image_omitted_count: 0 });
++    const refImages = logs.images.filter(
++      (event) => event.sdk_request_log_id === refs.sdk_request_log_id,
++    );
++    expect(refImages).toMatchObject([
++      { source: 'url', status: 'external' },
++      { source: 'file', status: 'external' },
++      { source: 'inline', status: 'unknown_format', encoded_bytes: 12 },
++      { source: 'unknown', status: 'unknown_source' },
++    ]);
++    for (const unverified of [...longImages.slice(2), ...refImages]) {
++      expect(unverified).not.toHaveProperty('sha256');
++      expect(unverified).not.toHaveProperty('width');
++    }
++    const serialized = JSON.stringify([...logs.requests, ...logs.images]);
++    for (const excluded of [baseURL, png, prompt, photoText, '-private', 'bm90LWFuLWltYWdl']) {
++      expect(serialized.includes(excluded)).toBe(false);
++    }
++  });
 +
 +  test('an explicit unknown invocation provider keeps the PNG attachment on the same MCP tool', async () => {
 +    const user = { id: new mongoose.Types.ObjectId().toString(), role: 'USER' };
@@ -564,6 +779,18 @@ index 0000000000000000000000000000000000000000..2cbdbfed7a9dbfa289564de0f8594cc0
 +    expect(native.artifact.imageAttachments === undefined).toBe(true);
 +  });
 +});
+diff --git a/api/server/services/MCP.js b/api/server/services/MCP.js
+index 4ac0606158813893533eb8e47ee68c2bdceba7c0..8e033eb8037b641df386fc7643223df88ed2ec7f 100644
+--- a/api/server/services/MCP.js
++++ b/api/server/services/MCP.js
+@@ -1378,6 +1378,7 @@ function createToolInstance({
+           /** The upstream server never sees stripped names — a key that dropped
+            *  a redundant server-name prefix calls the ORIGINAL tool. */
+           toolName: serverToolName,
++          toolCallId: toolCall.id,
+           provider,
+           toolArguments,
+           options: {
 diff --git a/api/server/services/MCP.spec.js b/api/server/services/MCP.spec.js
 index f2482aac37fafb7051acb7a6df152c85f7d60d3c..69a37f7598c291304a851649e8e70b189f2faa44 100644
 --- a/api/server/services/MCP.spec.js
@@ -806,22 +1033,33 @@ index 76a6bf903620e9c864b41443f5b2653cf3cba9be..a72e33015d7dfa1f3f0389f53e146f36
          unattended,
          tool_resources,
 diff --git a/packages/api/src/endpoints/openai/config.ts b/packages/api/src/endpoints/openai/config.ts
-index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..bf429bc7cdf5c7bbeae9b30e6d7fda7d53aba1bf 100644
+index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..3c9493de8d658c533a94870e51548234d48a6599 100644
 --- a/packages/api/src/endpoints/openai/config.ts
 +++ b/packages/api/src/endpoints/openai/config.ts
-@@ -1,4 +1,5 @@
+@@ -1,8 +1,15 @@
  import { Providers } from '@librechat/agents';
 +import { logger } from '@librechat/data-schemas';
  import { Agent, fetch as undiciFetch } from 'undici';
  import { KnownEndpoints, EModelEndpoint, ReasoningParameterFormat } from 'librechat-data-provider';
  import type { Dispatcher } from 'undici';
-@@ -16,9 +17,61 @@ import { mergeHeaders } from '~/utils/headers';
++import type { ImageLogEntry } from '~/utils/imageDiagnostics';
+ import type * as t from '~/types';
++import {
++  imageLogIdentifier,
++  keepRecentImage,
++  scheduleImageDiagnostics,
++} from '~/utils/imageDiagnostics';
+ import { getOpenAILLMConfig, extractDefaultParams, removeReasoningPayload } from './llm';
+ import { getGoogleConfig, stripGeminiFlashBlockedParams } from '~/endpoints/google/llm';
+ import { getLLMConfig as getAnthropicLLMConfig } from '~/endpoints/anthropic/llm';
+@@ -16,8 +23,110 @@ import { mergeHeaders } from '~/utils/headers';
  type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
  type FetchOptions = RequestInit & { dispatcher?: Dispatcher };
  type OpenAIConfiguration = NonNullable<t.OpenAIConfiguration>;
-+type ResponsesContentPart = { type?: string };
++type ResponsesContentPart = { type?: string; image_url?: string | null; file_id?: string | null };
 +type ResponsesInputItem = ResponsesContentPart & {
 +  call_id?: string;
++  role?: string;
 +  content?: string | ResponsesContentPart[];
 +  output?: string | ResponsesContentPart[];
 +};
@@ -831,53 +1069,101 @@ index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..bf429bc7cdf5c7bbeae9b30e6d7fda7d
 +};
  
  const OPENROUTER_DEFAULT_PARAMS = { promptCache: true };
- 
-+function countInputImages(parts: string | ResponsesContentPart[] | undefined): number {
++const RESPONSES_MESSAGE_ROLES = new Set(['user', 'assistant', 'system', 'developer']);
++
++function countInputImages(
++  parts: string | ResponsesContentPart[] | undefined,
++  images: ImageLogEntry[],
++  location?: ImageLogEntry['location'],
++): number {
 +  if (!Array.isArray(parts)) {
 +    return 0;
 +  }
-+  return parts.reduce((count, part) => count + Number(part?.type === 'input_image'), 0);
++  let count = 0;
++  for (const [index, part] of parts.entries()) {
++    if (part?.type === 'input_image') {
++      count++;
++      if (location) {
++        keepRecentImage(images, {
++          image: { image_url: part.image_url, file_id: part.file_id },
++          location: { ...location, part_index: index },
++        });
++      }
++    }
++  }
++  return count;
 +}
 +
-+function logResponsesRequest(body: ResponsesRequestBody | undefined): void {
++function logResponsesRequest(
++  body: ResponsesRequestBody | undefined,
++  sdkRequestLogId?: string,
++): void {
 +  let inputImageCount = 0;
 +  const toolCallIds: string[] = [];
++  const images: ImageLogEntry[] = [];
 +  const input = Array.isArray(body?.input) ? body.input : [];
-+  for (const item of input) {
-+    inputImageCount +=
-+      Number(item?.type === 'input_image') +
-+      countInputImages(item?.content) +
-+      countInputImages(item?.output);
-+    if (item?.type === 'function_call_output' && typeof item.call_id === 'string') {
++  for (const [inputIndex, item] of input.entries()) {
++    const isToolOutput = item?.type === 'function_call_output';
++    const role = item?.role;
++    const isMessage =
++      (item?.type == null || item.type === 'message') && role && RESPONSES_MESSAGE_ROLES.has(role);
++    inputImageCount += Number(item?.type === 'input_image');
++    inputImageCount += countInputImages(
++      item?.content,
++      images,
++      isMessage ? { container: 'input.content', role, input_index: inputIndex } : undefined,
++    );
++    inputImageCount += countInputImages(
++      item?.output,
++      images,
++      isToolOutput
++        ? {
++            container: 'function_call_output.output',
++            call_id: imageLogIdentifier(item.call_id),
++            input_index: inputIndex,
++          }
++        : undefined,
++    );
++    if (isToolOutput && typeof item.call_id === 'string') {
 +      toolCallIds.push(item.call_id);
 +    }
 +  }
++  const context = { sdk_request_log_id: sdkRequestLogId };
 +  logger.info('openai.responses.request', {
 +    model: typeof body?.model === 'string' ? body.model : null,
 +    tool_call_ids: toolCallIds,
 +    input_image_count: inputImageCount,
++    ...context,
++    recent_tool_call_ids: toolCallIds.slice(-5).map(imageLogIdentifier).filter(Boolean),
++    input_image_omitted_count: inputImageCount - images.length,
 +  });
++  scheduleImageDiagnostics('openai.responses.input_image', images, context);
 +}
 +
 +const responsesRequestLogger: NonNullable<OpenAIConfiguration['logger']> = {
-+  error: (...args) => console.error(...args),
-+  warn: (...args) => console.warn(...args),
-+  info: (...args) => console.info(...args),
++  // The SDK's other debug-mode messages can include URLs, headers, and bodies.
++  error: () => {},
++  warn: () => {},
++  info: () => {},
 +  debug: (message, ...args) => {
 +    // The SDK's send log carries the assembled body and the logical API path before fetch.
 +    const options = (args[0] as OpenAIRequestLogDetails | undefined)?.options;
-+    if (options?.method === 'post' && options.path === '/responses') {
-+      logResponsesRequest(options.body);
++    if (options?.method !== 'post' || options.path !== '/responses') {
 +      return;
 +    }
-+    console.debug(message, ...args);
++    try {
++      // The SDK ID is local to this attempt, including when the SDK retries the same input.
++      const sdkRequestLogId = /^\[(log_[0-9a-f]{6})\] sending request$/.exec(message)?.[1];
++      logResponsesRequest(options.body, sdkRequestLogId);
++    } catch {
++      // Diagnostic failures must not interrupt the SDK send.
++    }
 +  },
 +};
-+
+ 
  function includesOpenRouter(value?: string | null): boolean {
    return typeof value === 'string' && value.toLowerCase().includes(KnownEndpoints.openrouter);
- }
-@@ -242,6 +295,9 @@ export function getOpenAIConfig(
+@@ -242,6 +351,9 @@ export function getOpenAIConfig(
    }
  
    const configOptions: t.OpenAIConfiguration = {};
@@ -887,6 +1173,55 @@ index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..bf429bc7cdf5c7bbeae9b30e6d7fda7d
    if (baseURL) {
      configOptions.baseURL = baseURL;
    }
+diff --git a/packages/api/src/mcp/MCPManager.ts b/packages/api/src/mcp/MCPManager.ts
+index 1923817da41e62a3ba92f181b0e3bddfdd5ac382..5697e300b3e95b0134a6a50d70e9ea59ae916d4a 100644
+--- a/packages/api/src/mcp/MCPManager.ts
++++ b/packages/api/src/mcp/MCPManager.ts
+@@ -1526,6 +1526,7 @@ Please follow these instructions when using tools from the respective MCP server
+     serverName,
+     serverConfig: providedConfig,
+     toolName,
++    toolCallId,
+     provider,
+     toolArguments,
+     options,
+@@ -1557,6 +1558,7 @@ Please follow these instructions when using tools from the respective MCP server
+     /** Pre-resolved config from tool creation context — avoids readThrough TTL and cross-tenant issues */
+     serverConfig?: t.ParsedServerConfig;
+     toolName: string;
++    toolCallId?: string;
+     provider: t.Provider;
+     toolArguments?: Record<string, unknown>;
+     options?: RequestOptions;
+@@ -2284,21 +2286,20 @@ Please follow these instructions when using tools from the respective MCP server
+         }
+ 
+         return markMCPToolResultError(
+-          formatToolContent(
+-            toolResult,
+-            provider,
+-            appCompatible
++          formatToolContent(toolResult, provider, {
++            toolName,
++            toolCallId,
++            mcpApps: admittedMCPApps,
++            ...(appCompatible
+               ? {
+                   serverName,
+-                  toolName,
+                   resourceUri: resourceMeta?.uri,
+                   resolvedAppResource,
+                   serverBinding,
+                   toolArgs: toolArguments,
+-                  mcpApps: admittedMCPApps,
+                 }
+-              : { mcpApps: admittedMCPApps },
+-          ),
++              : {}),
++          }),
+           toolResult?.isError === true,
+         );
+       } catch (error) {
 diff --git a/packages/api/src/mcp/__tests__/parsers.test.ts b/packages/api/src/mcp/__tests__/parsers.test.ts
 index a2955ef7c8b6d5fed3b722d5c6b0570f280a46a1..925c7feb26d5710fa2f508d65392f8029697f605 100644
 --- a/packages/api/src/mcp/__tests__/parsers.test.ts
@@ -1122,10 +1457,24 @@ index a2955ef7c8b6d5fed3b722d5c6b0570f280a46a1..925c7feb26d5710fa2f508d65392f802
        expect(artifacts?.imageAttachments).toHaveLength(1);
        expect(artifacts?.ui_resources?.data).toHaveLength(1);
 diff --git a/packages/api/src/mcp/parsers.ts b/packages/api/src/mcp/parsers.ts
-index 5ed8cd9e110ae889e4721974792fb0b4d30d422f..72a18caf4473f865d8b32d6ffa4824e83b60dcac 100644
+index 5ed8cd9e110ae889e4721974792fb0b4d30d422f..b594c1920d8d5c4302ea1b912b90b5f243e0d9ea 100644
 --- a/packages/api/src/mcp/parsers.ts
 +++ b/packages/api/src/mcp/parsers.ts
-@@ -268,9 +268,6 @@ function parseAsString(result: t.MCPToolCallResponse): string {
+@@ -9,7 +9,13 @@ import {
+   resolveMCPUIResourceMimeType,
+ } from 'librechat-data-provider';
+ import type { UIResource, TMCPAppsPolicy } from 'librechat-data-provider';
++import type { ImageLogEntry } from '~/utils/imageDiagnostics';
+ import type * as t from './types';
++import {
++  imageLogIdentifier,
++  keepRecentImage,
++  scheduleImageDiagnostics,
++} from '~/utils/imageDiagnostics';
+ 
+ export const DEFAULT_MCP_IMAGE_DATA_MAX_BYTES: number = 10 * 1024 * 1024;
+ 
+@@ -268,9 +274,6 @@ function parseAsString(result: t.MCPToolCallResponse): string {
            const body = readResourceBody(item.resource);
            if (body.text) {
              resourceText.push(body.text);
@@ -1135,7 +1484,7 @@ index 5ed8cd9e110ae889e4721974792fb0b4d30d422f..72a18caf4473f865d8b32d6ffa4824e8
            } else if (body.binaryBytes != null) {
              resourceText.push(describeBinaryResource(body.binaryBytes));
            }
-@@ -283,8 +280,9 @@ function parseAsString(result: t.MCPToolCallResponse): string {
+@@ -283,8 +286,9 @@ function parseAsString(result: t.MCPToolCallResponse): string {
          }
          return resourceText.join('\n');
        }
@@ -1146,3 +1495,244 @@ index 5ed8cd9e110ae889e4721974792fb0b4d30d422f..72a18caf4473f865d8b32d6ffa4824e8
        }
        return JSON.stringify(item, null, 2);
      })
+@@ -331,6 +335,7 @@ export function formatToolContent(
+   metadata?: {
+     serverName?: string;
+     toolName?: string;
++    toolCallId?: string;
+     resourceUri?: string;
+     resolvedAppResource?: t.ResourceContents;
+     serverBinding?: string;
+@@ -355,6 +360,12 @@ export function formatToolContent(
+   }
+ 
+   const imageUrls: t.FormattedContent[] = [];
++  const imageDiagnostics: ImageLogEntry[] | undefined =
++    metadata?.toolName &&
++    process.env.OPENAI_LOG === 'debug' &&
++    (provider === 'openai' || provider === 'azureopenai')
++      ? []
++      : undefined;
+   const uiResources: UIResource[] = [];
+   let placementMarkerCount = 0;
+   // Assistants submits only this string; keep its bounded conversion independent from host UI data.
+@@ -368,6 +379,12 @@ export function formatToolContent(
+ 
+   const collectImage = (item: t.ImageContent): void => {
+     assertImageDataWithinLimit(item);
++    if (imageDiagnostics) {
++      keepRecentImage(imageDiagnostics, {
++        image: { data: item.data, mimeType: item.mimeType },
++        location: { mcp_image_index: imageUrls.length },
++      });
++    }
+     const formatter = imageFormatters.default as t.ImageFormatter;
+     const formattedImage = formatter(item);
+     if (formattedImage.type === 'image_url') {
+@@ -594,5 +611,16 @@ UI Resource Markers Available:
+     };
+   }
+ 
++  if (imageDiagnostics?.length) {
++    try {
++      scheduleImageDiagnostics('mcp.tool.image', imageDiagnostics, {
++        tool_name: imageLogIdentifier(metadata?.toolName),
++        call_id: imageLogIdentifier(metadata?.toolCallId),
++        mcp_image_count: imageUrls.length,
++      });
++    } catch {
++      // Image diagnostics never change the formatted tool result.
++    }
++  }
+   return [currentTextBlock || (artifacts !== undefined ? '' : '(No response)'), artifacts];
+ }
+diff --git a/packages/api/src/utils/imageDiagnostics.ts b/packages/api/src/utils/imageDiagnostics.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..21a54ffd78ed106bc3a2966b0704e4fdb41fcb70
+--- /dev/null
++++ b/packages/api/src/utils/imageDiagnostics.ts
+@@ -0,0 +1,184 @@
++import sharp from 'sharp';
++import { createHash } from 'node:crypto';
++import { logger, redactMessage } from '@librechat/data-schemas';
++import { resolveImageMimeType, sniffImageMimeType } from '~/files/mime';
++
++const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
++const MAX_BASE64_LENGTH = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
++const MAX_IMAGE_PIXELS = 4096 * 4096;
++const MAX_IMAGES_PER_BOUNDARY = 4;
++const HTTP_URL_PREFIX = /^https?:\/\//i;
++const BASE64_DATA_URL_PREFIX = /^data:([a-z0-9][a-z0-9.+/-]{0,63});base64,/i;
++const LOGGABLE_IMAGE_MIME =
++  /^image\/(png|jpeg|jpg|gif|webp|avif|heic|heif|tiff|bmp|svg\+xml|jp2|jxl)$/i;
++
++type ImageLogMetadata = Record<string, string | number | undefined>;
++type ImageReference = { image_url?: string | null; file_id?: string | null };
++type ImageInput = { data: string; mimeType: string } | ImageReference;
++export type ImageLogEntry = { image: ImageInput; location: ImageLogMetadata };
++
++type ImageDiagnostic = {
++  source: 'inline' | 'url' | 'file' | 'unknown';
++  status:
++    | 'decoded'
++    | 'pixel_decode_failed'
++    | 'header_unreadable'
++    | 'unknown_format'
++    | 'malformed_base64'
++    | 'malformed_data_url'
++    | 'missing_source'
++    | 'unknown_source'
++    | 'external'
++    | 'byte_limit'
++    | 'pixel_limit'
++    | 'multiple_frames'
++    | 'diagnostic_error';
++  declared_mime?: string;
++  detected_mime?: string;
++  encoded_bytes?: number;
++  header_readable?: boolean;
++  width?: number;
++  height?: number;
++  sha256?: string;
++};
++
++export function imageLogIdentifier(value: string | undefined): string | undefined {
++  if (value && /^[a-z0-9_.-]{1,128}$/i.test(value) && redactMessage(value) === value) {
++    return value;
++  }
++}
++
++export function keepRecentImage(entries: ImageLogEntry[], entry: ImageLogEntry): void {
++  if (entries.length === MAX_IMAGES_PER_BOUNDARY) {
++    entries.shift();
++  }
++  entries.push(entry);
++}
++
++function declaredMime(mimeType: string): string | undefined {
++  if (mimeType) {
++    return LOGGABLE_IMAGE_MIME.test(mimeType) ? mimeType.toLowerCase() : 'unknown';
++  }
++}
++
++async function inspectRaster(bytes: Buffer, fields: ImageDiagnostic): Promise<ImageDiagnostic> {
++  const detectedMime = sniffImageMimeType(bytes);
++  if (!detectedMime) {
++    return fields;
++  }
++
++  // Sharp reads headers independently of the pixel limit on its decode pipeline.
++  const image = sharp(bytes, { failOn: 'warning', limitInputPixels: MAX_IMAGE_PIXELS });
++  const metadata = await image.metadata().catch(() => undefined);
++  if (!metadata?.width || !metadata.height) {
++    return {
++      ...fields,
++      detected_mime: detectedMime,
++      status: 'header_unreadable',
++      header_readable: false,
++    };
++  }
++  const { width, height, pages } = metadata;
++  const header = {
++    ...fields,
++    width,
++    height,
++    header_readable: true,
++    detected_mime: resolveImageMimeType(metadata) ?? detectedMime,
++    sha256: createHash('sha256').update(bytes).digest('hex'),
++  };
++  if (width * height > MAX_IMAGE_PIXELS) {
++    return { ...header, status: 'pixel_limit' };
++  }
++  if (pages != null && pages > 1) {
++    return { ...header, status: 'multiple_frames' };
++  }
++
++  try {
++    await image.timeout({ seconds: 1 }).raw().toBuffer();
++    return { ...header, status: 'decoded' };
++  } catch {
++    return { ...header, status: 'pixel_decode_failed' };
++  }
++}
++
++async function inspectInlineImage(data: string, mimeType: string): Promise<ImageDiagnostic> {
++  const fields = { source: 'inline' as const, declared_mime: declaredMime(mimeType) };
++  if (data.length > MAX_BASE64_LENGTH) {
++    return { ...fields, status: 'byte_limit' };
++  }
++  const bytes = Buffer.from(data, 'base64');
++  // Buffer.from accepts invalid characters and padding. A round trip avoids hashing partial bytes.
++  const canonical = bytes.toString('base64');
++  if (bytes.length === 0 || (data !== canonical && data !== canonical.replace(/=+$/, ''))) {
++    return { ...fields, status: 'malformed_base64' };
++  }
++  if (bytes.length > MAX_IMAGE_BYTES) {
++    return { ...fields, status: 'byte_limit' };
++  }
++  return inspectRaster(bytes, { ...fields, status: 'unknown_format', encoded_bytes: bytes.length });
++}
++
++function inspectImage(image: ImageInput): ImageDiagnostic | Promise<ImageDiagnostic> {
++  if ('data' in image) {
++    if (HTTP_URL_PREFIX.test(image.data)) {
++      return { source: 'url', status: 'external', declared_mime: declaredMime(image.mimeType) };
++    }
++    return inspectInlineImage(image.data, image.mimeType);
++  }
++
++  const { image_url: url, file_id: fileId } = image;
++  if (url && fileId) {
++    return { source: 'unknown', status: 'unknown_source' };
++  }
++  if (!url) {
++    return fileId
++      ? { source: 'file', status: 'external' }
++      : { source: 'unknown', status: 'missing_source' };
++  }
++  const prefix = BASE64_DATA_URL_PREFIX.exec(url);
++  if (prefix) {
++    return inspectInlineImage(url.slice(prefix[0].length), prefix[1]);
++  }
++  if (HTTP_URL_PREFIX.test(url)) {
++    return { source: 'url', status: 'external' };
++  }
++  if (/^data:/i.test(url)) {
++    return { source: 'inline', status: 'malformed_data_url' };
++  }
++  return { source: 'unknown', status: 'unknown_source' };
++}
++
++async function writeImageDiagnostic(
++  message: string,
++  entry: ImageLogEntry,
++  context: ImageLogMetadata,
++): Promise<void> {
++  let diagnostic: ImageDiagnostic;
++  try {
++    diagnostic = await inspectImage(entry.image);
++  } catch {
++    diagnostic = { source: 'unknown', status: 'diagnostic_error' };
++  }
++  try {
++    logger.info(message, { ...context, ...entry.location, ...diagnostic });
++  } catch {
++    // Logging is best effort even if the transport fails.
++  }
++}
++
++export function scheduleImageDiagnostics(
++  message: string,
++  entries: ImageLogEntry[],
++  context: ImageLogMetadata,
++): void {
++  if (entries.length === 0) {
++    return;
++  }
++  // Neither tool formatting nor the SDK send waits on decoding. Inspect one raster at a time.
++  setImmediate(async () => {
++    for (const entry of entries) {
++      await writeImageDiagnostic(message, entry, context);
++    }
++  });
++}
