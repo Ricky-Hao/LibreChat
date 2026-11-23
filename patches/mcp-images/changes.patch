@@ -103,10 +103,10 @@ index 7782b61ac1ee5da9711a37995cd58aa5933f01e1..cc1d05600d6e3de8a316ea1e539a4aa0
            executionContext,
 diff --git a/api/server/services/Endpoints/agents/mcpImages.spec.js b/api/server/services/Endpoints/agents/mcpImages.spec.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4e6673859
+index 0000000000000000000000000000000000000000..1b2bd5c86776856227d8f55d069daa12aad685b7
 --- /dev/null
 +++ b/api/server/services/Endpoints/agents/mcpImages.spec.js
-@@ -0,0 +1,672 @@
+@@ -0,0 +1,867 @@
 +const { createServer } = require('node:http');
 +const { once } = require('node:events');
 +const { createHash, randomUUID } = require('node:crypto');
@@ -251,14 +251,17 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +  ]);
 +}
 +
-+function captureImageLogs(expectedImages) {
++function captureDiagnostics(expectedImages = 0) {
 +  const requests = [];
 +  const images = [];
++  const attempts = [];
 +  const { promise, resolve } = Promise.withResolvers();
 +  logger.info.mockImplementation((message, fields) => {
 +    const event = { message, ...fields, request_id: getRequestId() };
 +    if (message === 'openai.responses.request') {
 +      requests.push(event);
++    } else if (message === 'openai.responses.http_attempt') {
++      attempts.push(event);
 +    } else if (message === 'mcp.tool.image' || message === 'openai.responses.input_image') {
 +      images.push(event);
 +      if (images.length === expectedImages) {
@@ -266,7 +269,7 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +      }
 +    }
 +  });
-+  return { requests, images, ready: expectedImages > 0 ? promise : undefined };
++  return { requests, images, attempts, ready: expectedImages > 0 ? promise : undefined };
 +}
 +
 +describe('MCP images in the next Agent model request', () => {
@@ -281,6 +284,22 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +  let image;
 +  let serverConfig;
 +  let config;
++  let respondToResponses;
++
++  async function createLoopbackClient(options = {}) {
++    const { getOptions, customEndpointConfig } = getProviderConfig({
++      provider: 'NewAPI',
++      appConfig: config,
++    });
++    const { configOptions } = await getOptions({
++      req: { user: { id: 'synthetic-user' }, body: {}, config },
++      endpoint: 'NewAPI',
++      model_parameters: { model: responsesModel, useResponsesApi: true },
++      customEndpointConfig,
++    });
++    expect(configOptions?.baseURL === baseURL).toBe(true);
++    return new OpenAI({ ...configOptions, apiKey: 'synthetic-api-key', maxRetries: 0, ...options });
++  }
 +
 +  beforeAll(async () => {
 +    pngBytes = await sharp({ create: { width: 3, height: 2, channels: 3, background: '#4287ab' } })
@@ -305,6 +324,10 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +      }
 +      const body = JSON.parse(Buffer.concat(chunks));
 +      requests.push({ method: req.method, path: req.url, body });
++      if (isResponses && respondToResponses) {
++        respondToResponses(req, res, requests.length);
++        return;
++      }
 +      const writeStream = isResponses ? writeResponsesStream : writeChatStream;
 +      writeStream(res, body.model, requests.length === 1);
 +    });
@@ -325,6 +348,7 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +  beforeEach(() => {
 +    requests = [];
 +    unexpectedRequests = 0;
++    respondToResponses = undefined;
 +    serverConfig = { type: 'streamable-http', url: `${baseURL}/mcp` };
 +    const registry = new MCPServersRegistry(mongoose, ['127.0.0.1'], ['127.0.0.1'], async () => ({
 +      allowedDomains: ['127.0.0.1'],
@@ -406,7 +430,7 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +      const photo = result === 'Photo style';
 +      const hasImage = result !== 'text only';
 +      const modelReceivesImage = hasImage && provider === 'openAI';
-+      const imageLogs = captureImageLogs(modelReceivesImage ? 2 : 0);
++      const imageLogs = captureDiagnostics(modelReceivesImage ? 2 : 0);
 +      const response = CallToolResultSchema.parse({
 +        ...(photo ? { structuredContent: { width: 3, height: 2 } } : {}),
 +        content: [
@@ -530,21 +554,41 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +          request_id: requestId,
 +          sdk_request_log_id: expect.stringMatching(/^log_[0-9a-f]{6}$/),
 +          input_image_omitted_count: 0,
++          stream: true,
 +        };
 +        expect(imageLogs.requests).toEqual([
-+          { ...attempt, tool_call_ids: [], recent_tool_call_ids: [], input_image_count: 0 },
-+          {
++          expect.objectContaining({
++            ...attempt,
++            tool_call_ids: [],
++            recent_tool_call_ids: [],
++            input_image_count: 0,
++            input_item_count: firstInput.length,
++          }),
++          expect.objectContaining({
 +            ...attempt,
 +            tool_call_ids: [callId],
 +            recent_tool_call_ids: [callId],
 +            input_image_count: images.length,
-+          },
++            input_item_count: nextInput.length,
++          }),
 +        ]);
++        expect(imageLogs.attempts).toEqual(
++          imageLogs.requests.map(({ sdk_request_log_id }) => ({
++            message: 'openai.responses.http_attempt',
++            request_id: requestId,
++            sdk_request_log_id,
++            outcome: 'response_headers',
++            status: 200,
++            retrying: false,
++            duration_ms: expect.any(Number),
++          })),
++        );
 +        expect(
 +          sdkDebug.mock.calls.some(([, details]) => details?.options?.path === '/responses'),
 +        ).toBe(false);
 +      } else {
 +        expect(imageLogs.requests).toEqual([]);
++        expect(imageLogs.attempts).toEqual([]);
 +      }
 +
 +      await imageLogs.ready;
@@ -584,6 +628,7 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +              role: 'user',
 +              input_index: inputIndex,
 +              part_index: partIndex,
++              detail: images[0].detail,
 +              encoded_bytes: wireImage.length,
 +              sha256: createHash('sha256').update(wireImage).digest('hex'),
 +            },
@@ -603,23 +648,7 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +    jest.replaceProperty(process, 'env', { ...process.env, OPENAI_LOG: 'debug', PROXY: '' });
 +    const sdkDebug = jest.spyOn(console, 'debug').mockImplementation(() => {});
 +    const sdkInfo = jest.spyOn(console, 'info').mockImplementation(() => {});
-+    const { getOptions, customEndpointConfig } = getProviderConfig({
-+      provider: 'NewAPI',
-+      appConfig: config,
-+    });
-+    const { configOptions } = await getOptions({
-+      req: { user: { id: 'synthetic-user' }, body: {}, config },
-+      endpoint: 'NewAPI',
-+      model_parameters: { model: responsesModel, useResponsesApi: true },
-+      customEndpointConfig,
-+    });
-+    expect(configOptions?.baseURL === baseURL).toBe(true);
-+    const openai = new OpenAI({
-+      ...configOptions,
-+      apiKey: 'test',
-+      logLevel: 'debug',
-+      maxRetries: 0,
-+    });
++    const openai = await createLoopbackClient();
 +    const validUrl = `data:image/png;base64,${png}`;
 +    const inputImage = (refs) => ({ type: 'input_image', detail: 'auto', ...refs });
 +    const userMessage = (...content) => ({ role: 'user', content });
@@ -637,7 +666,10 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +    const input = [
 +      userMessage(inputImage({ image_url: validUrl })),
 +      ...history,
-+      userMessage({ type: 'input_text', text: prompt }, inputImage({ image_url: validUrl })),
++      userMessage(
++        { type: 'input_text', text: prompt },
++        inputImage({ image_url: validUrl, detail: 'high' }),
++      ),
 +      functionCall(callId),
 +      functionOutput(callId, [
 +        inputImage({ image_url: `data:image/jpeg;base64,${truncated.toString('base64')}` }),
@@ -649,14 +681,17 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +      inputImage({ image_url: `${baseURL}/synthetic-url-private` }),
 +      inputImage({ file_id: 'synthetic-file-private' }),
 +      inputImage({ image_url: 'data:image/png;base64,bm90LWFuLWltYWdl' }),
-+      inputImage({ image_url: 'synthetic-source-private' }),
++      inputImage({ image_url: 'synthetic-source-private', detail: 'synthetic-detail-private' }),
 +    );
-+    const logs = captureImageLogs(8);
-+    for (const items of [input, [external]]) {
++    const logs = captureDiagnostics(8);
++    for (const options of [
++      { input, previous_response_id: 'synthetic-prev-private', store: true, truncation: 'auto' },
++      { input: [external], store: false, truncation: 'synthetic-truncation-private' },
++    ]) {
 +      const stream = await openai.responses.create({
 +        model: responsesModel,
-+        input: items,
 +        stream: true,
++        ...options,
 +      });
 +      let status;
 +      for await (const event of stream) {
@@ -679,6 +714,11 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +      recent_tool_call_ids: [...historyIds.slice(-4), callId],
 +      input_image_count: 5,
 +      input_image_omitted_count: 1,
++      input_item_count: input.length,
++      has_previous_response_id: true,
++      store: true,
++      truncation: 'auto',
++      stream: true,
 +    });
 +    const longImages = logs.images.filter(
 +      (event) => event.sdk_request_log_id === long.sdk_request_log_id,
@@ -695,6 +735,7 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +        role: 'user',
 +        input_index: history.length + 1,
 +        part_index: 1,
++        detail: 'high',
 +        status: 'decoded',
 +        sha256: createHash('sha256').update(pngBytes).digest('hex'),
 +      },
@@ -713,7 +754,15 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +      { ...toolLocation, part_index: 1, status: 'malformed_base64' },
 +      { ...toolLocation, part_index: 2, status: 'missing_source', source: 'unknown' },
 +    ]);
-+    expect(refs).toMatchObject({ input_image_count: 4, input_image_omitted_count: 0 });
++    expect(refs).toMatchObject({
++      input_image_count: 4,
++      input_image_omitted_count: 0,
++      input_item_count: 1,
++      has_previous_response_id: false,
++      store: false,
++      stream: true,
++    });
++    expect(refs.truncation).toBeUndefined();
 +    const refImages = logs.images.filter(
 +      (event) => event.sdk_request_log_id === refs.sdk_request_log_id,
 +    );
@@ -723,14 +772,160 @@ index 0000000000000000000000000000000000000000..e883eeeeb2440d4335b82ed61f8ccdc4
 +      { source: 'inline', status: 'unknown_format', encoded_bytes: 12 },
 +      { source: 'unknown', status: 'unknown_source' },
 +    ]);
++    expect(refImages[3].detail).toBeUndefined();
 +    for (const unverified of [...longImages.slice(2), ...refImages]) {
 +      expect(unverified).not.toHaveProperty('sha256');
 +      expect(unverified).not.toHaveProperty('width');
 +    }
-+    const serialized = JSON.stringify([...logs.requests, ...logs.images]);
-+    for (const excluded of [baseURL, png, prompt, photoText, '-private', 'bm90LWFuLWltYWdl']) {
++    const serialized = JSON.stringify(logger.info.mock.calls);
++    for (const excluded of [
++      baseURL,
++      png,
++      prompt,
++      photoText,
++      endText,
++      '-private',
++      'bm90LWFuLWltYWdl',
++    ]) {
 +      expect(serialized.includes(excluded)).toBe(false);
 +    }
++  });
++
++  test.each(['completed', 'error'])(
++    'records a 429 retry and 200 headers before the %s stream outcome',
++    async (outcome) => {
++      jest.replaceProperty(process, 'env', { ...process.env, OPENAI_LOG: 'debug', PROXY: '' });
++      const logs = captureDiagnostics();
++      const openai = await createLoopbackClient({ maxRetries: 1 });
++      let openResponse;
++      respondToResponses = (_req, res, attempt) => {
++        if (attempt === 1) {
++          res.writeHead(429, { 'retry-after-ms': '1' }).end('synthetic-retry-private');
++          return;
++        }
++        openResponse = res;
++        res
++          .writeHead(200, {
++            'Content-Type': 'text/event-stream',
++            'x-request-id': 'synthetic-header-private',
++          })
++          .flushHeaders();
++      };
++
++      const stream = await openai.responses.create({
++        model: responsesModel,
++        input: prompt,
++        truncation: 'disabled',
++        stream: true,
++      });
++      expect(openResponse.writableEnded).toBe(false);
++      expect(requests).toHaveLength(2);
++      expect(logs.requests).toHaveLength(2);
++      const [first, retry] = logs.requests;
++      expect(first).toMatchObject({ input_item_count: 1, truncation: 'disabled', stream: true });
++      expect(retry).toMatchObject({
++        input_item_count: 1,
++        retry_of_sdk_request_log_id: first.sdk_request_log_id,
++      });
++      expect(retry.sdk_request_log_id).not.toBe(first.sdk_request_log_id);
++      expect(logs.attempts).toEqual([
++        expect.objectContaining({
++          sdk_request_log_id: first.sdk_request_log_id,
++          outcome: 'http_error',
++          status: 429,
++          retrying: true,
++          duration_ms: expect.any(Number),
++        }),
++        expect.objectContaining({
++          sdk_request_log_id: retry.sdk_request_log_id,
++          outcome: 'response_headers',
++          status: 200,
++          retrying: false,
++          duration_ms: expect.any(Number),
++        }),
++      ]);
++
++      if (outcome === 'completed') {
++        const usage = { input_tokens: 10, output_tokens: 5, total_tokens: 15 };
++        const event = { type: 'response.completed', response: { status: 'completed', usage } };
++        openResponse.end(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
++        const events = [];
++        for await (const data of stream) {
++          events.push(data);
++        }
++        expect(events).toEqual([event]);
++      } else {
++        openResponse.end(
++          'event: error\ndata: {"error":{"message":"synthetic-stream-private"}}\n\n',
++        );
++        await expect(stream[Symbol.asyncIterator]().next()).rejects.toBeInstanceOf(OpenAI.APIError);
++      }
++      expect(logs.attempts).toHaveLength(2);
++      const serialized = JSON.stringify(logger.info.mock.calls);
++      for (const excluded of [baseURL, prompt, '-private', 'synthetic-api-key']) {
++        expect(serialized.includes(excluded)).toBe(false);
++      }
++    },
++  );
++
++  test.each([
++    ['HTTP rejection', 'http_error', 400, OpenAI.BadRequestError],
++    ['connection loss', 'connection_error', undefined, OpenAI.APIConnectionError],
++    ['caller abort', 'aborted', undefined, OpenAI.APIUserAbortError],
++  ])('correlates a terminal %s with the sending attempt', async (_, outcome, status, errorType) => {
++    jest.replaceProperty(process, 'env', { ...process.env, OPENAI_LOG: 'debug', PROXY: '' });
++    const logs = captureDiagnostics();
++    const openai = await createLoopbackClient();
++    const controller = new AbortController();
++    const requestId = randomUUID();
++    const cancelRequestId = randomUUID();
++    respondToResponses = (req, res) => {
++      if (status) {
++        res.writeHead(status).end('synthetic-rejection-private');
++      } else if (outcome === 'aborted') {
++        tenantStorage.run({ requestId: cancelRequestId }, () => {
++          controller.abort(new Error('synthetic-abort-private'));
++        });
++      } else {
++        req.socket.destroy();
++      }
++    };
++
++    const body = { model: responsesModel, input: prompt, stream: false };
++    await expect(
++      tenantStorage.run({ requestId }, () =>
++        openai.responses.create(body, { signal: controller.signal }),
++      ),
++    ).rejects.toBeInstanceOf(errorType);
++    expect(requests).toHaveLength(1);
++    expect(logs.requests).toHaveLength(1);
++    expect(logs.requests[0].stream).toBe(false);
++    expect(logs.attempts).toEqual([
++      expect.objectContaining({
++        sdk_request_log_id: logs.requests[0].sdk_request_log_id,
++        request_id: requestId,
++        outcome,
++        retrying: false,
++        duration_ms: expect.any(Number),
++      }),
++    ]);
++    expect(logs.attempts[0].status).toBe(status);
++    expect(JSON.stringify(logger.info.mock.calls).includes('-private')).toBe(false);
++  });
++
++  test('leaves Responses diagnostics off outside SDK debug mode', async () => {
++    jest.replaceProperty(process, 'env', { ...process.env, OPENAI_LOG: 'off', PROXY: '' });
++    const logs = captureDiagnostics();
++    const openai = await createLoopbackClient();
++    respondToResponses = (_req, res) => {
++      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"status":"completed"}');
++    };
++    const response = await openai.responses.create({ model: responsesModel, input: prompt });
++    expect(response.status).toBe('completed');
++    expect(requests).toHaveLength(1);
++    expect(logs.requests).toEqual([]);
++    expect(logs.attempts).toEqual([]);
++    expect(logs.images).toEqual([]);
 +  });
 +
 +  test('an explicit unknown invocation provider keeps the PNG attachment on the same MCP tool', async () => {
@@ -1033,11 +1228,13 @@ index 76a6bf903620e9c864b41443f5b2653cf3cba9be..a72e33015d7dfa1f3f0389f53e146f36
          unattended,
          tool_resources,
 diff --git a/packages/api/src/endpoints/openai/config.ts b/packages/api/src/endpoints/openai/config.ts
-index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..3c9493de8d658c533a94870e51548234d48a6599 100644
+index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..12bdf592cb3f0fd95023f8bc33f61980c2bda758 100644
 --- a/packages/api/src/endpoints/openai/config.ts
 +++ b/packages/api/src/endpoints/openai/config.ts
-@@ -1,8 +1,15 @@
+@@ -1,8 +1,17 @@
  import { Providers } from '@librechat/agents';
++import { addAbortListener } from 'node:events';
++import { AsyncResource } from 'node:async_hooks';
 +import { logger } from '@librechat/data-schemas';
  import { Agent, fetch as undiciFetch } from 'undici';
  import { KnownEndpoints, EModelEndpoint, ReasoningParameterFormat } from 'librechat-data-provider';
@@ -1052,24 +1249,45 @@ index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..3c9493de8d658c533a94870e51548234
  import { getOpenAILLMConfig, extractDefaultParams, removeReasoningPayload } from './llm';
  import { getGoogleConfig, stripGeminiFlashBlockedParams } from '~/endpoints/google/llm';
  import { getLLMConfig as getAnthropicLLMConfig } from '~/endpoints/anthropic/llm';
-@@ -16,8 +23,110 @@ import { mergeHeaders } from '~/utils/headers';
+@@ -16,8 +25,218 @@ import { mergeHeaders } from '~/utils/headers';
  type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
  type FetchOptions = RequestInit & { dispatcher?: Dispatcher };
  type OpenAIConfiguration = NonNullable<t.OpenAIConfiguration>;
-+type ResponsesContentPart = { type?: string; image_url?: string | null; file_id?: string | null };
++type ResponsesContentPart = {
++  type?: string;
++  image_url?: string | null;
++  file_id?: string | null;
++  detail?: string;
++};
 +type ResponsesInputItem = ResponsesContentPart & {
 +  call_id?: string;
 +  role?: string;
 +  content?: string | ResponsesContentPart[];
 +  output?: string | ResponsesContentPart[];
 +};
-+type ResponsesRequestBody = { model?: string; input?: string | ResponsesInputItem[] };
++type ResponsesRequestBody = {
++  model?: string;
++  input?: string | ResponsesInputItem[];
++  previous_response_id?: string | null;
++  store?: boolean;
++  truncation?: string;
++  stream?: boolean;
++};
 +type OpenAIRequestLogDetails = {
-+  options?: { method?: string; path?: string; body?: ResponsesRequestBody };
++  options?: { method?: string; path?: string; body?: ResponsesRequestBody; signal?: AbortSignal };
++  retryOf?: string;
++  status?: number;
++  durationMs?: number;
 +};
  
  const OPENROUTER_DEFAULT_PARAMS = { promptCache: true };
 +const RESPONSES_MESSAGE_ROLES = new Set(['user', 'assistant', 'system', 'developer']);
++const RESPONSES_IMAGE_DETAILS = new Set(['auto', 'low', 'high', 'original']);
++const SDK_FAILURE_OUTCOMES = {
++  'response error': 'http_error',
++  'connection failed': 'connection_error',
++  'connection timed out': 'timeout',
++} as const;
 +
 +function countInputImages(
 +  parts: string | ResponsesContentPart[] | undefined,
@@ -1086,7 +1304,11 @@ index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..3c9493de8d658c533a94870e51548234
 +      if (location) {
 +        keepRecentImage(images, {
 +          image: { image_url: part.image_url, file_id: part.file_id },
-+          location: { ...location, part_index: index },
++          location: {
++            ...location,
++            part_index: index,
++            detail: RESPONSES_IMAGE_DETAILS.has(part.detail ?? '') ? part.detail : undefined,
++          },
 +        });
 +      }
 +    }
@@ -1096,7 +1318,8 @@ index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..3c9493de8d658c533a94870e51548234
 +
 +function logResponsesRequest(
 +  body: ResponsesRequestBody | undefined,
-+  sdkRequestLogId?: string,
++  sdkRequestLogId: string,
++  retryOf?: string,
 +): void {
 +  let inputImageCount = 0;
 +  const toolCallIds: string[] = [];
@@ -1129,6 +1352,8 @@ index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..3c9493de8d658c533a94870e51548234
 +    }
 +  }
 +  const context = { sdk_request_log_id: sdkRequestLogId };
++  const truncation = body?.truncation;
++  const previousResponseId = body?.previous_response_id;
 +  logger.info('openai.responses.request', {
 +    model: typeof body?.model === 'string' ? body.model : null,
 +    tool_call_ids: toolCallIds,
@@ -1136,39 +1361,119 @@ index e7fcf7c7aeb3bc17701f109d90e883de98b1883a..3c9493de8d658c533a94870e51548234
 +    ...context,
 +    recent_tool_call_ids: toolCallIds.slice(-5).map(imageLogIdentifier).filter(Boolean),
 +    input_image_omitted_count: inputImageCount - images.length,
++    input_item_count: typeof body?.input === 'string' ? 1 : input.length,
++    has_previous_response_id:
++      typeof previousResponseId === 'string' && previousResponseId.length > 0,
++    store: typeof body?.store === 'boolean' ? body.store : undefined,
++    truncation: truncation === 'auto' || truncation === 'disabled' ? truncation : undefined,
++    stream: typeof body?.stream === 'boolean' ? body.stream : undefined,
++    retry_of_sdk_request_log_id:
++      typeof retryOf === 'string' && /^log_[0-9a-f]{6}$/.test(retryOf) ? retryOf : undefined,
 +  });
 +  scheduleImageDiagnostics('openai.responses.input_image', images, context);
 +}
 +
-+const responsesRequestLogger: NonNullable<OpenAIConfiguration['logger']> = {
-+  // The SDK's other debug-mode messages can include URLs, headers, and bodies.
-+  error: () => {},
-+  warn: () => {},
-+  info: () => {},
-+  debug: (message, ...args) => {
-+    // The SDK's send log carries the assembled body and the logical API path before fetch.
-+    const options = (args[0] as OpenAIRequestLogDetails | undefined)?.options;
-+    if (options?.method !== 'post' || options.path !== '/responses') {
++function sdkAttemptOutcome(event: string) {
++  if (event === 'response start') {
++    return { outcome: 'response_headers', retrying: false };
++  }
++  const failure =
++    /^(response error|connection failed|connection timed out) \((?:(retrying), \d+ attempts remaining|error; (?:no more retries left|not retryable|streaming body cannot be retried))\)$/.exec(
++      event,
++    );
++  if (failure) {
++    return {
++      outcome: SDK_FAILURE_OUTCOMES[failure[1] as keyof typeof SDK_FAILURE_OUTCOMES],
++      retrying: failure[2] != null,
++    };
++  }
++}
++
++function createResponsesRequestLogger(): NonNullable<OpenAIConfiguration['logger']> {
++  // Only send events carry the logical API path. Track their IDs until the SDK reports an outcome.
++  const attempts = new Map<string, Disposable | undefined>();
++  const finish = (
++    id: string,
++    fields: { outcome: string; retrying: boolean; status?: number; duration_ms?: number },
++  ): void => {
++    const abortListener = attempts.get(id);
++    if (!attempts.delete(id)) {
 +      return;
 +    }
 +    try {
-+      // The SDK ID is local to this attempt, including when the SDK retries the same input.
-+      const sdkRequestLogId = /^\[(log_[0-9a-f]{6})\] sending request$/.exec(message)?.[1];
-+      logResponsesRequest(options.body, sdkRequestLogId);
++      abortListener?.[Symbol.dispose]();
++      logger.info('openai.responses.http_attempt', { sdk_request_log_id: id, ...fields });
 +    } catch {
-+      // Diagnostic failures must not interrupt the SDK send.
++      // Diagnostic failures must not interrupt the SDK or cancellation.
 +    }
-+  },
-+};
++  };
++
++  return {
++    // The SDK's other messages can include URLs, headers, and bodies.
++    error: () => {},
++    warn: () => {},
++    info: () => {},
++    debug: (message, ...args) => {
++      const entry = /^\[(log_[0-9a-f]{6})\] (.+)$/.exec(message);
++      if (!entry) {
++        return;
++      }
++      const [, id, event] = entry;
++      const details = args[0] as OpenAIRequestLogDetails | undefined;
++      try {
++        if (event === 'sending request') {
++          const options = details?.options;
++          if (options?.method !== 'post' || options.path !== '/responses') {
++            return;
++          }
++          const start = performance.now();
++          // The SDK omits caller aborts. Keep the sending context if another request cancels it.
++          const abortListener =
++            options.signal &&
++            addAbortListener(
++              options.signal,
++              AsyncResource.bind(() => {
++                finish(id, {
++                  outcome: 'aborted',
++                  retrying: false,
++                  duration_ms: Math.round(performance.now() - start),
++                });
++              }),
++            );
++          attempts.set(id, abortListener);
++          logResponsesRequest(options.body, id, details?.retryOf);
++          return;
++        }
++        const result = sdkAttemptOutcome(event);
++        if (result) {
++          const { status, durationMs } = details ?? {};
++          finish(id, {
++            ...result,
++            status:
++              status != null && Number.isInteger(status) && status >= 100 && status <= 599
++                ? status
++                : undefined,
++            duration_ms:
++              durationMs != null && Number.isSafeInteger(durationMs) && durationMs >= 0
++                ? durationMs
++                : undefined,
++          });
++        }
++      } catch {
++        // Diagnostic failures must not interrupt the SDK send.
++      }
++    },
++  };
++}
  
  function includesOpenRouter(value?: string | null): boolean {
    return typeof value === 'string' && value.toLowerCase().includes(KnownEndpoints.openrouter);
-@@ -242,6 +351,9 @@ export function getOpenAIConfig(
+@@ -242,6 +461,9 @@ export function getOpenAIConfig(
    }
  
    const configOptions: t.OpenAIConfiguration = {};
 +  if (process.env.OPENAI_LOG === 'debug') {
-+    configOptions.logger = responsesRequestLogger;
++    configOptions.logger = createResponsesRequestLogger();
 +  }
    if (baseURL) {
      configOptions.baseURL = baseURL;
