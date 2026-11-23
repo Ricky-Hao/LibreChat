@@ -2,7 +2,7 @@
 
 状态：`keep`。应用基线：`d4e85d2205c78413ee27d631d7e3b7313556f21d`。
 
-携带应用实际消费的 `4.2.11-ricky.1` tarball、源码差异、来源元数据、锁文件和 Docker 接线。`api` 与 `packages/api` 通过相对 `file:` 路径显式解析同一归档。SDK 源码由 `Ricky-Hao/agents` 维护。
+携带本地集成候选 `4.2.11-ricky.2` 的 tarball、源码差异、来源元数据、锁文件和 Docker 接线。`api` 与 `packages/api` 通过相对 `file:` 路径显式解析同一归档。SDK 源码由 `Ricky-Hao/agents` 维护，MCP 图片的应用接线见 [mcp-images](../mcp-images/README.md)。
 
 依赖：无；以固定基线已有模块为前提。
 
@@ -13,12 +13,15 @@
 | 项目 | 固定来源 |
 | --- | --- |
 | SDK 上游 v4.2.11 | `690865f925800990bc8941e15fe93741b3cbd626` |
-| SDK fork 合并提交与生成源码 tree | `06ac16c17bcd7a75e79c01d57248f350b157676b` / `996688a08ea9bca1030271f79e23a14df8ad537d` |
-| SDK PR #5 head | `4d56ad0acc9ec8311562f424c627cbc2eddbf743` |
-| `librechat-agents-4.2.11-ricky.1.tgz` SHA-256 | `90e25b2cb8a000b32c212f6bee091f215323faa8c80955e9d2495d2822a747f1` |
-| SDK 源码 patch SHA-256 | `65b0a2d8d972da001935a3df483f6b3ade85d47779839897a8201d3ea677b46b` |
+| SDK 维护提交 | `712a3efb9a9736f80f11c150b38424065f69d75b` |
+| SDK 完整重放 tree | `1cb6d4a126049ecaa0dc988304324b0a913fc904` |
+| 本地 SDK 构建源码提交与 tree | `ca2a2f5532a86e10b5bb1c607864c265a0c11099` / `b4006bb835b457ffceb47783178a0bda03c488d6` |
+| `librechat-agents-4.2.11-ricky.2.tgz` SHA-256 | `1a5125df9aec2ca36bec1423270712a0fc422d734d74207ee134139bf223a5ee` |
+| SDK 源码 patch SHA-256 | `032aec986b90426b9d8f1efb212b08ff4dbbc00e58ad41f4fd8fc725a9a543a4` |
 
-归档从合并提交的干净 checkout 以 Node 24.22.1、npm 11.13.0 构建。应用 checkout 的 `vendor/README.md` 记录重建命令和 `4.2.2-ricky.1`、`4.2.1-ricky.2` 的历史 provenance。以下为旧消费接线及后续修正的 LibreChat 来源。
+SDK 维护仓 `tools/release.py` 完整重放补丁后生成本地 `release/v4.2.11-ricky.2`，以 Node 24.22.1、npm 11.13.0 从干净源码构建。构建树省略重放时存在的上游 GitHub workflows。此前生产消费的 `4.2.11-ricky.1` 来自 SDK `06ac16c17bcd7a75e79c01d57248f350b157676b`。应用 checkout 的 `vendor/README.md` 保存重建命令和历史来源。
+
+旧消费接线及后续修正的 LibreChat 来源如下。
 
 - [2480108fafe63a19bcb9b23097d891ca1e4efb23](https://github.com/Ricky-Hao/LibreChat/commit/2480108fafe63a19bcb9b23097d891ca1e4efb23)
 - [43989aee5ca11c469492ff11edbf7d91d0c75895](https://github.com/Ricky-Hao/LibreChat/commit/43989aee5ca11c469492ff11edbf7d91d0c75895)

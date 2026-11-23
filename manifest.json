@@ -19,9 +19,9 @@
         "packages/api/package.json",
         "packages/chat/src/react/subagents/__tests__/outcome.spec.ts",
         "vendor/README.md",
-        "vendor/agents-4.2.11-ricky.1.patch",
+        "vendor/agents-4.2.11-ricky.2.patch",
         "vendor/agents.json",
-        "vendor/librechat-agents-4.2.11-ricky.1.tgz",
+        "vendor/librechat-agents-4.2.11-ricky.2.tgz",
         "vendor/verify-agents.mjs"
       ],
       "tests": "patches/sdk/tests.json"
@@ -536,6 +536,7 @@
       "paths": [
         "api/app/clients/specs/BaseClient.test.js",
         "api/app/clients/tools/util/handleTools.js",
+        "api/server/controllers/agents/client.js",
         "api/server/controllers/agents/openai.js",
         "api/server/controllers/agents/responses.js",
         "api/server/services/Endpoints/agents/initialize.js",
@@ -543,11 +544,14 @@
         "api/server/services/MCP.js",
         "api/server/services/MCP.spec.js",
         "api/server/services/ToolService.js",
+        "packages/api/src/agents/handlers.ts",
+        "packages/api/src/agents/run.ts",
         "packages/api/src/endpoints/openai/config.ts",
         "packages/api/src/mcp/MCPManager.ts",
         "packages/api/src/mcp/__tests__/parsers.test.ts",
         "packages/api/src/mcp/parsers.ts",
-        "packages/api/src/utils/imageDiagnostics.ts"
+        "packages/api/src/utils/imageDiagnostics.ts",
+        "packages/data-provider/src/config.ts"
       ],
       "tests": "patches/mcp-images/tests.json",
       "replacement": {

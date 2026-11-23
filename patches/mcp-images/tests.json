@@ -45,6 +45,14 @@
       ]
     },
     {
+      "name": "packages/data-provider tsc --noEmit",
+      "tier": "types",
+      "cwd": "packages/data-provider",
+      "requires": ["packages/data-provider/tsconfig.json"],
+      "runner": "command",
+      "command": ["node", "../../node_modules/typescript/bin/tsc", "--noEmit"]
+    },
+    {
       "name": "Application static checks against fixed base",
       "tier": "project",
       "cwd": ".",

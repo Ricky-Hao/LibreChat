@@ -7,8 +7,8 @@
       "requires": [
         "vendor/verify-agents.mjs",
         "vendor/agents.json",
-        "vendor/librechat-agents-4.2.11-ricky.1.tgz",
-        "vendor/agents-4.2.11-ricky.1.patch",
+        "vendor/librechat-agents-4.2.11-ricky.2.tgz",
+        "vendor/agents-4.2.11-ricky.2.patch",
         "package-lock.json"
       ],
       "runner": "command",

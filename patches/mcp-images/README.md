@@ -4,7 +4,15 @@
 
 视觉 provider 的 MCP 图片随工具结果送入下一次模型请求。未知 provider 和未启用 MCP 图片输入的 provider 通过附件回调交付图片给 UI。
 
-依赖 `sdk`。合同使用应用实际安装的 SDK 验证工具调用。
+依赖 [sdk](../sdk/README.md)。合同使用应用实际安装的 SDK 验证工具调用。
+
+## 同轮按需读回
+
+应用配置 `endpoints.agents.mcpImageRead` 接受布尔值，默认关闭。设为 `true` 时，能力仅用于普通前台根 Agent 的 `NewAPI` / `gpt-6.2-sol` / OpenAI Responses。有效 fallback、checkpoint、审批、委托、已知模型追踪和 Responses 续接配置会停用读回。关掉开关即可让新执行回到原有图片路径。
+
+受权 MCP 返回内联 PNG、JPEG 或 WebP 时，原图片照常进入首次投影。可用的原工具结果带 `img_` 短引用。普通后继工具轮仅保留引用和工具配对。模型调用 `read_image` 选择一张后，同一次执行从根图原结果取图。选中图进入紧接的结构化 Responses 请求，并与读回调用及原工具调用分别配对。选择超出预算时模型收到 `image_omitted`。源消息删除、执行结束或换轮后，原引用不可用。
+
+这一组负责来源身份、普通聊天准入和宿主测试。SDK 的 `tool-image-read` 组负责作用域、原状态读图和预算。读回沿已授权的 provider 投影，附件仍由原 MCP 回调交付。可继续使用本页的图数和配对诊断，测试的原字节比对在内存完成。[设计与验收](../../docs/mcp-image-on-demand.md)
 
 ## 载荷与来源
 
@@ -49,6 +57,8 @@ python3 tools/patchset.py test --target /path/to/application --only mcp-images -
 `api/server/services/Endpoints/agents/mcpImages.spec.js` 走应用 Agent 的直接工具入口。它用合成数据模拟纯图、Photo 图文和纯文本 MCP 结果，使用 vendored SDK 向 `NewAPI` 的 loopback 模拟发出两次请求。测试将 MCP 原图和实际第二次 `POST /v1/responses` 中的图与两处日志逐项比对。额外的 loopback 请求覆盖长历史、用户图、工具输出容器、截断图、无效 Base64、缺失来源和外部引用。原生 OpenAI 用同一路径作对照。Moonshot 的 Chat Completions 请求验证附件回退，未知 provider 在 MCP 工具调用边界验证显式覆盖。
 
 同一测试通过应用配置和 OpenAI SDK 6.49.0 验证请求形状、429 重试、HTTP 拒绝、连接断开、调用方取消、日志门控和脱敏。服务端先发送 200 响应头，等测试核实尝试日志后才发送完成事件和合成用量，或发送流内错误。两个流结果的 HTTP 边界记录相同。
+
+按需读回合同在同一入口再跑 `0 → 1 → 0 → 1 → 0`，检查模型可见引用、PNG 原字节、各次配对、下一用户轮的拒绝和读回事件、日志与附件回调的载荷。SDK 定向合同覆盖并行图顺序、重复选择、源删除和预算省略。
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
 2026-11-11 在上一轮基线通过本组 2 项 focused 与 API 类型检查，覆盖 parser 和主机消费方。[历史验收](../../README.md#历史验收2026-11-11)
