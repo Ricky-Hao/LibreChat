@@ -5,7 +5,7 @@
 今后同步上游默认按[上游同步默认流程](docs/maintenance.md#上游同步默认流程)执行：固定官方 upstream main 完整 SHA → 有序补丁重放与验证 → 合入 `patches` → CI 镜像 → 按 digest 部署。每轮按用户请求完成相应阶段，发布和部署按当次授权执行。
 
 应用基线固定为官方 upstream main 的 `d4e85d2205c78413ee27d631d7e3b7313556f21d`（v0.8.9）。原始完整 fork 源为 `38c026db83d0ca12a067083b5c1551c1bca2754b`。
-28 个状态条目包含 25 份标准 Git diff，状态为 `keep` 12、`feature` 4、`local` 9、`upstream` 3。两个应用消费方使用 vendored `4.2.11-ricky.1`。[SDK 组](patches/sdk/README.md)
+28 个状态条目包含 25 份标准 Git diff，状态为 `keep` 12、`feature` 4、`local` 9、`upstream` 3。两个应用消费方使用 vendored 本地候选 `4.2.11-ricky.2`。[SDK 组](patches/sdk/README.md)
 
 [manifest.json](manifest.json) 是唯一有序清单，负责状态、依赖、载荷路径和测试合同。每个 `patches/<id>/` 包含行为说明、来源、维护步骤及非空 `tests.json`；活动条目另有 `changes.patch`。
 

@@ -23,7 +23,7 @@
 | 15. Native mobile overlay dismissal | [native-overlays](../patches/native-overlays/README.md) | feature | CloseWatcher/Navigation API、层栈、受控/非受控 dialog、Forward 和匹配 FINAL sync；不恢复 synthetic history，不承诺不支持原生 API 浏览器的通用 Back 拦截。 |
 | 16. Vendor chunk classification | [vendor-chunks](../patches/vendor-chunks/README.md) | upstream | 固定基线已含 #17921，采用上游第一层 node_modules 嵌套归组及 Windows 路径规范化，移除本地末段裁剪载荷；保留真实 config probe 合同。 |
 | 17. MCP server-initiated ping responses | [mcp-ping](../patches/mcp-ping/README.md) | keep | 上游处理合法空 ping 响应。保留同 session 心跳、时钟偏移、重连与非 ping 空结果合同。 |
-| 18. MCP 图片输入与展示 | [mcp-images](../patches/mcp-images/README.md) | keep | 采用上游的 `imageAttachments` 和交付回调。工具重载使用 Agent 解析后的 provider，保留视觉输入、回退文本过滤、图片校验和 SDK/host 消费验证。 |
+| 18. MCP 图片输入、按需读回与展示 | [mcp-images](../patches/mcp-images/README.md) | keep | 沿用 `imageAttachments` 与已解析 provider。保留视觉输入、文本回退和图片校验。普通前台根 Agent 可按同轮短引用读回原图，默认关闭。 |
 | 19. Delayed sidebar focus | [sidebar-focus](../patches/sidebar-focus/README.md) | upstream | 采用固定基线的 opener/body guard 和 mobile drawer commit handoff。继续执行组件与浏览器测试。 |
 | 20. Shared index retry helper | [index-retry](../patches/index-retry/README.md) | upstream | 基线已含 createIndexesWithRetry 与 retry.spec.ts；无载荷，callback 索引初始化调用方仍在 task-callbacks。 |
 | 21. Intent label limits and mobile wrapping | [intent-labels](../patches/intent-labels/README.md) | local | 标签长度和窄屏呈现可单独放弃；保留上游 timing/error UI，与 invocation 正确性分开。 |
@@ -31,7 +31,7 @@
 | 23. Internal files versus delivered artifacts | [file-guidance](../patches/file-guidance/README.md) | local | workspace/scratch/delivery 模型指引；不构成 collector 或秘密隔离保证，不单独作为保留完整 fork SDK 的理由。 |
 | 24. Visible conversation loading priority | [loading-priority](../patches/loading-priority/README.md) | local | 提前可见会话查询，沿用 enabled 条件、不增加查询；独立于历史窗口，性能需实际 Lighthouse。 |
 | 25. Devcontainer, fork image CI, build/test adaptations | [dev-environment](../patches/dev-environment/README.md)、[fork-image](../patches/fork-image/README.md)、[test-adaptations](../patches/test-adaptations/README.md) | local | 分别维护 Coder/locked setup、旧 rickyhao/dev 镜像入口兼容载荷和当前有效 fixture；活动镜像入口在补丁仓根，从 manifest 生成应用。保留基线 a11y workflow，不重放过期 fixture。 |
-| 26. Vendored SDK, lock/build wiring and prior artifacts | [sdk](../patches/sdk/README.md) | keep | 只携带当前消费的 4.2.11-ricky.1、源码 patch、元数据、锁文件、主机消费方和构建接线；历史归档不重放。 |
+| 26. Vendored SDK, lock/build wiring and prior artifacts | [sdk](../patches/sdk/README.md) | keep | 携带当前消费的 4.2.11-ricky.2 本地候选、源码 patch、元数据、锁文件和构建接线。 |
 
 另有 [contributor-guidance](../patches/contributor-guidance/README.md) 文档载荷（local），保存应用 AGENTS 和 PR template 的净差异。根 AGENTS 负责补丁仓自身维护。合并三对行为、拆出环境/镜像/测试责任并保留贡献指南后，原清单共 26 条目、24 份载荷。
 
