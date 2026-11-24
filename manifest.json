@@ -19,9 +19,9 @@
         "packages/api/package.json",
         "packages/chat/src/react/subagents/__tests__/outcome.spec.ts",
         "vendor/README.md",
-        "vendor/agents-4.2.11-ricky.2.patch",
+        "vendor/agents-4.2.11-ricky.3.patch",
         "vendor/agents.json",
-        "vendor/librechat-agents-4.2.11-ricky.2.tgz",
+        "vendor/librechat-agents-4.2.11-ricky.3.tgz",
         "vendor/verify-agents.mjs"
       ],
       "tests": "patches/sdk/tests.json"

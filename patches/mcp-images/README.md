@@ -8,7 +8,7 @@
 
 ## 同轮按需读回
 
-应用配置 `endpoints.agents.mcpImageRead` 接受布尔值，默认关闭。设为 `true` 时，能力仅用于普通前台根 Agent 的 `NewAPI` / `gpt-6.2-sol` / OpenAI Responses。有效 fallback、checkpoint、审批、委托、已知模型追踪和 Responses 续接配置会停用读回。关掉开关即可让新执行回到原有图片路径。
+应用配置 `endpoints.agents.mcpImageRead` 接受布尔值，默认关闭。设为 `true` 时，能力仅用于普通前台根 Agent 的 `NewAPI` / `gpt-6.2-sol` / OpenAI Responses。一般工具审批、有效 fallback、委托、已知模型追踪和 Responses 续接配置会停用读回。只有普通前台 `ask_user_question` 所需的 saver 可与读回共存，实际暂停后旧引用失效，恢复执行不启用读回。关掉开关即可让新执行回到原有图片路径。
 
 受权 MCP 返回内联 PNG、JPEG 或 WebP 时，原图片照常进入首次投影。可用的原工具结果带 `img_` 短引用。普通后继工具轮仅保留引用和工具配对。模型调用 `read_image` 选择一张后，同一次执行从根图原结果取图。选中图进入紧接的结构化 Responses 请求，并与读回调用及原工具调用分别配对。选择超出预算时模型收到 `image_omitted`。源消息删除、执行结束或换轮后，原引用不可用。
 
@@ -58,7 +58,7 @@ python3 tools/patchset.py test --target /path/to/application --only mcp-images -
 
 同一测试通过应用配置和 OpenAI SDK 6.49.0 验证请求形状、429 重试、HTTP 拒绝、连接断开、调用方取消、日志门控和脱敏。服务端先发送 200 响应头，等测试核实尝试日志后才发送完成事件和合成用量，或发送流内错误。两个流结果的 HTTP 边界记录相同。
 
-按需读回合同在同一入口再跑 `0 → 1 → 0 → 1 → 0`，检查模型可见引用、PNG 原字节、各次配对、下一用户轮的拒绝和读回事件、日志与附件回调的载荷。SDK 定向合同覆盖并行图顺序、重复选择、源删除和预算省略。
+按需读回合同在同一入口以已启用的 `ask_user_question` 和 `LazyMongoSaver` 跑 `0 → 1 → 0 → 1 → 0`，检查工具表、模型可见引用、PNG 原字节、各次配对、下一用户轮的拒绝以及客户端事件、日志与附件回调的载荷。提问暂停用本地临时 Mongo 检查 saver 状态和恢复后的输出。SDK 定向合同覆盖并行图顺序、重复选择、源删除、预算省略和一般审批的准入边界。
 
 去掉 `--plan` 才执行检查；按 `focused`、`types`、`browser`、`project` 分阶段串行运行。没有该 tier 时工具报错，不记成功。共享测试文件可能同时覆盖其他组，失败需按当前选择排查。
 2026-11-11 在上一轮基线通过本组 2 项 focused 与 API 类型检查，覆盖 parser 和主机消费方。[历史验收](../../README.md#历史验收2026-11-11)

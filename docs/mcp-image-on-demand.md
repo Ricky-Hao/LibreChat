@@ -12,15 +12,16 @@
 
 | 对象 | 固定版本与证据 |
 | --- | --- |
-| LibreChat 设计和实现基线 | `Ricky-Hao/LibreChat` 的 `design/mcp-image-on-demand` 从 `patches` 的 `ad89c658dd9ff358c38e8a014c8bed16eec3ac09` 开始，包含诊断 PR #20。下文的历史源码行号均指生产基线。 [补丁清单][manifest] · [PR #20][diagnostic-pr] |
-| 生产应用源码基线 | 用户给定 LibreChat v0.8.9，上游 `d4e85d2205c78413ee27d631d7e3b7313556f21d` 加该 manifest 的有序补丁。本文称该重放为 **应用**。本次用临时 Git 索引重放，得到树 `746b9fbcd6012a993841256c9d02f4b867b96767`，逐项匹配 `/workspaces/librechat-responses-vision-diagnostics/.work/replay-final` 的索引，相关源码无未暂存差异。`/workspaces/librechat-upstream-d4e85d2-agents-v4-2-11-20261119` 是较早的集成快照 `aa1f9fc7e9ef724e79d93a67192b9bff69d85e8f`。以下应用行号以完整重放树为准。 [上游提交][app-upstream] · [维护流程](maintenance.md) · [MCP 图片补丁][mcp-patch] |
-| 生产 SDK 源码和归档 | `@librechat/agents` `4.2.11-ricky.1` 对应 `Ricky-Hao/agents` `06ac16c17bcd7a75e79c01d57248f350b157676b`，从该 SHA 读取 `/workspaces/agents` 源码。本地 HEAD `6939842a19a26681b9093ccffb52433636fa4df7` 是另一版本。重放树 `vendor/librechat-agents-4.2.11-ricky.1.tgz` SHA-256 为 `90e25b2cb8a000b32c212f6bee091f215323faa8c80955e9d2495d2822a747f1`，与 `vendor/agents.json` 一致。锁定的 SDK 解析到 `@langchain/openai` 1.5.8、`@langchain/core` 1.2.8、LangGraph 1.4.8 和 OpenAI SDK 6.49.0。 [SDK 来源及消费方式][sdk-patch] |
+| LibreChat 初版设计基线 | `Ricky-Hao/LibreChat` 的 `design/mcp-image-on-demand` 从 `patches` 的 `ad89c658dd9ff358c38e8a014c8bed16eec3ac09` 开始，包含诊断 PR #20。下文历史源码行号沿用该阶段固定基线。 [补丁清单][manifest] · [PR #20][diagnostic-pr] |
+| 初版设计时的生产应用 | 用户给定 LibreChat v0.8.9，上游 `d4e85d2205c78413ee27d631d7e3b7313556f21d` 加该 manifest 的有序补丁。初版用临时 Git 索引重放，得到树 `746b9fbcd6012a993841256c9d02f4b867b96767`，逐项匹配 `/workspaces/librechat-responses-vision-diagnostics/.work/replay-final` 的索引。`/workspaces/librechat-upstream-d4e85d2-agents-v4-2-11-20261119` 是较早的集成快照 `aa1f9fc7e9ef724e79d93a67192b9bff69d85e8f`。以下历史应用行号以完整重放树为准。 [上游提交][app-upstream] · [维护流程](maintenance.md) · [MCP 图片补丁][mcp-patch] |
+| 初版设计时的生产 SDK | `@librechat/agents` `4.2.11-ricky.1` 对应 `Ricky-Hao/agents` `06ac16c17bcd7a75e79c01d57248f350b157676b`。重放树的 SDK 归档 SHA-256 为 `90e25b2cb8a000b32c212f6bee091f215323faa8c80955e9d2495d2822a747f1`，与 `vendor/agents.json` 一致。锁定 `@langchain/openai` 1.5.8、`@langchain/core` 1.2.8、LangGraph 1.4.8 和 OpenAI SDK 6.49.0。 [SDK 来源及消费方式][sdk-patch] |
+| 提问共存的修复基线 | 用户提供的 rev103 验收对应 LibreChat `a281587f46a7e961bc257c23a859f6e8f28d5551` 与 SDK `4.2.11-ricky.2` 源码 `ca2a2f5532a86e10b5bb1c607864c265a0c11099`。`ask_user_question` 可用时，宿主提前装载 saver，而该 SDK 对带 saver 的执行停用 `read_image`。修复从上述应用维护提交和 Agents 维护提交 `5deda2dc651d4b79ee859ef641a189caa5a4d7b3` 开始。 [本地候选归档及来源][sdk-current] |
 
 **历史实证。** 用户提供的生产长会话中，模型盲读出小米 9 计算器里的随机数 `27252`。截图后再调用文本工具，其后继请求还带原截图调用，图数已为 `0`，`has_previous_response_id=false`。既有 SDK 归档离线评估也观察到配对和原 artifact 仍在，图片只在最新工具批后展开。这些结果来自此前验收。 [诊断字段及其边界][mcp-readme]
 
 **设计阶段离线探针。** 解出生产归档，由进程内 `fetch` 接管合成的 Responses 地址。脚本驱动 `Run.processStream`、事件工具和直接图工具。宿主替身返回一张 9 × 4 PNG（95 字节）及纯文本。直接图工具从 `runtime.state.messages` 取得原块并作为测试 artifact 返回。十组历史输入触发了 provider 视图裁剪，四次请求依次携带 `0 → 1 → 0 → 1` 张图。规范状态仍含原图。两次出站图与输入逐字节相等，调用和结果全程配对，均无 `previous_response_id`。该探针验证了裁剪后的取图路径。
 
-**本地候选。** LibreChat 在原 `mcp-images` 组实现宿主准入及 MCP 来源检查。Agents `4.2.11-ricky.2` 在 `tool-image-read` 组实现根执行的读回和投影。`initializeClient` 到 loopback `/v1/responses` 的合成合同验证了 `0 → 1 → 0 → 1 → 0`、模型可见短引用、PNG 字节一致、全部工具配对及新用户轮拒绝。实际首轮提示可以在 graph channel 外播种，执行从 fresh `processStream` 起算，使用规范消息中后出现的用户消息作为旧引用的失效边界。 [宿主合同][mcp-current] · [SDK 本地候选来源][sdk-current]
+**本地候选。** LibreChat 在原 `mcp-images` 组实现宿主准入及 MCP 来源检查。Agents `4.2.11-ricky.3` 在 `tool-image-read` 组修复了 `4.2.11-ricky.2` 遇到提问 saver 就停用读回的问题。`initializeClient` 到 loopback `/v1/responses` 的合成合同覆盖普通前台提问与读回共存。实际首轮提示可以在图状态之外播种，作用域从新鲜 `processStream` 起算，在本次执行结束、实际暂停或规范消息出现后续用户消息时关闭旧引用。 [宿主合同][mcp-current] · [SDK 本地候选来源][sdk-current]
 
 ## 基线怎样传图
 
@@ -117,7 +118,7 @@ flowchart LR
 
 | 责任 | 源码落点和建议 |
 | --- | --- |
-| LibreChat 准入 | `packages/data-provider/src/config.ts` 的 `agentsEndpointSchema` 接受可选布尔开关 `endpoints.agents.mcpImageRead`，缺省关闭。`AgentClient.runAgents` 传前台资格，`packages/api/src/agents/run.ts:createRun` 在标准图上按 `NewAPI`、`gpt-6.2-sol` 传入来源检查。活动 checkpoint、恢复、调度、后台和只做摘要的执行不启用。SDK 随后核对实际 API 模式。 [宿主实现及使用说明][mcp-current] |
+| LibreChat 准入 | `packages/data-provider/src/config.ts` 的 `agentsEndpointSchema` 接受可选布尔开关 `endpoints.agents.mcpImageRead`，缺省关闭。`AgentClient.runAgents` 传前台资格，`packages/api/src/agents/run.ts:createRun` 在标准图上按 `NewAPI`、`gpt-6.2-sol` 传入来源检查。普通前台只因可用的 `ask_user_question` 接入 saver 时，宿主显式允许读回。一般审批、恢复、调度、后台和只做摘要的执行仍关闭读回，SDK 随后核对实际 API 模式。 [宿主实现及使用说明][mcp-current] |
 | LibreChat 来源 | `packages/api/src/mcp/parsers.ts:formatToolContent` 记录内联来源。`packages/api/src/agents/handlers.ts:createToolExecuteHandler` 在普通成功分支提供本次结果的服务端证明。沿用现有事件装载、MCP 鉴权和输出策略。 [原格式化落点][mcp-format] |
 | Agents SDK 执行 | `src/run.ts` 检查真实 provider、Responses、续接、fallback、持久恢复、审批、委托、追踪配置及同名工具。通过后使用 `graphTools` 绑定 `src/tools/imageRead.ts` 中的工具。`src/tools/ToolNode.ts` 接受最终事件结果，直接图工具从 `runtime.state.messages` 查证原消息。`Run.processStream` 管理索引的启动及释放。 [Run 入口][s-start] · [执行入参][s-runtime] · [模型绑定][s-bind] |
 | Agents SDK provider 副本 | `src/messages/core.ts:projectArtifactPayload` 提供最新批的图位置和剩余字符。`src/graphs/Graph.ts` 与 `src/llm/prepareProviderRequest.ts` 在已有裁剪和工具配对之后测量引用及选中图。正常工具结果及读回结果继续使用原 `call_id`。`read_image` 在规范状态和运行事件中只有短文本结果，真正图块由最后的出站副本承载。 [原投影][s-project] · [原预算][s-budget] |
@@ -126,7 +127,7 @@ flowchart LR
 
 现有诊断 `packages/api/src/endpoints/openai/config.ts:91–177` 与 `utils/imageDiagnostics.ts:6–119` 用原 MCP、出站请求和尝试字段比对图数、位置、MIME、尺寸及编码字节指纹。它受 debug 门控，每边界最多记录最后四图，`input_image_omitted_count` 表示逐图诊断抽样缺口。首版复用这些计数和现有字段白名单，合成测试在内存直接比字节。若需要新增计数，使用发放、请求、包含和预算省略数量配合已有请求 ID，避免采集完整引用或正文。诊断的 HTTP 尝试与模型 usage 在不同层，需另验模型能否读到图片。 [诊断合同][mcp-readme]
 
-新增图片只沿已获准的结构化 provider 路径传输。选图位置保存在根图索引，读回结果在规范状态为短状态。工具事件和会话内容可以保留正常的调用参数，其中 ref 在执行后即过期。合成宿主测试检查了既有附件回调、响应内容和应用日志。配置了已知 SDK Langfuse 或 LangSmith/LangChain 模型追踪时停用能力。现有脱敏对工具输出和模型输入的覆盖不同，真实 trace 导出仍待核实。 [SDK trace 脱敏][s-trace] · [HTTP 摘要实现][mcp-http]
+新增图片只沿已获准的结构化 provider 路径传输，选图位置保存在根图索引。带提问 saver 时，收到的 `read_image` 参数仅关联到本次执行的模型响应对象。规范消息及流式工具事件保留工具名和调用 ID，参数为空。选图结果在规范状态为短文本，实际发送图块和新发引用在投影时生成。普通执行过程中保留原 MCP 工具消息的身份，序列化恢复没有该证明，不能用旧 checkpoint artifact 恢复读回作用域。原始 MCP artifact 沿用现有持久化语义。配置了已知 SDK Langfuse 或 LangSmith/LangChain 模型追踪时停用能力。 [SDK trace 脱敏][s-trace] · [HTTP 摘要实现][mcp-http]
 
 实施按三步走。先在 SDK 做根执行引用、状态取图和投影合同，验证全部配对与预算回退。再在应用通过一个关闭态开关接通来源证明和 `graphTools`，从真实聊天入口验证权限及无额外图片副作用。最后才在单一目标路由受权开通并做像素验收。源 SDK 在 `Ricky-Hao/agents` 维护，应用随后更新 vendored SDK 和补丁接线，按现有 manifest 流程在生成 checkout 验证。回滚时移除该可选配置即可使新 Run 停止发引用和绑定工具。需立即停用时取消仍在运行的已启用执行，较大回退使用既有镜像版本，引用无迁移。 [SDK 消费方式][sdk-patch] · [补丁验证与发布](maintenance.md)
 
@@ -138,12 +139,18 @@ flowchart LR
 | --- | --- |
 | 真入口单图、文本工具、再选图 | 触发请求 0 图，截图后 1 图且 ref 可见，文本工具后 0 图且原 ref 可在存续的输出中看到，显式工具后恰有选中的 1 图。再跟文本工具时回到 0。两次发送的编码字节与源 PNG 逐字节相等，MIME、宽高和测试解码像素相同。每份请求对保留的所有 `function_call` 有唯一同 ID 的 `function_call_output`，验证无孤儿、无重复，原图、文本和读回的 ID 各自独立。检查最终出站体及 `previous_response_id` 的目标路径行为。 |
 | 新用户轮和跨 scope | 同一会话发普通新用户轮，首个请求无旧图。尝试上一轮、其他会话和父子 Agent 的 ref 均无图且无查库/文件动作。提交 steer、取消后仍到达的结果、审批恢复和后台交付无法继承旧引用。 |
+| 前台提问和恢复 | 同时暴露提问和读回，前台没有实际提问时照常读图。实际提问与待选图同批时优先暂停。用真实 saver 检查暂停内容，并分别恢复同一个 SDK Run 和重建的 AgentClient，确认问答配对与结果、无暂停前图片、无新增持久引用或读回图块。 |
 | 畸形和伪造 | 测空值、数组、附加参数、尾换行、URL、无效字符和随机同形串。伪造来源字段、相同 `tool_call_id`、客户端消息/历史和被策略过滤的工具输出无法登记或读回。关开关、不兼容模式及工具名冲突无可用 `read_image`，反馈不回显输入。 |
 | 多图、并行和重读 | 两个并行源各多图，反转完成顺序，编号及预算仍遵循模型调用和原图次序。要求选非首张并逐字节匹配该图，证明未误取同批其他图。再次读同一 ref 送原字节且不给新 ref。覆盖同批新捕获和旧图读回、两次选同一图和超过四张，未选的旧图片都缺席。 |
 | 预算、重试和状态退化 | 覆盖单图刚好装下和超出、并行累计、最终格式化超量、路由回退、可读 ref 上限 32、首次省略后单独读回、可读历史被 provider 裁掉和规范消息实际删除。普通原图保持基线优先级，短状态与最终图片一致。合成 429/中断验证重试仍配对且取消不会再投影。 |
 | 展示与观测 | 原附件照常。选图不再调用图片保存入口，无新附件或图片持久写入。捕获合成的 trace、checkpoint 输入和日志出口，确认新增图片及完整 ref 不外泄到日志/trace，诊断和终态的图数相符。检查功能关闭和现有 native/PTC 路由。 |
 
-### 本地候选验证
+### `4.2.11-ricky.3` 的提问回归
+
+- 前台通过 `initializeClient` 和 `AgentClient` 自动装载 `LazyMongoSaver`，使用本地临时 `mongod`。两个工具同时可见，回环 Responses 图数为 `0 → 1 → 0 → 1 → 0`，两次 PNG 数据和 MIME 一致，调用及输出 ID 配对。另开用户轮时旧引用失效。 [宿主合同][mcp-current]
+- 实际触发提问暂停，分别通过原 SDK Run 的 `Command` 和已重建的 AgentClient 恢复。回答进入后继请求，同批待执行的读回没有发送图像。`put`、`putWrites` 和读回的暂停 checkpoint 中均未出现完整 ref 或已投影的图片状态。含原图的 saver 输入只在原 MCP 消息的 artifact 中携带该 PNG。 [宿主合同][mcp-current]
+
+### `4.2.11-ricky.2` 的历史本地验证
 
 - LibreChat 从固定应用基线重放 25 份活动补丁，按锁文件安装候选 SDK。`mcp-images` 及依赖组的 focused 合同通过 535 项测试，覆盖真实入口的回环序列、PNG 原字节和 MIME、下一用户轮的失效、停用和其他 provider 的原路径。读回未增加图片保存调用，合成的工具完成事件、响应内容与所捕获的日志未携带新增图片。 [宿主合同][mcp-current]
 - SDK 在候选源码上通过 `tool-image-read` 定向合同的 833 项测试和 trace/Langfuse 相关的 219 项测试。图层夹具验证了实际删源、伪造结果、跨 scope、并行多图及预算。随包源码补丁从固定 SDK 上游重现候选源码树，打包后核对了 ESM 和 CJS 的实际导出。 [候选源码与归档][sdk-current]
@@ -159,7 +166,7 @@ flowchart LR
 
 - 目标长会话的实际选图成功率、首发预算、四帧整图的小字质量及 provider 可能的下采样。先按现有预算验收。若最大编码图单张也常态无法进入请求，再独立评审预算修复，避免用已测编码字节推测实际视觉成本。
 - 真实摘要和手动压缩、连续 steer、后台、审批恢复、子 Agent 与另外的 native/PTC 产品入口未跑按需读回用例。
-- 现有应用诊断合同覆盖 429、中断和取消。带读回图的传输重试与取消、JPEG/WebP 出站像素、浏览器附件展示、真实数据库持久化、自定义 exporter 与生产 trace 未验收。尚未接入真实 NewAPI、模型或小米 9。
+- 现有应用诊断合同覆盖 429、中断和取消。带读回图的传输重试与取消、JPEG/WebP 出站像素、浏览器附件展示、生产数据库与跨副本恢复、自定义 exporter 和生产 trace 尚待验收。本次修复尚未接入真实 NewAPI、模型或小米 9。
 
 ## 方案比较与上游边界
 
