@@ -45,10 +45,10 @@ index 2d3fd9c4e75098d4e8069c229d21b925ca700cd8..70519e1527d8dc73b78e7577a203f401
        const expectedResult = expect.objectContaining({
          sender: TestClient.sender,
 diff --git a/api/app/clients/tools/util/handleTools.js b/api/app/clients/tools/util/handleTools.js
-index 34e6fd8a7901b48dbea5ce53de837127fca05502..8831a4da72f7939ba1d32fa1d12646e8c044120c 100644
+index fa8c3cad2eca112799042d2a3f3081db887f19b5..a5b472483376b00a25700e147840ae55bc54b62b 100644
 --- a/api/app/clients/tools/util/handleTools.js
 +++ b/api/app/clients/tools/util/handleTools.js
-@@ -657,7 +657,7 @@ const loadTools = async ({
+@@ -648,7 +648,7 @@ const loadTools = async ({
          jobCreatedAt: options.jobCreatedAt,
          unattended: options.unattended,
          model: agent?.model ?? model,
@@ -102,10 +102,10 @@ index 478fb9b605c1b57d0626b37da3f0397a3b01ca30..6caf57d7d4dd7e8b859c87e922b57712
                toolRegistry: ctx.toolRegistry,
                callerCapabilityProjection,
 diff --git a/api/server/services/Endpoints/agents/initialize.js b/api/server/services/Endpoints/agents/initialize.js
-index 300648e2d504f51d35765b1261747fa32a175853..a579a8634a80af3f9998bce5817bda751f515c5d 100644
+index 7782b61ac1ee5da9711a37995cd58aa5933f01e1..cc1d05600d6e3de8a316ea1e539a4aa06bb10a97 100644
 --- a/api/server/services/Endpoints/agents/initialize.js
 +++ b/api/server/services/Endpoints/agents/initialize.js
-@@ -503,6 +503,7 @@ const initializeClientWithProvider = async ({
+@@ -502,6 +502,7 @@ const initializeClientWithProvider = async ({
          requestBody: runtimeRequestBody,
          toolNames,
          agent: ctx.agent,
@@ -115,22 +115,29 @@ index 300648e2d504f51d35765b1261747fa32a175853..a579a8634a80af3f9998bce5817bda75
            executionContext,
 diff --git a/api/server/services/Endpoints/agents/mcpImages.spec.js b/api/server/services/Endpoints/agents/mcpImages.spec.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec698ceef6df
+index 0000000000000000000000000000000000000000..8701969c95ce54b543da2c257665f0c03a53c490
 --- /dev/null
 +++ b/api/server/services/Endpoints/agents/mcpImages.spec.js
-@@ -0,0 +1,1052 @@
+@@ -0,0 +1,1279 @@
 +const { createServer } = require('node:http');
 +const { once } = require('node:events');
 +const { createHash, randomUUID } = require('node:crypto');
 +const { setImmediate } = require('node:timers/promises');
 +const mongoose = require('mongoose');
++const { MongoMemoryServer } = require('mongodb-memory-server');
 +const sharp = require('sharp');
 +const { OpenAI } = require('openai');
-+const { getRequestId, logger, tenantStorage } = require('@librechat/data-schemas');
++const { Run } = require('@librechat/agents');
++const { Command } = require('@langchain/langgraph');
++const { createModels, getRequestId, logger, tenantStorage } = require('@librechat/data-schemas');
 +const { CallToolResultSchema } = require('@modelcontextprotocol/sdk/types.js');
 +const {
 +  createToolExecuteHandler,
++  createStreamServices,
++  GenerationJobManager,
++  getAgentCheckpointer,
 +  getProviderConfig,
++  LazyMongoSaver,
 +  MCPConnection,
 +  MCPManager,
 +  MCPServersRegistry,
@@ -171,6 +178,8 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +const moonshotModel = 'moonshot-v1-8k';
 +const toolKey = `screenshot${Constants.mcp_delimiter}synthetic`;
 +const callId = 'call_synthetic';
++const askTool = 'ask_user_question';
++const mongoCheckpointer = { type: 'mongo', ttl: 3600 };
 +const photoText = 'Synthetic screenshot is ready.';
 +const endText = 'Finished synthetic tool call.';
 +const prompt = 'Run the screenshot tool.';
@@ -184,22 +193,25 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +};
 +
 +function writeResponsesStream(res, model, isFirstRequest, call, sequence = 0) {
-+  const item =
-+    isFirstRequest || call != null
-+      ? {
++  const calls = Array.isArray(call) ? call : isFirstRequest || call != null ? [call] : [];
++  const items =
++    calls.length > 0
++      ? calls.map((fields, index) => ({
 +          type: 'function_call',
-+          id: `fc_synthetic_${sequence}`,
++          id: `fc_synthetic_${sequence}_${index}`,
 +          call_id: callId,
 +          name: toolKey,
 +          arguments: '{}',
-+          ...call,
-+        }
-+      : {
-+          type: 'message',
-+          id: 'msg_synthetic',
-+          role: 'assistant',
-+          content: [{ type: 'output_text', text: endText, annotations: [] }],
-+        };
++          ...fields,
++        }))
++      : [
++          {
++            type: 'message',
++            id: 'msg_synthetic',
++            role: 'assistant',
++            content: [{ type: 'output_text', text: endText, annotations: [] }],
++          },
++        ];
 +  const responseId = isFirstRequest ? 'resp_tool' : 'resp_final';
 +  const response = {
 +    id: sequence ? `resp_synthetic_${sequence}` : responseId,
@@ -209,20 +221,26 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    output: [],
 +  };
 +  const events = [{ type: 'response.created', response }];
-+  if (item.type === 'function_call') {
-+    events.push(
-+      { type: 'response.output_item.added', output_index: 0, item: { ...item, arguments: '' } },
-+      {
-+        type: 'response.function_call_arguments.delta',
-+        output_index: 0,
-+        item_id: item.id,
-+        delta: item.arguments,
-+      },
-+    );
-+  } else {
++  for (const [index, item] of items.entries()) {
++    if (item.type === 'function_call') {
++      events.push(
++        {
++          type: 'response.output_item.added',
++          output_index: index,
++          item: { ...item, arguments: '' },
++        },
++        {
++          type: 'response.function_call_arguments.delta',
++          output_index: index,
++          item_id: item.id,
++          delta: item.arguments,
++        },
++      );
++      continue;
++    }
 +    events.push({
 +      type: 'response.output_text.delta',
-+      output_index: 0,
++      output_index: index,
 +      content_index: 0,
 +      item_id: item.id,
 +      delta: endText,
@@ -233,7 +251,7 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    response: {
 +      ...response,
 +      status: 'completed',
-+      output: [{ ...item, status: 'completed' }],
++      output: items.map((item) => ({ ...item, status: 'completed' })),
 +      usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
 +    },
 +  });
@@ -271,6 +289,12 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    ...[item.content, item.output].filter(Array.isArray).flat(),
 +  ]);
 +}
++
++const outputOf = (body, id) =>
++  body.input.find(({ type, call_id }) => type === 'function_call_output' && call_id === id)?.output;
++const imageParts = (body) => inputParts(body.input).filter(({ type }) => type === 'input_image');
++const imageRefOf = (body) =>
++  String(outputOf(body, callId)).match(/\[(img_[A-Za-z0-9_-]{16})\]/)?.[1];
 +
 +function captureDiagnostics(expectedImages = 0) {
 +  const requests = [];
@@ -323,7 +347,13 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    return new OpenAI({ ...configOptions, apiKey: 'synthetic-api-key', maxRetries: 0, ...options });
 +  }
 +
++  let mongoServer;
 +  beforeAll(async () => {
++    mongoServer = await MongoMemoryServer.create();
++    await mongoose.connect(mongoServer.getUri());
++    createModels(mongoose);
++    GenerationJobManager.configure({ ...createStreamServices(), cleanupOnComplete: false });
++    GenerationJobManager.initialize();
 +    pngBytes = await sharp({ create: { width: 3, height: 2, channels: 3, background: '#4287ab' } })
 +      .png()
 +      .toBuffer();
@@ -356,7 +386,7 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    server.listen(0, '127.0.0.1');
 +    await once(server, 'listening');
 +    baseURL = `http://127.0.0.1:${server.address().port}/v1`;
-+  });
++  }, 60_000);
 +
 +  afterAll(async () => {
 +    if (server?.listening) {
@@ -365,6 +395,9 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +      server.closeAllConnections();
 +      await closed;
 +    }
++    await GenerationJobManager.destroy();
++    await mongoose.disconnect();
++    await mongoServer?.stop();
 +  });
 +
 +  beforeEach(() => {
@@ -441,7 +474,7 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    jest.restoreAllMocks();
 +  });
 +
-+  test('foreground Responses can explicitly read one original MCP image for one request', async () => {
++  test('foreground Responses can read an original MCP image with the user-question saver attached', async () => {
 +    const textTool = `status${Constants.mcp_delimiter}synthetic`;
 +    const textResult = 'Synthetic follow-up status';
 +    const callIds = [callId, 'call_text_1', 'call_read', 'call_text_2'];
@@ -451,6 +484,9 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    };
 +    getMCPServerTools.mockResolvedValue({ [toolKey]: toolDefinition, [textTool]: textDefinition });
 +    config.endpoints.agents.mcpImageRead = true;
++    config.endpoints.agents.checkpointer = mongoCheckpointer;
++    config.endpoints.agents.capabilities.push(askTool);
++    const createRun = jest.spyOn(Run, 'create');
 +    getEndpointModelsConfig.mockResolvedValue({ NewAPI: [responsesModel] });
 +    const mcpRequest = jest
 +      .spyOn(connection.client, 'request')
@@ -488,23 +524,17 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +          provider: 'NewAPI',
 +          model: responsesModel,
 +          model_parameters: { useResponsesApi: true },
-+          tools: [toolKey, textTool],
++          tools: [toolKey, textTool, askTool],
 +        }),
 +      },
 +    });
 +    client.conversationId = conversationId;
 +    client.responseMessageId = randomUUID();
-+    const outputOf = (body, id) =>
-+      body.input.find(({ type, call_id }) => type === 'function_call_output' && call_id === id)
-+        ?.output;
-+    const imageParts = (body) =>
-+      inputParts(body.input).filter(({ type }) => type === 'input_image');
 +    let ref;
 +    let sourceAttachments;
 +    function serve(_req, response, sequence) {
-+      const sourceText = outputOf(requests[sequence - 1].body, callId);
 +      if (sequence === 3) {
-+        ref = String(sourceText).match(/\[(img_[A-Za-z0-9_-]{16})\]/)?.[1];
++        ref = imageRefOf(requests[sequence - 1].body);
 +        sourceAttachments = saveBase64Image.mock.calls.length;
 +      }
 +      const name = [toolKey, textTool, 'read_image', textTool][sequence - 1];
@@ -536,6 +566,14 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    expect(unexpectedRequests).toBe(0);
 +    const bodies = requests.map(({ body }) => body);
 +    expect(bodies).toHaveLength(5);
++    expect(createRun.mock.calls[0][0].graphConfig.compileOptions?.checkpointer).toBeInstanceOf(
++      LazyMongoSaver,
++    );
++    for (const body of bodies) {
++      expect(body.tools.map(({ name }) => name)).toEqual(
++        expect.arrayContaining([askTool, 'read_image']),
++      );
++    }
 +    expect(bodies[0].tools.find(({ name }) => name === 'read_image')?.parameters).toMatchObject({
 +      type: 'object',
 +      required: ['ref'],
@@ -564,11 +602,12 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    expect(sourceAttachments).toBeLessThanOrEqual(1);
 +    expect(saveBase64Image.mock.calls.length).toBe(sourceAttachments);
 +    const readEvents = toolEnd.mock.calls.filter(([event]) => event.output?.name === 'read_image');
-+    expect(readEvents.length).toBe(1);
-+    expect(readEvents[0][0].output.artifact == null).toBe(true);
-+    expect(
-+      JSON.stringify([readEvents, res.write.mock.calls, client.contentParts]).includes(png),
-+    ).toBe(false);
++    expect(readEvents.every(([event]) => event.output?.artifact == null)).toBe(true);
++    const clientPayload = JSON.stringify([readEvents, res.write.mock.calls, client.contentParts]);
++    expect({ image: clientPayload.includes(png), ref: clientPayload.includes(ref) }).toEqual({
++      image: false,
++      ref: false,
++    });
 +    const diagnosticsText = JSON.stringify([
 +      logger.info.mock.calls,
 +      sdkDebug.mock.calls,
@@ -577,7 +616,7 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    ]);
 +    expect(diagnosticsText.includes(png) || diagnosticsText.includes(ref)).toBe(false);
 +
-+    // A fresh execution for the same conversation receives the old ref only as user text.
++    // The model retries the previous execution's reference in a fresh turn.
 +    requests = [];
 +    requestLimit = 3;
 +    respondToResponses = (_req, response, sequence) => {
@@ -593,6 +632,7 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +      writeResponsesStream(response, responsesModel, false, call, sequence);
 +    };
 +    client.responseMessageId = randomUUID();
++    client.checkpointNamespace = randomUUID();
 +    await tenantStorage.run({ requestId: randomUUID() }, () =>
 +      client.chatCompletion({
 +        userMCPAuthMap,
@@ -600,7 +640,7 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +          {
 +            messageId: randomUUID(),
 +            isCreatedByUser: true,
-+            content: [{ type: 'text', text: `Read ${ref}` }],
++            content: [{ type: 'text', text: 'Read the previous screenshot.' }],
 +          },
 +        ],
 +      }),
@@ -610,6 +650,193 @@ index 0000000000000000000000000000000000000000..4f7668407c438b846732e99cfba4ec69
 +    expect(outputOf(requests[2].body, 'call_malformed')).toBe('invalid_ref');
 +    expect(saveBase64Image.mock.calls.length).toBe(sourceAttachments);
 +  });
++
++  test.each(['same SDK run', 'rebuilt AgentClient'])(
++    'an actual user question ends image read scope on resume through %s',
++    async (resumePath) => {
++      config.endpoints.agents.mcpImageRead = true;
++      config.endpoints.agents.checkpointer = mongoCheckpointer;
++      config.endpoints.agents.capabilities.push(askTool);
++      getEndpointModelsConfig.mockResolvedValue({ NewAPI: [responsesModel] });
++      const mcpRequest = jest
++        .spyOn(connection.client, 'request')
++        .mockResolvedValue(
++          CallToolResultSchema.parse({ content: [{ type: 'text', text: photoText }, image] }),
++        );
++      const stream = jest.spyOn(Run.prototype, 'processStream');
++      const put = jest.spyOn(LazyMongoSaver.prototype, 'put');
++      const putWrites = jest.spyOn(LazyMongoSaver.prototype, 'putWrites');
++      const userId = new mongoose.Types.ObjectId().toString();
++      const conversationId = randomUUID();
++      const responseMessageId = randomUUID();
++      const job = await GenerationJobManager.createJob(conversationId, userId, conversationId, {
++        initialMetadata: { generationProtocolVersion: 2 },
++      });
++      const req = {
++        user: { id: userId, role: 'USER' },
++        config,
++        body: { conversationId, endpoint: 'agents' },
++        resolvedConversation: null,
++        _resumableStreamId: conversationId,
++      };
++      const openClient = async (isResume = false) => {
++        const result = await initializeClient({
++          req,
++          res: { headersSent: true, writableEnded: false, write: jest.fn(), flush: jest.fn() },
++          isResume,
++          signal: job.abortController.signal,
++          jobCreatedAt: job.createdAt,
++          checkpointNamespace: job.metadata.checkpointNamespace,
++          foregroundRunId: responseMessageId,
++          endpointOption: {
++            endpoint: 'agents',
++            model_parameters: { model: responsesModel },
++            agent: Promise.resolve({
++              id: 'synthetic-agent',
++              name: 'Synthetic Agent',
++              provider: 'NewAPI',
++              model: responsesModel,
++              model_parameters: { useResponsesApi: true },
++              tools: [toolKey, askTool],
++            }),
++          },
++        });
++        result.client.conversationId = conversationId;
++        result.client.responseMessageId = responseMessageId;
++        result.client.parentMessageId = promptMessage.messageId;
++        result.client.checkpointNamespace = job.metadata.checkpointNamespace;
++        result.client.jobCreatedAt = job.createdAt;
++        return result;
++      };
++      const promptMessage = {
++        messageId: randomUUID(),
++        isCreatedByUser: true,
++        content: [{ type: 'text', text: prompt }],
++      };
++      const { client, userMCPAuthMap } = await openClient();
++      const question = 'Which color label should I use?';
++      const answer = 'Use blue.';
++      let ref;
++      requestLimit = resumePath === 'same SDK run' ? 5 : 4;
++      respondToResponses = (_req, response, sequence) => {
++        if (sequence === 2) ref = imageRefOf(requests[1].body);
++        const read = {
++          name: 'read_image',
++          call_id: sequence === 2 ? 'call_read_done' : 'call_read_paused',
++          arguments: JSON.stringify({ ref }),
++        };
++        const calls =
++          sequence === 2
++            ? [read]
++            : sequence === 3
++              ? [
++                  read,
++                  {
++                    name: askTool,
++                    call_id: 'call_ask',
++                    arguments: JSON.stringify({ questions: [{ id: 'color', question }] }),
++                  },
++                ]
++              : sequence === 4 && resumePath === 'same SDK run'
++                ? [{ ...read, call_id: 'call_read_resumed' }]
++                : undefined;
++        writeResponsesStream(response, responsesModel, sequence === 1, calls, sequence);
++      };
++      const inRequest = (callback) => tenantStorage.run({ requestId: randomUUID() }, callback);
++      await inRequest(() => client.chatCompletion({ userMCPAuthMap, payload: [promptMessage] }));
++      expect(typeof ref).toBe('string');
++      expect(requests.map(({ body }) => imageParts(body).length)).toEqual([0, 1, 1]);
++      expect(outputOf(requests[2].body, 'call_read_done')).toBe('image_included (read image 1)');
++      const [run] = stream.mock.instances;
++      const [, graphConfig] = stream.mock.calls[0];
++      const interrupt = run.getInterrupt();
++      expect(interrupt?.payload).toMatchObject({ type: askTool, tool_call_id: 'call_ask' });
++
++      const saver = await getAgentCheckpointer(mongoCheckpointer, conversationId);
++      const saved = await saver.getTuple({
++        ...graphConfig,
++        configurable: {
++          ...graphConfig.configurable,
++          checkpoint_ns: interrupt.checkpointNs,
++          checkpoint_id: interrupt.checkpointId,
++        },
++      });
++      expect(saved.checkpoint.id).toBe(interrupt.checkpointId);
++      expect(saved.pendingWrites.some(([, channel]) => channel === '__interrupt__')).toBe(true);
++      // The saver can persist a reduced snapshot at the interrupt boundary. Check its inputs too.
++      const checkpointInputs = put.mock.calls.map(([, checkpoint]) => checkpoint);
++      const pendingInputs = putWrites.mock.calls.map(([, writes]) => writes);
++      const checkpointMessages = checkpointInputs.flatMap(
++        (checkpoint) => checkpoint.channel_values.messages ?? [],
++      );
++      const sources = checkpointMessages.filter((msg) => msg.tool_call_id === callId);
++      const completedReads = checkpointMessages.filter(
++        (msg) => msg.tool_call_id === 'call_read_done',
++      );
++      expect(sources.length).toBeGreaterThan(0);
++      expect(sources.every((msg) => JSON.stringify(msg.artifact).includes(png))).toBe(true);
++      expect(completedReads.length).toBeGreaterThan(0);
++      expect(
++        completedReads.every((msg) => msg.content === 'image_omitted' && msg.artifact == null),
++      ).toBe(true);
++      expect(checkpointMessages.some((msg) => msg.tool_call_id === 'call_read_paused')).toBe(false);
++      const saverPayload = JSON.stringify([checkpointInputs, pendingInputs, saved]);
++      expect(saverPayload.includes(ref) || saverPayload.includes('image_included')).toBe(false);
++      expect(JSON.stringify([checkpointInputs, pendingInputs]).split(png).length - 1).toBe(
++        sources.length,
++      );
++      expect(JSON.stringify(saved).includes(png)).toBe(false);
++
++      const resumeValue = { answers: { color: answer } };
++      if (resumePath === 'same SDK run') {
++        await inRequest(() =>
++          run.processStream(new Command({ resume: resumeValue }), {
++            ...graphConfig,
++            signal: new AbortController().signal,
++          }),
++        );
++      } else {
++        const rebuilt = await openClient(true);
++        await inRequest(() =>
++          rebuilt.client.resumeCompletion({
++            resumeValue,
++            userMCPAuthMap: rebuilt.userMCPAuthMap,
++            seedContent: client.contentParts,
++            storedMessages: [promptMessage],
++            abortController: job.abortController,
++          }),
++        );
++      }
++      expect(unexpectedRequests).toBe(0);
++      expect(requests.map(({ body }) => imageParts(body).length)).toEqual(
++        resumePath === 'same SDK run' ? [0, 1, 1, 0, 0] : [0, 1, 1, 0],
++      );
++      const resumed = requests[3].body;
++      expect(String(outputOf(resumed, 'call_ask')).includes(answer)).toBe(true);
++      expect(typeof outputOf(resumed, 'call_read_paused')).toBe('string');
++      expect(outputOf(resumed, 'call_read_paused')).not.toContain('image_included');
++      expect(JSON.stringify(resumed.input).includes(ref)).toBe(false);
++      const paired = (type) =>
++        resumed.input
++          .filter((item) => item.type === type)
++          .map((item) => item.call_id)
++          .sort();
++      const resumedIds = paired('function_call');
++      expect(resumedIds).toEqual(paired('function_call_output'));
++      expect(resumedIds).toEqual(expect.arrayContaining(['call_read_paused', 'call_ask']));
++      if (resumePath === 'rebuilt AgentClient') {
++        expect(resumed.tools.some(({ name }) => name === 'read_image')).toBe(false);
++      } else {
++        expect(resumedIds).toEqual(
++          [callId, 'call_read_done', 'call_read_paused', 'call_ask'].sort(),
++        );
++        expect(outputOf(resumed, 'call_read_paused')).toBe('image_unavailable');
++        expect(outputOf(requests[4].body, 'call_read_resumed')).toBe('image_unavailable');
++      }
++      expect(resumed.tools.some(({ name }) => name === askTool)).toBe(true);
++      expect(mcpRequest).toHaveBeenCalledTimes(1);
++    },
++  );
 +
 +  test.each([
 +    ['NewAPI', 'image only', 'openAI', responsesModel, true],
@@ -1397,7 +1624,7 @@ index f2482aac37fafb7051acb7a6df152c85f7d60d3c..69a37f7598c291304a851649e8e70b18
        const mockUser = { id: 'assistants-app-user', role: 'USER' };
        const mockRes = { write: jest.fn(), flush: jest.fn() };
 diff --git a/api/server/services/ToolService.js b/api/server/services/ToolService.js
-index 4fc6d8c911774612b27494476b63104dc5029582..cd4f598b6cb9eaf52b2b52e59727304f0d69bf05 100644
+index 76a6bf903620e9c864b41443f5b2653cf3cba9be..a72e33015d7dfa1f3f0389f53e146f36bfc3d9e6 100644
 --- a/api/server/services/ToolService.js
 +++ b/api/server/services/ToolService.js
 @@ -2102,6 +2102,7 @@ async function loadAgentTools({
@@ -1457,10 +1684,10 @@ index 7516804d063362da0376b59c28007d40f312fd7d..0724c42e665ffe4b232ebbe3a8b5f306
                        toolCallId: tc.id,
                        content: cleanedContent,
 diff --git a/packages/api/src/agents/run.ts b/packages/api/src/agents/run.ts
-index 809dd7c80c02c9cebdeaa975a4d7ab36924e5024..f035c8266fcf57b28aa81b646197df6ac026d4aa 100644
+index 1e50a4c50ff503b39ca73cf67e72f95d082df54f..1d928eadf3c67928556d7ccea4617bae5787acd8 100644
 --- a/packages/api/src/agents/run.ts
 +++ b/packages/api/src/agents/run.ts
-@@ -150,6 +150,7 @@ import { buildHITLRunWiring } from '~/agents/hitl/runtime';
+@@ -149,6 +149,7 @@ import { buildHITLRunWiring } from '~/agents/hitl/runtime';
  import { buildLangfuseConfig } from '~/langfuse/config';
  import { getCustomEndpointConfig } from '~/app/config';
  import { applyTestRunHook } from '~/agents/testHook';
@@ -1468,7 +1695,7 @@ index 809dd7c80c02c9cebdeaa975a4d7ab36924e5024..f035c8266fcf57b28aa81b646197df6a
  import { frameDynamicInstructions } from './tail';
  import { isUserProvided } from '~/utils/common';
  
-@@ -2324,6 +2325,7 @@ export async function createRun({
+@@ -2323,6 +2324,7 @@ export async function createRun({
    toolApprovalAllows,
    toolInputValidationErrors,
    sessionStartSource,
@@ -1476,7 +1703,7 @@ index 809dd7c80c02c9cebdeaa975a4d7ab36924e5024..f035c8266fcf57b28aa81b646197df6a
    loadSdkRuntime,
    sdkResumeState,
    streaming = true,
-@@ -2478,6 +2480,7 @@ export async function createRun({
+@@ -2477,6 +2479,7 @@ export async function createRun({
    recordScheduledMCPDenial?: (error: ScheduledMCPPolicyError) => Promise<boolean>;
    /** Plugin-hook SessionStart lifecycle source: 'startup' (default) or 'resume' on HITL-rebuild paths. */
    sessionStartSource?: string;
@@ -1484,7 +1711,7 @@ index 809dd7c80c02c9cebdeaa975a4d7ab36924e5024..f035c8266fcf57b28aa81b646197df6a
    /** Request-scoped tool input failures consumed by the completion handler. */
    toolInputValidationErrors?: Map<string, ToolInputValidationError>;
    loadSdkRuntime?: SdkAgentRuntimeLoader;
-@@ -3233,6 +3236,20 @@ export async function createRun({
+@@ -3229,6 +3232,25 @@ export async function createRun({
      runId: resolvedRunId,
      graphConfig,
      tokenCounter,
@@ -1501,6 +1728,11 @@ index 809dd7c80c02c9cebdeaa975a4d7ab36924e5024..f035c8266fcf57b28aa81b646197df6a
 +      agents[0].model_parameters?.model === 'gpt-6.2-sol' && {
 +        isTrustedToolImage: (block: object, callId: string) =>
 +          isAdmittedMCPImage(block, callId, agents[0].id, resolvedRunId),
++        ...(asksUserQuestions &&
++          !hitl && {
++            allowToolImageReadWithCheckpointer: true,
++            interruptingToolNames: [ASK_USER_QUESTION_TOOL_NAME],
++          }),
 +      }),
      customHandlers: runHandlers,
      initialSessions,
@@ -2409,10 +2641,10 @@ index 0000000000000000000000000000000000000000..21a54ffd78ed106bc3a2966b0704e4fd
 +  });
 +}
 diff --git a/packages/data-provider/src/config.ts b/packages/data-provider/src/config.ts
-index 786d2aa69485f93318a6c32a64ff5c9969ba41f8..eec25f626a4f3dc58111d46969ed3cd677bf7924 100644
+index a55408cc00992a206e1eea1b789a874ce612b30b..5efc3b70767fb9c0c74ba790784c1743ddd6c5d3 100644
 --- a/packages/data-provider/src/config.ts
 +++ b/packages/data-provider/src/config.ts
-@@ -2049,6 +2049,8 @@ export const agentsEndpointSchema = baseEndpointSchema
+@@ -2046,6 +2046,8 @@ export const agentsEndpointSchema = baseEndpointSchema
         * disables the guard for that tool only. Merged over LibreChat's shipped default of
         * `{ create_file: 131072 }`. */
        maxToolCallArgBytesByTool: z.record(z.string(), z.number()).optional(),
